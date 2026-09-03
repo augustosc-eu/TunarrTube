@@ -84,7 +84,11 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
         update: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined, availability: entry.availability },
         create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability }
       });
-      await tx.sourceVideo.create({ data: { sourceId: created.id, videoId: video.id, playlistIndex: entry.playlistIndex } });
+      await tx.sourceVideo.upsert({
+        where: { sourceId_videoId: { sourceId: created.id, videoId: video.id } },
+        update: { playlistIndex: entry.playlistIndex },
+        create: { sourceId: created.id, videoId: video.id, playlistIndex: entry.playlistIndex }
+      });
     }
     await tx.importDraft.update({ where: { id: draft.id }, data: { consumedAt: new Date() } });
     return created;
