@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizePlaylist, parseUploadDate } from "@/lib/youtube/normalize";
-import { validatePlaylistUrl, validateSourceUrl } from "@/lib/youtube/url";
+import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
 
 describe("YouTube input validation", () => {
   it("accepts HTTPS playlist URLs", () => {
@@ -24,6 +24,28 @@ describe("YouTube channel input", () => {
   ])("accepts channel URL %s", (input) => expect(validateSourceUrl(input).sourceType).toBe("channel"));
 
   it("keeps playlist URLs distinct from channel feeds", () => expect(validateSourceUrl("https://youtube.com/@example?list=PL123").sourceType).toBe("playlist"));
+});
+
+describe("individual YouTube video input", () => {
+  it.each([
+    ["https://youtu.be/rtX9Fof1muY?si=tracking", "https://www.youtube.com/watch?v=rtX9Fof1muY"],
+    ["https://www.youtube.com/watch?v=rtX9Fof1muY&si=tracking", "https://www.youtube.com/watch?v=rtX9Fof1muY"],
+    ["https://youtube.com/shorts/rtX9Fof1muY", "https://www.youtube.com/watch?v=rtX9Fof1muY"],
+    ["https://youtube.com/live/rtX9Fof1muY", "https://www.youtube.com/watch?v=rtX9Fof1muY"]
+  ])("canonicalizes %s", (input, expected) => {
+    expect(validateSourceUrl(input)).toEqual({ url: expected, sourceType: "video" });
+    expect(validateVideoUrl(input)).toBe(expected);
+  });
+
+  it("does not treat a video URL with a playlist as an individual video", () => {
+    expect(validateSourceUrl("https://youtube.com/watch?v=rtX9Fof1muY&list=PL123").sourceType).toBe("playlist");
+  });
+
+  it.each([
+    "https://youtu.be/too-short",
+    "https://example.com/watch?v=rtX9Fof1muY",
+    "http://youtu.be/rtX9Fof1muY"
+  ])("rejects invalid video input %s", (input) => expect(() => validateVideoUrl(input)).toThrow());
 });
 
 describe("yt-dlp normalization", () => {

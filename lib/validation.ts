@@ -14,6 +14,10 @@ export const createSourceSchema = z.object({
   syncIntervalMinutes: z.number().int().min(15).max(43_200).default(360)
 });
 
+export const addCollectionVideosSchema = z.object({
+  urls: z.array(z.string().trim().url()).min(1).max(50)
+});
+
 export const patchSourceSchema = z.object({
   name: z.string().trim().min(1).max(160).optional(),
   playbackMode: z.enum(["download", "cache", "stream"]).optional(),

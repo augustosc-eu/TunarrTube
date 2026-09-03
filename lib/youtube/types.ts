@@ -18,8 +18,8 @@ export type PlaylistAnalysis = {
   thumbnailUrl: string | null;
   url: string;
   entries: PlaylistEntry[];
-  sourceType: "playlist" | "channel";
-  feedType: "playlist" | "videos" | "shorts" | "live" | "all";
+  sourceType: "playlist" | "channel" | "collection";
+  feedType: "playlist" | "videos" | "shorts" | "live" | "all" | "manual";
   historyLimit: number | null;
 };
 

@@ -4,7 +4,8 @@ import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
 import { getSettings } from "@/lib/settings/service";
-import { analyzeSource } from "@/lib/youtube/ytdlp";
+import { analyzeSource, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
+import { validateVideoUrl } from "@/lib/youtube/url";
 import type { AnalyzeSourceOptions, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
 
 type StoredEntry = Omit<PlaylistEntry, "uploadDate"> & { uploadDate: string | null };
@@ -64,8 +65,10 @@ async function uniqueDirectoryName(name: string) {
 export async function createSourceFromDraft(draftId: string, requestedName?: string, playbackMode = "download", syncEnabled = false, syncIntervalMinutes = 360) {
   const draft = await db.importDraft.findUnique({ where: { id: draftId } });
   if (!draft || draft.expiresAt < new Date() || draft.consumedAt) throw new AppError("INVALID_IMPORT_DRAFT", "This analysis expired or was already used. Analyze the playlist again.", 410);
-  const duplicate = await db.source.findUnique({ where: { sourceType_youtubeId_feedType: { sourceType: draft.sourceType, youtubeId: draft.youtubeId, feedType: draft.feedType } } });
-  if (duplicate) throw new AppError("SOURCE_EXISTS", "This YouTube source is already configured.", 409, { sourceId: duplicate.id });
+  if (draft.sourceType !== "collection") {
+    const duplicate = await db.source.findUnique({ where: { sourceType_youtubeId_feedType: { sourceType: draft.sourceType, youtubeId: draft.youtubeId, feedType: draft.feedType } } });
+    if (duplicate) throw new AppError("SOURCE_EXISTS", "This YouTube source is already configured.", 409, { sourceId: duplicate.id });
+  }
   const name = requestedName?.trim() || draft.name;
   const directoryName = await uniqueDirectoryName(name);
   const settings = await getSettings();
@@ -73,7 +76,8 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
   await mkdir(mediaDirectory, { recursive: true });
   const entries = restoreEntries(draft.entriesJson);
   const source = await db.$transaction(async (tx) => {
-    const created = await tx.source.create({ data: { name, url: draft.url, sourceType: draft.sourceType, youtubeId: draft.youtubeId, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, playbackMode, feedType: draft.feedType, historyLimit: draft.historyLimit, directoryName, mediaDirectory, syncEnabled, syncIntervalMinutes, nextSyncAt: syncEnabled ? new Date(Date.now() + syncIntervalMinutes * 60_000) : null } });
+    const canSync = draft.sourceType !== "collection" && syncEnabled;
+    const created = await tx.source.create({ data: { name, url: draft.url, sourceType: draft.sourceType, youtubeId: draft.sourceType === "collection" ? `collection:${draft.id}` : draft.youtubeId, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, playbackMode, feedType: draft.feedType, historyLimit: draft.historyLimit, directoryName, mediaDirectory, syncEnabled: canSync, syncIntervalMinutes, nextSyncAt: canSync ? new Date(Date.now() + syncIntervalMinutes * 60_000) : null } });
     for (const entry of entries) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
@@ -119,6 +123,7 @@ export async function getSource(id: string) {
 export async function syncSource(sourceId: string) {
   const source = await db.source.findUnique({ where: { id: sourceId } });
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
+  if (source.sourceType === "collection") throw new AppError("COLLECTION_SYNC_UNSUPPORTED", "Curated video collections are updated by adding individual videos.", 422);
   const analysis = await analyzeSource(source.url, { feedType: source.feedType === "playlist" ? undefined : source.feedType as "videos" | "shorts" | "live" | "all", historyLimit: source.historyLimit });
   const seenAt = new Date();
   let newCount = 0;
@@ -168,8 +173,9 @@ export async function enqueueUniqueJob(type: string, sourceId?: string, videoId?
 }
 
 export async function enqueueSync(sourceId: string) {
-  const source = await db.source.findUnique({ where: { id: sourceId }, select: { id: true } });
+  const source = await db.source.findUnique({ where: { id: sourceId }, select: { id: true, sourceType: true } });
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
+  if (source.sourceType === "collection") throw new AppError("COLLECTION_SYNC_UNSUPPORTED", "Curated video collections do not need synchronization.", 422);
   const job = await enqueueUniqueJob("sync", sourceId);
   await db.source.update({ where: { id: sourceId }, data: { lastSyncStatus: "queued" } });
   const { kickWorker } = await import("@/lib/jobs/runner");
@@ -198,6 +204,57 @@ export async function deleteSource(id: string) {
   return { deleted: true, preservedMediaDirectory: source.mediaDirectory };
 }
 
+export async function addVideosToCollection(sourceId: string, inputs: string[], signal?: AbortSignal) {
+  const source = await db.source.findUnique({ where: { id: sourceId } });
+  if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
+  if (source.sourceType !== "collection") throw new AppError("COLLECTION_REQUIRED", "Individual videos can only be added to a curated video collection.", 422);
+
+  const urls = [...new Set(inputs.map(validateVideoUrl))];
+  const entries = await Promise.all(urls.map((url) => fetchVideoMetadata(url, signal)));
+  const addedVideoIds: string[] = [];
+  let duplicateCount = 0;
+  await db.$transaction(async (tx) => {
+    const last = await tx.sourceVideo.findFirst({ where: { sourceId }, orderBy: { playlistIndex: "desc" }, select: { playlistIndex: true } });
+    let playlistIndex = last?.playlistIndex ?? 0;
+    for (const entry of entries) {
+      const video = await tx.video.upsert({
+        where: { youtubeId: entry.youtubeId },
+        update: { title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" },
+        create: { youtubeId: entry.youtubeId, title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" }
+      });
+      const membership = await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: video.id } } });
+      if (membership?.membershipStatus === "present") { duplicateCount += 1; continue; }
+      playlistIndex += 1;
+      await tx.sourceVideo.upsert({
+        where: { sourceId_videoId: { sourceId, videoId: video.id } },
+        update: { playlistIndex, membershipStatus: "present", lastSeenAt: new Date() },
+        create: { sourceId, videoId: video.id, playlistIndex }
+      });
+      addedVideoIds.push(video.id);
+    }
+    await tx.source.update({ where: { id: sourceId }, data: { updatedAt: new Date() } });
+  });
+
+  if (addedVideoIds.length) await enqueueUniqueJob("thumbnail", sourceId);
+  for (const videoId of addedVideoIds) {
+    if (source.playbackMode === "download") {
+      await enqueueUniqueJob("download", sourceId, videoId, { target: "permanent" });
+      await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId, videoId } }, data: { downloadStatus: "queued" } });
+    } else if (source.tunarrChannelId) {
+      await enqueueUniqueJob("cache", sourceId, videoId);
+      await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId, videoId } }, data: { downloadStatus: "queued" } });
+    }
+  }
+  if (source.tunarrChannelId && addedVideoIds.length) await enqueueUniqueJob("tunarr_refresh", sourceId);
+  if (addedVideoIds.length) {
+    await writeLog({ category: "source", sourceId, message: `Added ${addedVideoIds.length} individual video${addedVideoIds.length === 1 ? "" : "s"} to ${source.name}.` });
+    const { kickWorker } = await import("@/lib/jobs/runner");
+    kickWorker();
+  }
+  return { addedCount: addedVideoIds.length, duplicateCount, videoIds: addedVideoIds };
+}
+
 export function analysisFromDraft(draft: { url: string; youtubeId: string; name: string; uploaderName: string | null; thumbnailUrl: string | null; sourceType?: string; feedType?: string; historyLimit?: number | null; entriesJson: string }): PlaylistAnalysis {
-  return { ...draft, sourceType: draft.sourceType === "channel" ? "channel" : "playlist", feedType: (draft.feedType ?? "playlist") as PlaylistAnalysis["feedType"], historyLimit: draft.historyLimit ?? null, entries: restoreEntries(draft.entriesJson) };
+  const sourceType = draft.sourceType === "channel" ? "channel" : draft.sourceType === "collection" ? "collection" : "playlist";
+  return { ...draft, sourceType, feedType: (draft.feedType ?? "playlist") as PlaylistAnalysis["feedType"], historyLimit: draft.historyLimit ?? null, entries: restoreEntries(draft.entriesJson) };
 }

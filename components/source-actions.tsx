@@ -10,7 +10,7 @@ async function message(response: Response) {
   return body.data;
 }
 
-export function SourceActions({ sourceId }: { sourceId: string }) {
+export function SourceActions({ sourceId, canSync = true }: { sourceId: string; canSync?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -34,5 +34,5 @@ export function SourceActions({ sourceId }: { sourceId: string }) {
     try { await message(await fetch(`/api/sources/${sourceId}`, { method: "DELETE" })); router.push("/sources"); router.refresh(); }
     catch (error) { setStatus(error instanceof Error ? error.message : "Delete failed"); setBusy(false); }
   }
-  return <div className="toolbar"><button className="button secondary" disabled={busy} onClick={sync}><RefreshCw size={15} className={busy ? "animate-spin" : ""} /> Sync Now</button><button className="button secondary" disabled={busy} onClick={remove} aria-label="Delete source"><Trash2 size={15} /></button>{status && <span className={status.includes("complete") ? "success" : "muted"}>{status}</span>}</div>;
+  return <div className="toolbar">{canSync ? <button className="button secondary" disabled={busy} onClick={sync}><RefreshCw size={15} className={busy ? "animate-spin" : ""} /> Sync Now</button> : null}<button className="button secondary" disabled={busy} onClick={remove} aria-label="Delete source"><Trash2 size={15} /></button>{status && <span className={status.includes("complete") ? "success" : "muted"}>{status}</span>}</div>;
 }

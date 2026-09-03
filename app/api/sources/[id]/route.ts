@@ -17,8 +17,13 @@ export async function PATCH(request: Request, { params }: Context) {
   try {
     const { id } = await params;
     const input = patchSourceSchema.parse(await request.json());
+    const current = await db.source.findUnique({ where: { id }, select: { sourceType: true, syncIntervalMinutes: true } });
+    if (!current) return Response.json({ error: { code: "SOURCE_NOT_FOUND", message: "Source not found." } }, { status: 404 });
+    if (current.sourceType === "collection" && input.syncEnabled) {
+      return Response.json({ error: { code: "COLLECTION_SYNC_UNSUPPORTED", message: "Curated video collections do not need automatic synchronization." } }, { status: 422 });
+    }
     const nextSyncAt = input.syncEnabled === true || input.syncIntervalMinutes
-      ? new Date(Date.now() + (input.syncIntervalMinutes ?? (await db.source.findUniqueOrThrow({ where: { id }, select: { syncIntervalMinutes: true } })).syncIntervalMinutes) * 60_000)
+      ? new Date(Date.now() + (input.syncIntervalMinutes ?? current.syncIntervalMinutes) * 60_000)
       : input.syncEnabled === false ? null : undefined;
     const source = await db.source.update({ where: { id }, data: { ...input, nextSyncAt } });
     if (input.playbackMode === "download") {

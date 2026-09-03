@@ -3,7 +3,7 @@ import { discoverBinary } from "@/lib/system/binaries";
 import { runProcess } from "@/lib/system/process";
 import { normalizeChannel, normalizeEntry, normalizePlaylist } from "@/lib/youtube/normalize";
 import type { AnalyzeSourceOptions, ChannelFeed, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
-import { validatePlaylistUrl, validateSourceUrl } from "@/lib/youtube/url";
+import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
 
 async function executable() {
   const binary = await discoverBinary("yt-dlp");
@@ -46,6 +46,20 @@ async function analyzeChannelFeed(base: string, feed: Exclude<ChannelFeed, "all"
 export async function analyzeSource(input: string, options: AnalyzeSourceOptions = {}, signal?: AbortSignal): Promise<PlaylistAnalysis> {
   const parsed = validateSourceUrl(input);
   if (parsed.sourceType === "playlist") return analyzePlaylist(parsed.url, signal);
+  if (parsed.sourceType === "video") {
+    const entry = await fetchVideoMetadata(parsed.url, signal);
+    return {
+      youtubeId: entry.youtubeId,
+      name: `${entry.uploader ?? "YouTube"} collection`,
+      uploaderName: entry.uploader,
+      thumbnailUrl: entry.thumbnailUrl,
+      url: parsed.url,
+      entries: [{ ...entry, playlistIndex: 1 }],
+      sourceType: "collection",
+      feedType: "manual",
+      historyLimit: null
+    };
+  }
   const feed = options.feedType ?? "videos";
   const historyLimit = options.historyLimit === undefined ? 100 : options.historyLimit;
   if (feed !== "all") return analyzeChannelFeed(parsed.url, feed, historyLimit, signal);
@@ -62,7 +76,8 @@ export async function analyzeSource(input: string, options: AnalyzeSourceOptions
 }
 
 export async function fetchVideoMetadata(youtubeUrl: string, signal?: AbortSignal): Promise<PlaylistEntry> {
-  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", "--", youtubeUrl], {
+  const url = validateVideoUrl(youtubeUrl);
+  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", "--", url], {
     signal,
     timeoutMs: 5 * 60_000
   });

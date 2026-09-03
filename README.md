@@ -1,6 +1,6 @@
 # YTarr
 
-YTarr is a local-first companion for [Tunarr](https://tunarr.com). It turns public YouTube playlists and channels into a synchronized local media library.
+YTarr is a local-first companion for [Tunarr](https://tunarr.com). It turns individual YouTube videos, playlists, and channels into a local media library.
 
 YTarr analyzes playlists with `yt-dlp`, stores metadata in SQLite, detects new videos during manual syncs, and downloads explicitly selected videos as stable MP4 files. Its Tunarr integration can register each source as Local Media and create or update a channel from downloaded videos.
 
@@ -56,12 +56,12 @@ Configure the Tunarr base URL in Settings (default `http://127.0.0.1:8000`) and 
 
 ## Workflow
 
-1. Open **Sources → Add Source** and paste an HTTPS YouTube playlist URL.
-2. Analyze the playlist, review the detected count, and create the source.
+1. Open **Sources → Add Source** and paste an HTTPS YouTube video, playlist, or channel URL.
+2. Analyze the URL, review the detected count, and create the source. An individual video starts a curated collection; use **Add individual videos** on its source page to append more URLs in channel order.
 3. Videos appear immediately while detailed metadata is enriched in the background.
 4. Select videos and choose **Download selected**.
 5. Completed files appear as `<youtubeId>.mp4` plus `<youtubeId>.json` in the source media directory.
-6. Use **Sync Now** to add new playlist items and mark removed memberships without deleting metadata or media.
+6. Use **Sync Now** for playlist/channel sources. Curated collections change only when you add individual videos.
 7. In the source's **Tunarr integration** panel, choose a channel name, optional number, and programming order. YTarr creates or reuses a Local Media source for that directory, scans it, and creates the channel. Publishing again updates the linked channel and replaces its programming.
 
 Downloads use temporary directories and are published only after `yt-dlp` and FFmpeg finish successfully. Interrupted jobs are recovered on the next application start and retry up to three times.
@@ -77,9 +77,9 @@ YTARR_YTDLP_PATH="/opt/homebrew/bin/yt-dlp"
 YTARR_FFMPEG_PATH="/opt/homebrew/bin/ffmpeg"
 ```
 
-### A playlist cannot be analyzed
+### A YouTube URL cannot be analyzed
 
-The MVP accepts public HTTPS playlist URLs on standard YouTube domains. Channels, private/account-only playlists, cookies, and age-restricted authentication are Phase 2 work. Run `yt-dlp -U` or update it with your package manager if YouTube changes break extraction.
+YTarr accepts public HTTPS video, playlist, and channel URLs on standard YouTube domains, including `youtu.be` links. Private/account-only media, cookies, and age-restricted authentication are not supported. Run `yt-dlp -U` or update it with your package manager if YouTube changes break extraction.
 
 If YTarr reports that `yt-dlp` detected playlist items but could not extract them, the installed extractor is outdated. Update `yt-dlp`, restart YTarr, and use **Sync Now**; an existing empty source does not need to be recreated.
 
