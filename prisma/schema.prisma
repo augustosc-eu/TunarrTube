@@ -1,0 +1,189 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Source {
+  id                           String        @id @default(cuid())
+  name                         String
+  url                          String
+  sourceType                   String        @default("playlist")
+  youtubeId                    String
+  uploaderName                 String?
+  thumbnailUrl                 String?
+  thumbnailPath                String?
+  playbackMode                 String        @default("download")
+  feedType                     String        @default("playlist")
+  historyLimit                 Int?
+  directoryName                String
+  mediaDirectory               String
+  syncEnabled                  Boolean       @default(false)
+  syncIntervalMinutes          Int           @default(360)
+  nextSyncAt                   DateTime?
+  lastSyncedAt                 DateTime?
+  lastSyncStatus               String?
+  tunarrMediaSourceId          String?
+  tunarrLibraryId              String?
+  tunarrChannelId              String?
+  tunarrChannelNumber          Int?
+  tunarrLastPublishedAt        DateTime?
+  tunarrChannelName            String?
+  tunarrRequestedChannelNumber Int?
+  tunarrProgrammingOrder       String        @default("playlist")
+  createdAt                    DateTime      @default(now())
+  updatedAt                    DateTime      @updatedAt
+  videos                       SourceVideo[]
+  jobs                         Job[]
+  logs                         LogEntry[]
+
+  @@unique([sourceType, youtubeId, feedType])
+  @@unique([directoryName])
+  @@index([updatedAt])
+}
+
+model Video {
+  id              String        @id @default(cuid())
+  youtubeId       String        @unique
+  title           String
+  description     String?
+  uploader        String?
+  durationSeconds Int?
+  uploadDate      DateTime?
+  thumbnailUrl    String?
+  thumbnailPath   String?
+  youtubeUrl      String
+  availability    String        @default("unknown")
+  metadataStatus  String        @default("pending")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  sources         SourceVideo[]
+  jobs            Job[]
+  logs            LogEntry[]
+  cacheAsset      CacheAsset?
+
+  @@index([createdAt])
+}
+
+model SourceVideo {
+  id               String   @id @default(cuid())
+  sourceId         String
+  videoId          String
+  playlistIndex    Int?
+  membershipStatus String   @default("present")
+  lastSeenAt       DateTime @default(now())
+  localPath        String?
+  downloadStatus   String   @default("not_downloaded")
+  fileSize         BigInt?
+  retentionOrigin  String   @default("none")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  source           Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  video            Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, videoId])
+  @@index([sourceId, playlistIndex])
+  @@index([downloadStatus])
+}
+
+model ImportDraft {
+  id           String    @id @default(cuid())
+  url          String
+  youtubeId    String
+  name         String
+  uploaderName String?
+  thumbnailUrl String?
+  sourceType   String    @default("playlist")
+  feedType     String    @default("playlist")
+  historyLimit Int?
+  entriesJson  String
+  videoCount   Int
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  type        String
+  status      String    @default("queued")
+  sourceId    String?
+  videoId     String?
+  payloadJson String?
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  error       String?
+  runAfter    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  updatedAt   DateTime  @updatedAt
+  source      Source?   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  video       Video?    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAfter, createdAt])
+  @@index([sourceId, type, status])
+  @@index([videoId, type, status])
+}
+
+model AppSettings {
+  id                 Int      @id @default(1)
+  mediaBaseDirectory String
+  tunarrUrl          String   @default("http://127.0.0.1:8000")
+  cacheMaxMegabytes  Int      @default(20480)
+  cacheMaxAgeDays    Int      @default(30)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model CacheAsset {
+  id             String    @id @default(cuid())
+  videoId        String    @unique
+  localPath      String?
+  fileSize       BigInt?
+  status         String    @default("not_cached")
+  pinned         Boolean   @default(false)
+  cachedAt       DateTime?
+  lastAccessedAt DateTime?
+  activeReaders  Int       @default(0)
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  video          Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([status, lastAccessedAt])
+  @@index([pinned, status])
+}
+
+model TunarrPathMapping {
+  id           String   @id @default(cuid())
+  ytarrPrefix  String
+  tunarrPrefix String
+  position     Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([ytarrPrefix])
+  @@index([position])
+}
+
+model LogEntry {
+  id        String   @id @default(cuid())
+  level     String   @default("info")
+  category  String
+  message   String
+  details   String?
+  sourceId  String?
+  videoId   String?
+  createdAt DateTime @default(now())
+  source    Source?  @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  video     Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+}

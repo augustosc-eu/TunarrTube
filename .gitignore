@@ -1,0 +1,13 @@
+node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+.env
+*.log
+prisma/*.db
+prisma/*.db-journal
+storage/*
+!storage/.gitkeep
+!storage/media/
+storage/media/*
+!storage/media/.gitkeep

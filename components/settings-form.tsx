@@ -1,0 +1,84 @@
+"use client";
+
+import { useState } from "react";
+import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
+
+type BinaryStatus = { name: string; found: boolean; path: string | null; version: string | null; error?: string };
+type TunarrStatus = { connected: boolean; version: { tunarr: string; ffmpeg: string; nodejs: string }; capabilities: Record<string, boolean> };
+
+type Mapping = { ytarrPrefix: string; tunarrPrefix: string };
+export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialMappings, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialMappings: Mapping[]; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
+  const [directory, setDirectory] = useState(initialDirectory);
+  const [tunarrUrl, setTunarrUrl] = useState(initialTunarrUrl);
+  const [cacheMegabytes, setCacheMegabytes] = useState(String(initialCacheMegabytes));
+  const [cacheAgeDays, setCacheAgeDays] = useState(String(initialCacheAgeDays));
+  const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ ytarrPrefix, tunarrPrefix }) => ({ ytarrPrefix, tunarrPrefix })));
+  const [preview, setPreview] = useState<string | null>(null);
+  const [binaries, setBinaries] = useState({ "yt-dlp": ytDlp, ffmpeg });
+  const [tunarr, setTunarr] = useState<TunarrStatus | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function responseData(response: Response) {
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error?.message ?? "Request failed");
+    return body.data;
+  }
+
+  async function testBinary(name: "yt-dlp" | "ffmpeg") {
+    setBusy(name); setMessage(null);
+    try {
+      const data = await responseData(await fetch(`/api/system/test-${name === "yt-dlp" ? "ytdlp" : "ffmpeg"}`, { method: "POST" }));
+      setBinaries((current) => ({ ...current, [name]: data }));
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Test failed"); }
+    finally { setBusy(null); }
+  }
+
+  async function testTunarr() {
+    setBusy("tunarr"); setMessage(null); setTunarr(null);
+    try {
+      const data = await responseData(await fetch("/api/system/test-tunarr", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tunarrUrl }) }));
+      setTunarr(data);
+      setMessage(`Connected to Tunarr ${data.version.tunarr}. This test is read-only; open a YTarr source and choose Create Tunarr Channel to publish it.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Tunarr test failed"); }
+    finally { setBusy(null); }
+  }
+
+  async function save() {
+    setBusy("settings"); setMessage(null);
+    try {
+      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), pathMappings: mappings }) }));
+      setDirectory(data.mediaBaseDirectory); setTunarrUrl(data.tunarrUrl);
+      setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); }
+    finally { setBusy(null); }
+  }
+
+  async function previewMapping() { setMessage(null); setPreview(null); try { const value = await responseData(await fetch("/api/settings/path-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: directory, mappings }) })); setPreview(value.output); } catch (error) { setMessage(error instanceof Error ? error.message : "Path preview failed"); } }
+
+  return <div className="card form-card">
+    <h2>External tools</h2>
+    {(["yt-dlp", "ffmpeg"] as const).map((name) => {
+      const status = binaries[name];
+      return <div className="system-row" key={name}>
+        <strong>{name}</strong>
+        <div><span className={status.found ? "success" : "error"}>{status.found ? <CheckCircle2 size={14} className="inline-icon" /> : <XCircle size={14} className="inline-icon" />}{status.found ? "Found" : "Not found"}</span><div className="code muted">{status.path ?? status.error}</div><div className="meta">{status.version}</div></div>
+        <button className="button secondary" disabled={Boolean(busy)} onClick={() => testBinary(name)}>{busy === name && <LoaderCircle size={14} className="animate-spin" />} Test</button>
+      </div>;
+    })}
+
+    <h2 className="section-heading">Media</h2>
+    <div className="field"><label htmlFor="media-directory">Base media directory</label><input className="input code" id="media-directory" value={directory} onChange={(event) => setDirectory(event.target.value)} /><span className="meta">Must be an absolute readable and writable path. Existing sources use this base for future downloads; completed files stay at their recorded paths.</span></div>
+    <div className="form-grid"><div className="field"><label htmlFor="cache-size">Cache size (MB)</label><input className="input" id="cache-size" type="number" min="128" value={cacheMegabytes} onChange={(event) => setCacheMegabytes(event.target.value)} /></div><div className="field"><label htmlFor="cache-age">Maximum idle age (days)</label><input className="input" id="cache-age" type="number" min="1" value={cacheAgeDays} onChange={(event) => setCacheAgeDays(event.target.value)} /></div></div>
+
+    <h2 className="section-heading">Tunarr</h2>
+    <div className="field"><label htmlFor="tunarr-url">Tunarr URL</label><input className="input code" id="tunarr-url" type="url" value={tunarrUrl} onChange={(event) => { setTunarrUrl(event.target.value); setTunarr(null); }} /><span className="meta">YTarr discovers the configured server&apos;s OpenAPI contract before creating or updating channels.</span></div>
+    <div className="toolbar"><button className="button secondary" disabled={Boolean(busy)} onClick={testTunarr}>{busy === "tunarr" && <LoaderCircle size={14} className="animate-spin" />} Test Tunarr</button>{tunarr && <span className="success"><CheckCircle2 size={14} className="inline-icon" />API {tunarr.version.tunarr} · {Object.values(tunarr.capabilities).filter(Boolean).length}/{Object.keys(tunarr.capabilities).length} capabilities</span>}</div>
+    <h2 className="section-heading">Tunarr path mappings</h2><p>Mappings use longest-prefix matching. Leave the table empty when both applications see identical paths.</p>
+    {mappings.map((mapping, index) => <div className="form-grid" key={index}><div className="field"><label htmlFor={`ytarr-prefix-${index}`}>YTarr prefix</label><input className="input code" id={`ytarr-prefix-${index}`} value={mapping.ytarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ytarrPrefix: event.target.value } : item))}/></div><div className="field"><label htmlFor={`tunarr-prefix-${index}`}>Tunarr prefix</label><input className="input code" id={`tunarr-prefix-${index}`} value={mapping.tunarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, tunarrPrefix: event.target.value } : item))}/></div><button className="button secondary" type="button" onClick={() => setMappings((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}
+    <div className="toolbar"><button className="button secondary" type="button" onClick={() => setMappings((current) => [...current, { ytarrPrefix: directory, tunarrPrefix: "/media" }])}>Add mapping</button><button className="button secondary" type="button" onClick={previewMapping}>Preview media path</button>{preview ? <span className="code success">{preview}</span> : null}</div>
+
+    <button className="button" disabled={Boolean(busy)} onClick={save}>{busy === "settings" && <LoaderCircle size={14} className="animate-spin" />} Save Settings</button>
+    {message && <p className={message.includes("saved") || message.includes("Connected") ? "success" : "error"}>{message}</p>}
+  </div>;
+}

@@ -1,0 +1,34 @@
+services:
+  ytarr:
+    build: .
+    container_name: ytarr
+    ports:
+      - "${YTARR_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: file:/config/ytarr.db
+      YTARR_MEDIA_DIR: /media
+      YTARR_THUMBNAIL_DIR: /config/thumbnails
+      YTARR_TUNARR_URL: ${YTARR_TUNARR_URL:-http://tunarr:8000}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ytarr-config:/config
+      - ytarr-media:/media
+    restart: unless-stopped
+
+  tunarr:
+    image: chrisbenincasa/tunarr:latest
+    container_name: tunarr
+    profiles: ["tunarr"]
+    ports:
+      - "${TUNARR_PORT:-8000}:8000"
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - tunarr-config:/config/tunarr
+      - ytarr-media:/media:ro
+    restart: unless-stopped
+
+volumes:
+  ytarr-config:
+  ytarr-media:
+  tunarr-config:

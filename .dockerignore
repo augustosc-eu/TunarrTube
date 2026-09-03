@@ -1,0 +1,7 @@
+node_modules
+.next
+.git
+prisma/*.db*
+storage/media
+npm-debug.log*
+.env*
