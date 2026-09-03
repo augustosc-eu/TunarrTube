@@ -4,6 +4,8 @@ YTarr is a local-first companion for [Tunarr](https://tunarr.com). It turns indi
 
 YTarr analyzes playlists with `yt-dlp`, stores metadata in SQLite, detects new videos during manual syncs, and downloads explicitly selected videos as stable MP4 files. Its Tunarr integration can register each source as Local Media and create or update a channel from downloaded videos.
 
+The UI supports light and dark mode. It follows your system preference on first visit; use the toggle at the bottom of the sidebar to switch manually — your choice is remembered on that device.
+
 ## Requirements
 
 - Node.js 22 or newer

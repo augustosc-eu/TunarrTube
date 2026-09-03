@@ -1,8 +1,20 @@
 import { enforceCachePolicy, reconcileCacheFiles } from "@/lib/cache/service";
 import { db } from "@/lib/db/client";
-import { enqueueSync } from "@/lib/sources/service";
+import { enqueueSync, enqueueUniqueJob } from "@/lib/sources/service";
 
-const globalScheduler = globalThis as unknown as { ytarrSchedulerTimer?: NodeJS.Timeout; ytarrCacheTimer?: NodeJS.Timeout; ytarrSchedulerStartedAt?: Date; ytarrSchedulerRunning?: boolean };
+const globalScheduler = globalThis as unknown as { ytarrSchedulerTimer?: NodeJS.Timeout; ytarrCacheTimer?: NodeJS.Timeout; ytarrSchedulerStartedAt?: Date; ytarrSchedulerRunning?: boolean; ytarrAvailabilityBackfillStarted?: boolean };
+
+export async function queueAvailabilityReasonBackfill() {
+  if (globalScheduler.ytarrAvailabilityBackfillStarted) return 0;
+  globalScheduler.ytarrAvailabilityBackfillStarted = true;
+  const videos = await db.video.findMany({ where: { availability: "unavailable", availabilityReason: null }, select: { id: true } });
+  for (const video of videos) await enqueueUniqueJob("metadata", undefined, video.id);
+  if (videos.length) {
+    const { kickWorker } = await import("@/lib/jobs/runner");
+    kickWorker();
+  }
+  return videos.length;
+}
 
 export async function runDueSyncs(now = new Date()) {
   if (globalScheduler.ytarrSchedulerRunning) return 0;
@@ -21,6 +33,7 @@ export function startScheduler() {
   if (globalScheduler.ytarrSchedulerTimer) return;
   globalScheduler.ytarrSchedulerStartedAt = new Date();
   void runDueSyncs();
+  void queueAvailabilityReasonBackfill().catch(() => undefined);
   void reconcileCacheFiles().then(() => enforceCachePolicy()).catch(() => undefined);
   globalScheduler.ytarrSchedulerTimer = setInterval(() => void runDueSyncs(), 60_000);
   globalScheduler.ytarrCacheTimer = setInterval(() => void enforceCachePolicy(), 60 * 60_000);

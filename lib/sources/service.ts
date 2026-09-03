@@ -219,7 +219,7 @@ export async function addVideosToCollection(sourceId: string, inputs: string[], 
     for (const entry of entries) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
-        update: { title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" },
+        update: { title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, availabilityReason: null, metadataStatus: "complete" },
         create: { youtubeId: entry.youtubeId, title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" }
       });
       const membership = await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: video.id } } });

@@ -10,5 +10,10 @@ function duration(seconds: number | null) {
 
 export default async function VideosPage() {
   const videos = await db.video.findMany({ orderBy: { createdAt: "desc" }, include: { sources: { include: { source: { select: { name: true } } } } } });
-  return <><PageHeader eyebrow="Canonical library" title="Videos" />{videos.length ? <div className="table-wrap"><table><thead><tr><th>Video</th><th>Duration</th><th>Sources</th><th>Availability</th></tr></thead><tbody>{videos.map((video) => <tr key={video.id}><td className="title-cell"><strong>{video.title}</strong><span className="meta">{video.uploader ?? video.youtubeId}</span></td><td>{duration(video.durationSeconds)}</td><td>{video.sources.map((membership) => membership.source.name).join(", ")}</td><td><span className={`badge ${video.availability}`}>{video.availability}</span></td></tr>)}</tbody></table></div> : <div className="empty"><h2>No videos yet</h2><p>Videos appear here after a source is added.</p></div>}</>;
+  return <><PageHeader eyebrow="Canonical library" title="Videos" />{videos.length ? <div className="table-wrap"><table><thead><tr><th>Video</th><th>Duration</th><th>Sources</th><th>Availability</th></tr></thead><tbody>{videos.map((video) => <tr key={video.id}>
+    <td className="title-cell"><strong>{video.title}</strong><span className="meta">{video.uploader ?? video.youtubeId}</span></td>
+    <td>{duration(video.durationSeconds)}</td>
+    <td>{video.sources.map((membership) => membership.source.name).join(", ")}</td>
+    <td><span className={`badge ${video.availability}`}>{video.availability}</span>{video.availabilityReason ? <span className="availability-reason">{video.availabilityReason}</span> : null}</td>
+  </tr>)}</tbody></table></div> : <div className="empty"><h2>No videos yet</h2><p>Videos appear here after a source is added.</p></div>}</>;
 }

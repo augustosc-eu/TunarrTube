@@ -91,6 +91,62 @@ export async function fetchVideoMetadata(youtubeUrl: string, signal?: AbortSigna
   }
 }
 
+type PlayabilityStatus = {
+  reason?: string;
+  errorScreen?: {
+    playerInterstitialRenderer?: { content?: { interstitialViewModel?: { description?: { content?: string } } } };
+    playerErrorMessageRenderer?: { subreason?: { runs?: Array<{ text?: string }> } };
+  };
+};
+
+export function extractAvailabilityReason(html: string) {
+  const marker = '"playabilityStatus":';
+  let offset = 0;
+  while ((offset = html.indexOf(marker, offset)) >= 0) {
+    const start = html.indexOf("{", offset + marker.length);
+    if (start < 0) return null;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < html.length; index += 1) {
+      const character = html[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') quoted = false;
+        continue;
+      }
+      if (character === '"') quoted = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}" && --depth === 0) {
+        try {
+          const status = JSON.parse(html.slice(start, index + 1)) as PlayabilityStatus;
+          const interstitial = status.errorScreen?.playerInterstitialRenderer?.content?.interstitialViewModel?.description?.content;
+          const legacy = status.errorScreen?.playerErrorMessageRenderer?.subreason?.runs?.map((run) => run.text).filter(Boolean).join(" ");
+          const reason = interstitial ?? legacy ?? status.reason;
+          if (reason?.trim()) return reason.replace(/\s+/g, " ").trim().slice(0, 1000);
+        } catch { /* Try another embedded player response. */ }
+        offset = index + 1;
+        break;
+      }
+    }
+    if (offset <= start) return null;
+  }
+  return null;
+}
+
+export async function fetchVideoAvailabilityReason(youtubeUrl: string, signal?: AbortSignal) {
+  const url = validateVideoUrl(youtubeUrl);
+  const timeout = AbortSignal.timeout(30_000);
+  const response = await fetch(`${url}&hl=en`, {
+    headers: { "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (compatible; YTarr/0.1)" },
+    cache: "no-store",
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+  });
+  if (!response.ok) return null;
+  return extractAvailabilityReason(await response.text());
+}
+
 export async function getYtDlpPath() {
   return executable();
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizePlaylist, parseUploadDate } from "@/lib/youtube/normalize";
 import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
+import { extractAvailabilityReason } from "@/lib/youtube/ytdlp";
 
 describe("YouTube input validation", () => {
   it("accepts HTTPS playlist URLs", () => {
@@ -63,4 +64,19 @@ describe("yt-dlp normalization", () => {
       .toThrow(/detected 21 playlist items/);
   });
   it("parses yt-dlp upload dates in UTC", () => expect(parseUploadDate("20250131")?.toISOString()).toBe("2025-01-31T00:00:00.000Z"));
+});
+
+describe("YouTube availability reasons", () => {
+  it("extracts the current interstitial explanation", () => {
+    const status = { status: "ERROR", reason: "Video unavailable", errorScreen: { playerInterstitialRenderer: { content: { interstitialViewModel: { description: { content: "It was removed following a copyright removal request by Discovery Communications, LLC" } } } } } };
+    expect(extractAvailabilityReason(`before\"playabilityStatus\":${JSON.stringify(status)}after`)).toBe("It was removed following a copyright removal request by Discovery Communications, LLC");
+  });
+
+  it("supports the legacy player error shape and generic fallback", () => {
+    const legacy = { status: "LOGIN_REQUIRED", reason: "Sign in", errorScreen: { playerErrorMessageRenderer: { subreason: { runs: [{ text: "This video is private." }, { text: "Sign in to continue." }] } } } };
+    expect(extractAvailabilityReason(`\"playabilityStatus\":${JSON.stringify(legacy)}`)).toBe("This video is private. Sign in to continue.");
+    expect(extractAvailabilityReason('\"playabilityStatus\":{\"status\":\"ERROR\",\"reason\":\"Video unavailable\"}')).toBe("Video unavailable");
+  });
+
+  it("returns null when no player response is present", () => expect(extractAvailabilityReason("<html></html>")).toBeNull());
 });

@@ -13,7 +13,7 @@ export default async function SourcePage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const source = await db.source.findUnique({ where: { id }, include: { videos: { orderBy: [{ playlistIndex: "asc" }, { createdAt: "asc" }], include: { video: true } } } });
   if (!source) notFound();
-  const rows = source.videos.map((membership) => ({ membershipId: membership.id, videoId: membership.videoId, youtubeId: membership.video.youtubeId, title: membership.video.title, uploader: membership.video.uploader, durationSeconds: membership.video.durationSeconds, playlistIndex: membership.playlistIndex, metadataStatus: membership.video.metadataStatus, availability: membership.video.availability, membershipStatus: membership.membershipStatus, downloadStatus: membership.downloadStatus }));
+  const rows = source.videos.map((membership) => ({ membershipId: membership.id, videoId: membership.videoId, youtubeId: membership.video.youtubeId, title: membership.video.title, uploader: membership.video.uploader, durationSeconds: membership.video.durationSeconds, playlistIndex: membership.playlistIndex, metadataStatus: membership.video.metadataStatus, availability: membership.video.availability, availabilityReason: membership.video.availabilityReason, membershipStatus: membership.membershipStatus, downloadStatus: membership.downloadStatus }));
   const downloadedCount = source.videos.filter((membership) => membership.membershipStatus === "present" && membership.downloadStatus === "complete" && membership.localPath).length;
   const lastPublishedLabel = source.tunarrLastPublishedAt
     ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(source.tunarrLastPublishedAt) + " UTC"

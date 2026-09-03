@@ -57,6 +57,7 @@ model Video {
   thumbnailPath   String?
   youtubeUrl      String
   availability    String        @default("unknown")
+  availabilityReason String?
   metadataStatus  String        @default("pending")
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
