@@ -38,7 +38,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
       "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
       "--ffmpeg-location", path.dirname(ffmpeg),
       "-f", "bv*[vcodec^=avc]+ba[acodec^=mp4a]/b[ext=mp4]/best",
-      "--merge-output-format", "mp4", "--recode-video", "mp4",
+      "--merge-output-format", "mp4", "--recode-video", "mp4", "--embed-metadata",
       "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), "--", youtubeUrl
     ], { timeoutMs: 12 * 60 * 60_000 });
     const files = await readdir(tempDirectory);
@@ -102,6 +102,49 @@ export async function downloadVideo(sourceId: string, videoId: string) {
   } catch (error) {
     await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "failed" } });
     throw error;
+  }
+}
+
+export async function retagVideo(sourceId: string, videoId: string) {
+  const membership = await db.sourceVideo.findUnique({
+    where: { sourceId_videoId: { sourceId, videoId } },
+    include: { source: true, video: true }
+  });
+  if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
+  if (membership.downloadStatus !== "complete" || !membership.localPath || !(await exists(membership.localPath))) {
+    return { skipped: true };
+  }
+  const target = membership.localPath;
+  const tempTarget = await assertWithinDirectory(membership.source.mediaDirectory, `${target}.${process.pid}.retag.tmp`);
+  try {
+    const ffmpeg = await requireFfmpeg();
+    await runProcess(ffmpeg, [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-i", target, "-map", "0", "-c", "copy",
+      "-metadata", `title=${membership.video.title}`,
+      "-metadata", `description=${membership.video.description ?? ""}`,
+      "-metadata", `comment=${membership.video.description ?? ""}`,
+      "-metadata", `artist=${membership.video.uploader ?? ""}`,
+      "-movflags", "use_metadata_tags",
+      tempTarget
+    ], { timeoutMs: 30 * 60_000 });
+    const details = await stat(tempTarget);
+    await rename(tempTarget, target);
+    await db.sourceVideo.update({ where: { id: membership.id }, data: { fileSize: details.size } });
+    const sidecar = await assertWithinDirectory(membership.source.mediaDirectory, path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.json`));
+    await writeSidecar(sidecar, {
+      youtubeId: membership.video.youtubeId,
+      title: membership.video.title,
+      description: membership.video.description,
+      duration: membership.video.durationSeconds,
+      uploadDate: membership.video.uploadDate?.toISOString() ?? null,
+      source: membership.source.name,
+      originalUrl: membership.video.youtubeUrl
+    });
+    await writeLog({ category: "download", sourceId, videoId, message: `Retagged metadata for ${membership.video.youtubeId}.` });
+    return { localPath: target, fileSize: details.size };
+  } finally {
+    await rm(tempTarget, { force: true }).catch(() => undefined);
   }
 }
 

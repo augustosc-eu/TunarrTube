@@ -172,6 +172,20 @@ export async function enqueueUniqueJob(type: string, sourceId?: string, videoId?
   return db.job.create({ data: { type, sourceId, videoId, payloadJson: payload ? JSON.stringify(payload) : undefined, maxAttempts: type === "tunarr_refresh" ? 100 : 3 } });
 }
 
+export async function enqueueMetadataRepair() {
+  const memberships = await db.sourceVideo.findMany({
+    where: { downloadStatus: "complete", localPath: { not: null } },
+    select: { sourceId: true, videoId: true }
+  });
+  for (const membership of memberships) {
+    await enqueueUniqueJob("retag", membership.sourceId, membership.videoId);
+  }
+  await writeLog({ category: "download", message: `Queued metadata repair for ${memberships.length} video${memberships.length === 1 ? "" : "s"}.` });
+  const { kickWorker } = await import("@/lib/jobs/runner");
+  kickWorker();
+  return { queued: memberships.length };
+}
+
 export async function enqueueSync(sourceId: string) {
   const source = await db.source.findUnique({ where: { id: sourceId }, select: { id: true, sourceType: true } });
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);

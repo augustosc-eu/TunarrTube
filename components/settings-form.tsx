@@ -44,6 +44,15 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     finally { setBusy(null); }
   }
 
+  async function repairMetadata() {
+    setBusy("repair"); setMessage(null);
+    try {
+      const data = await responseData(await fetch("/api/system/repair-metadata", { method: "POST" }));
+      setMessage(`Queued metadata repair for ${data.queued} video${data.queued === 1 ? "" : "s"}.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Repair failed"); }
+    finally { setBusy(null); }
+  }
+
   async function save() {
     setBusy("settings"); setMessage(null);
     try {
@@ -74,11 +83,12 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     <h2 className="section-heading">Tunarr</h2>
     <div className="field"><label htmlFor="tunarr-url">Tunarr URL</label><input className="input code" id="tunarr-url" type="url" value={tunarrUrl} onChange={(event) => { setTunarrUrl(event.target.value); setTunarr(null); }} /><span className="meta">YTarr discovers the configured server&apos;s OpenAPI contract before creating or updating channels.</span></div>
     <div className="toolbar"><button className="button secondary" disabled={Boolean(busy)} onClick={testTunarr}>{busy === "tunarr" && <LoaderCircle size={14} className="animate-spin" />} Test Tunarr</button>{tunarr && <span className="success"><CheckCircle2 size={14} className="inline-icon" />API {tunarr.version.tunarr} · {Object.values(tunarr.capabilities).filter(Boolean).length}/{Object.keys(tunarr.capabilities).length} capabilities</span>}</div>
+    <div className="toolbar"><button className="button secondary" disabled={Boolean(busy)} onClick={repairMetadata}>{busy === "repair" && <LoaderCircle size={14} className="animate-spin" />} Repair video metadata</button><span className="meta">Re-embeds title/description into already-downloaded files and refreshes linked Tunarr channels.</span></div>
     <h2 className="section-heading">Tunarr path mappings</h2><p>Mappings use longest-prefix matching. Leave the table empty when both applications see identical paths.</p>
     {mappings.map((mapping, index) => <div className="form-grid" key={index}><div className="field"><label htmlFor={`ytarr-prefix-${index}`}>YTarr prefix</label><input className="input code" id={`ytarr-prefix-${index}`} value={mapping.ytarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ytarrPrefix: event.target.value } : item))}/></div><div className="field"><label htmlFor={`tunarr-prefix-${index}`}>Tunarr prefix</label><input className="input code" id={`tunarr-prefix-${index}`} value={mapping.tunarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, tunarrPrefix: event.target.value } : item))}/></div><button className="button secondary" type="button" onClick={() => setMappings((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}
     <div className="toolbar"><button className="button secondary" type="button" onClick={() => setMappings((current) => [...current, { ytarrPrefix: directory, tunarrPrefix: "/media" }])}>Add mapping</button><button className="button secondary" type="button" onClick={previewMapping}>Preview media path</button>{preview ? <span className="code success">{preview}</span> : null}</div>
 
     <button className="button" disabled={Boolean(busy)} onClick={save}>{busy === "settings" && <LoaderCircle size={14} className="animate-spin" />} Save Settings</button>
-    {message && <p className={message.includes("saved") || message.includes("Connected") ? "success" : "error"}>{message}</p>}
+    {message && <p className={message.includes("saved") || message.includes("Connected") || message.includes("Queued") ? "success" : "error"}>{message}</p>}
   </div>;
 }

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db/client";
-import { cacheVideo, downloadVideo, materializeForTunarr } from "@/lib/downloads/service";
+import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo } from "@/lib/downloads/service";
 import { writeLog } from "@/lib/logging/service";
 import { enrichVideo } from "@/lib/metadata/service";
 import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
@@ -31,6 +31,7 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>)
   if (job.type === "sync" && job.sourceId) return syncSource(job.sourceId);
   if (job.type === "download" && job.sourceId && job.videoId) return downloadVideo(job.sourceId, job.videoId);
   if (job.type === "cache" && job.videoId) return cacheVideo(job.videoId);
+  if (job.type === "retag" && job.sourceId && job.videoId) return retagVideo(job.sourceId, job.videoId);
   if (job.type === "tunarr_publish" && job.sourceId && job.payloadJson) {
     return publishSourceToTunarr(job.sourceId, JSON.parse(job.payloadJson) as PublishTunarrInput);
   }
@@ -52,7 +53,7 @@ async function work() {
     try {
       await handleJob(job);
       await db.job.update({ where: { id: job.id }, data: { status: "complete", finishedAt: new Date() } }).catch(() => undefined);
-      if (["download", "cache"].includes(job.type) && job.sourceId) {
+      if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
         const linked = await db.source.findUnique({ where: { id: job.sourceId }, select: { tunarrChannelId: true } });
         if (linked?.tunarrChannelId) {
           if (job.type === "cache" && job.videoId) await materializeForTunarr(job.sourceId, job.videoId);
