@@ -117,8 +117,8 @@
     "tests/youtube.test.ts": "4650fdc9c3d135f4f23bbcf4a77320137c0d54b66b89036c2fa15dc62f089955",
     "vitest.config.ts": "55cb220215e202cecae6640d51ee9d9fdd59232dec8110f3417a83252410642e"
   },
-  "indexed_at_commit": "b2313b307c61e3e0266cf9dfbd24c1108ebb2ecc",
-  "indexed_at_timestamp": "2026-09-04T14:29:26.823780+00:00",
+  "indexed_at_commit": "79323da02bdc081d88fc3cb239ca457ac5544056",
+  "indexed_at_timestamp": "2026-09-04T14:29:40.093877+00:00",
   "schema_version": 3,
   "stats": {
     "total_edges": 852,
