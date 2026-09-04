@@ -175,6 +175,7 @@ export async function cacheVideo(videoId: string, sourceId?: string) {
   const source = sourceId ? await db.source.findUnique({ where: { id: sourceId }, select: { videoQuality: true } }) : null;
   const quality = resolveEffectiveQuality(source?.videoQuality, settings.defaultVideoQuality);
   const directory = path.join(settings.mediaBaseDirectory, "._ytarr-cache", "videos");
+  await mkdir(directory, { recursive: true });
   const target = await assertWithinDirectory(settings.mediaBaseDirectory, path.join(directory, `${video.youtubeId}.mp4`));
   const asset = await db.cacheAsset.upsert({
     where: { videoId },
