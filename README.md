@@ -306,6 +306,7 @@ Architecture and product context live in:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Engineering decisions](docs/DECISIONS.md)
 - [Contributing guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## Support
 

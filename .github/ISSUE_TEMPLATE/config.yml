@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/augustosc-eu/yt-tunarr/security/advisories/new
+    about: >-
+      Do not open a public issue for a suspected vulnerability. Use GitHub's private advisory
+      reporting (linked here) or the contact method described in SECURITY.md.

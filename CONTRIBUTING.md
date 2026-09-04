@@ -2,6 +2,8 @@
 
 Thanks for helping improve TunarrTube. For substantial changes, open an issue first so the approach and product scope can be agreed before implementation.
 
+By participating in this project you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Development setup
 
 Install Node.js 22 or newer, `yt-dlp`, and FFmpeg, then run:

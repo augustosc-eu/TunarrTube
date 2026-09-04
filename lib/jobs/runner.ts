@@ -13,6 +13,11 @@ const globalWorker = globalThis as unknown as { ytarrWorker?: Promise<void>; yta
 // metadata/listing calls made by "sync" -- these are the ones worth pausing as a group on a 429.
 const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
 
+// Thrown by the tunarr_refresh guard in handleJob() when other download/cache/sync jobs for the same
+// source are still active. This is an expected, routine wait -- not a real failure -- so handleJobFailure
+// logs and retries it distinctly from an ordinary job error below.
+export class SourceJobsActiveError extends Error {}
+
 async function recoverJobs() {
   if (globalWorker.ytarrRecovered) return;
   globalWorker.ytarrRecovered = true;
@@ -52,7 +57,7 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>)
     const source = await db.source.findUnique({ where: { id: job.sourceId } });
     if (!source?.tunarrChannelId || !source.tunarrChannelName) return;
     const active = await db.job.count({ where: { sourceId: job.sourceId, id: { not: job.id }, type: { in: ["download", "cache", "sync"] }, status: { in: ["queued", "running"] } } });
-    if (active) throw new Error("Waiting for source media jobs before refreshing Tunarr.");
+    if (active) throw new SourceJobsActiveError("Waiting for source media jobs before refreshing Tunarr.");
     return publishSourceToTunarr(job.sourceId, { channelName: source.tunarrChannelName, channelNumber: source.tunarrRequestedChannelNumber ?? undefined, programmingOrder: source.tunarrProgrammingOrder as PublishTunarrInput["programmingOrder"], prefetch: false });
   }
   throw new Error(`Invalid ${job.type} job payload.`);
@@ -96,6 +101,13 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     where: { id: job.id },
     data: { status: retry ? "queued" : "failed", error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
   }).catch(() => undefined);
+  if (error instanceof SourceJobsActiveError) {
+    // Routine deferral, not a failure: log it quietly so it doesn't read like an incident in the logs
+    // while other jobs for the source are still in flight. tunarr_refresh's generous maxAttempts (100,
+    // see enqueueUniqueJob) means it keeps retrying well past the point an ordinary job would give up.
+    await writeLog({ level: "info", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job deferred: ${message}` });
+    return;
+  }
   await writeLog({ level: "error", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message}` });
 }
 
