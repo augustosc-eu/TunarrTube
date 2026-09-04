@@ -19,7 +19,15 @@ async function recoverJobs() {
 }
 
 async function claimJob() {
-  const candidate = await db.job.findFirst({ where: { status: "queued", runAfter: { lte: new Date() } }, orderBy: { createdAt: "asc" } });
+  const now = new Date();
+  // Three priority tiers so a large backlog of slow, network-bound jobs can never starve fast ones behind
+  // it in strict creation order: "retag" is a purely local ffmpeg remux (no network, near-instant) so it
+  // always goes first; other non-download jobs (metadata, thumbnail, sync, cache, tunarr_*) are quick
+  // network calls and go next; "download" (slow yt-dlp calls, up to a 12h timeout each) goes last.
+  const candidate =
+    (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "retag" }, orderBy: { createdAt: "asc" } })) ??
+    (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { notIn: ["download", "retag"] } }, orderBy: { createdAt: "asc" } })) ??
+    (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "download" }, orderBy: { createdAt: "asc" } }));
   if (!candidate) return null;
   const claimed = await db.job.updateMany({ where: { id: candidate.id, status: "queued" }, data: { status: "running", startedAt: new Date(), attempts: { increment: 1 }, error: null } });
   return claimed.count === 1 ? db.job.findUnique({ where: { id: candidate.id } }) : null;

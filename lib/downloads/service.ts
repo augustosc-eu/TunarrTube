@@ -24,6 +24,29 @@ async function writeSidecar(target: string, data: unknown) {
   await rename(temp, target);
 }
 
+function xmlEscape(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Tunarr's "other_videos" local media scanner ignores embedded container metadata entirely and instead
+// reads a Kodi-style NFO sidecar (same basename as the video, ".nfo" extension) for title/plot -- see
+// https://tunarr.com/configure/media_sources/local/other_videos/. This is the only mechanism that gets a
+// real title/description into Tunarr's guide for this library type.
+function buildNfo(video: { title: string; description: string | null; uploader: string | null; uploadDate: Date | null }) {
+  const lines = ["<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>", "<movie>", `  <title>${xmlEscape(video.title)}</title>`];
+  if (video.description) lines.push(`  <plot>${xmlEscape(video.description)}</plot>`);
+  if (video.uploader) lines.push(`  <studio>${xmlEscape(video.uploader)}</studio>`);
+  if (video.uploadDate) lines.push(`  <premiered>${video.uploadDate.toISOString().slice(0, 10)}</premiered>`);
+  lines.push("</movie>");
+  return `${lines.join("\n")}\n`;
+}
+
+async function writeNfo(target: string, video: { title: string; description: string | null; uploader: string | null; uploadDate: Date | null }) {
+  const temp = `${target}.${process.pid}.tmp`;
+  await writeFile(temp, buildNfo(video), "utf8");
+  await rename(temp, target);
+}
+
 async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string) {
   const targetDirectory = path.dirname(target);
   await mkdir(targetDirectory, { recursive: true });
@@ -75,6 +98,7 @@ export async function downloadVideo(sourceId: string, videoId: string) {
   await mkdir(sourceDir, { recursive: true });
   const target = await assertWithinDirectory(sourceDir, path.join(sourceDir, `${membership.video.youtubeId}.mp4`));
   const sidecar = await assertWithinDirectory(sourceDir, path.join(sourceDir, `${membership.video.youtubeId}.json`));
+  const nfo = await assertWithinDirectory(sourceDir, path.join(sourceDir, `${membership.video.youtubeId}.nfo`));
   if (membership.downloadStatus === "complete" && membership.localPath && (await exists(membership.localPath))) {
     if (membership.retentionOrigin !== "permanent") await db.sourceVideo.update({ where: { id: membership.id }, data: { retentionOrigin: "permanent" } });
     return { localPath: membership.localPath, reused: true };
@@ -96,6 +120,7 @@ export async function downloadVideo(sourceId: string, videoId: string) {
       source: membership.source.name,
       originalUrl: membership.video.youtubeUrl
     });
+    await writeNfo(nfo, membership.video);
     await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "complete", localPath: target, fileSize: details.size, retentionOrigin: "permanent" } });
     await writeLog({ category: "download", sourceId, videoId, message: `${reused ? "Linked" : "Downloaded"} ${membership.video.youtubeId}.` });
     return { localPath: target, fileSize: details.size, reused };
@@ -114,38 +139,23 @@ export async function retagVideo(sourceId: string, videoId: string) {
   if (membership.downloadStatus !== "complete" || !membership.localPath || !(await exists(membership.localPath))) {
     return { skipped: true };
   }
-  const target = membership.localPath;
-  const tempTarget = await assertWithinDirectory(membership.source.mediaDirectory, `${target}.${process.pid}.retag.tmp`);
-  try {
-    const ffmpeg = await requireFfmpeg();
-    await runProcess(ffmpeg, [
-      "-y", "-hide_banner", "-loglevel", "error",
-      "-i", target, "-map", "0", "-c", "copy",
-      "-metadata", `title=${membership.video.title}`,
-      "-metadata", `description=${membership.video.description ?? ""}`,
-      "-metadata", `comment=${membership.video.description ?? ""}`,
-      "-metadata", `artist=${membership.video.uploader ?? ""}`,
-      "-movflags", "use_metadata_tags",
-      tempTarget
-    ], { timeoutMs: 30 * 60_000 });
-    const details = await stat(tempTarget);
-    await rename(tempTarget, target);
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { fileSize: details.size } });
-    const sidecar = await assertWithinDirectory(membership.source.mediaDirectory, path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.json`));
-    await writeSidecar(sidecar, {
-      youtubeId: membership.video.youtubeId,
-      title: membership.video.title,
-      description: membership.video.description,
-      duration: membership.video.durationSeconds,
-      uploadDate: membership.video.uploadDate?.toISOString() ?? null,
-      source: membership.source.name,
-      originalUrl: membership.video.youtubeUrl
-    });
-    await writeLog({ category: "download", sourceId, videoId, message: `Retagged metadata for ${membership.video.youtubeId}.` });
-    return { localPath: target, fileSize: details.size };
-  } finally {
-    await rm(tempTarget, { force: true }).catch(() => undefined);
-  }
+  // Tunarr's "other_videos" scanner never reads the video file's own container metadata -- it reads a
+  // Kodi-style ".nfo" sidecar (see buildNfo above). So repairing metadata is a pair of cheap local file
+  // writes, not a video re-encode: no ffmpeg, and the media file itself is never touched.
+  const sidecar = await assertWithinDirectory(membership.source.mediaDirectory, path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.json`));
+  const nfo = await assertWithinDirectory(membership.source.mediaDirectory, path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.nfo`));
+  await writeSidecar(sidecar, {
+    youtubeId: membership.video.youtubeId,
+    title: membership.video.title,
+    description: membership.video.description,
+    duration: membership.video.durationSeconds,
+    uploadDate: membership.video.uploadDate?.toISOString() ?? null,
+    source: membership.source.name,
+    originalUrl: membership.video.youtubeUrl
+  });
+  await writeNfo(nfo, membership.video);
+  await writeLog({ category: "download", sourceId, videoId, message: `Refreshed metadata sidecar for ${membership.video.youtubeId}.` });
+  return { localPath: membership.localPath };
 }
 
 export async function cacheVideo(videoId: string) {
@@ -201,6 +211,7 @@ export async function materializeForTunarr(sourceId: string, videoId: string) {
     duration: membership.video.durationSeconds, uploadDate: membership.video.uploadDate?.toISOString() ?? null,
     source: membership.source.name, originalUrl: membership.video.youtubeUrl
   });
+  await writeNfo(path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.nfo`), membership.video);
   await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "complete", localPath: target, fileSize: details.size, retentionOrigin: "tunarr" } });
   return target;
 }

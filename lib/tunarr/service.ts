@@ -120,7 +120,7 @@ export async function publishSourceToTunarr(sourceId: string, input: PublishTuna
   const [channels, transcodeConfigId] = await Promise.all([client.listChannels(signal), client.getDefaultTranscodeConfigId(signal)]);
   const existing = source.tunarrChannelId ? channels.find((channel) => channel.id === source.tunarrChannelId) : undefined;
   const occupied = new Set(channels.filter((channel) => channel.id !== existing?.id).map((channel) => channel.number));
-  const number = input.channelNumber ?? Math.max(0, ...channels.map((channel) => channel.number)) + 1;
+  const number = input.channelNumber ?? existing?.number ?? Math.max(0, ...channels.map((channel) => channel.number)) + 1;
   if (occupied.has(number)) throw new AppError("TUNARR_CHANNEL_NUMBER_EXISTS", `Tunarr channel number ${number} is already in use.`, 409);
   let channelId = existing?.id ?? source.tunarrChannelId ?? randomUUID();
   const duration = lineup.reduce((total, program) => total + program.duration, 0);
@@ -174,6 +174,7 @@ export async function unlinkTunarr(sourceId: string) {
     if (membership.localPath) {
       await rm(membership.localPath, { force: true });
       await rm(membership.localPath.replace(/\.mp4$/i, ".json"), { force: true });
+      await rm(membership.localPath.replace(/\.mp4$/i, ".nfo"), { force: true });
     }
     await db.sourceVideo.update({ where: { id: membership.id }, data: { localPath: null, fileSize: null, downloadStatus: "not_downloaded", retentionOrigin: "none" } });
   }

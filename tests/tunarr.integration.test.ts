@@ -66,4 +66,46 @@ describe("Tunarr publish pipeline", () => {
       await db.video.delete({ where: { id: video.id } });
     }
   });
+
+  it("keeps an existing channel's number on refresh instead of bumping it to the next available slot", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const mediaDirectory = `/tmp/ytarr-tunarr-renumber-${suffix}`;
+    const existingChannelId = `channel-${suffix}`;
+    const source = await db.source.create({
+      data: { name: "Renumber test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `tunarr-renumber-${suffix}`, mediaDirectory, tunarrChannelId: existingChannelId, tunarrChannelNumber: 5 }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `youtube-renumber-${suffix}`, title: "Renumber test video", youtubeUrl: `https://youtube.com/watch?v=youtube-renumber-${suffix}`, uploadDate: new Date("2024-01-01") }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, playlistIndex: 1, downloadStatus: "complete", localPath: `${mediaDirectory}/${video.youtubeId}.mp4` } });
+
+    let updatePayload: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (urlValue: string, init?: RequestInit) => {
+      const url = new URL(urlValue);
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/openapi.json") return Response.json({ info: { version: "1.3.13" }, paths });
+      if (url.pathname === "/api/media-sources" && method === "GET") return Response.json([{ id: "source-1", name: "YTarr - Renumber test", type: "local", paths: [mediaDirectory], libraries: [{ id: "library-1", name: mediaDirectory, mediaType: "other_videos", externalKey: mediaDirectory, enabled: true }] }]);
+      if (url.pathname.endsWith("/scan") && method === "POST") return Response.json({}, { status: 202 });
+      if (url.pathname.endsWith("/status")) return Response.json({ state: "not_scanning" });
+      if (url.pathname === "/api/media-libraries/library-1/programs") return Response.json([{ type: "content", id: "program-1", duration: 60_000, program: { externalId: `${mediaDirectory}/${video.youtubeId}.mp4` } }]);
+      // Another channel already occupies a higher number, so a naive "next available" computation would bump us past it.
+      if (url.pathname === "/api/channels" && method === "GET") return Response.json([{ id: existingChannelId, name: "Renumber Test TV", number: 5 }, { id: "other-channel", name: "Other", number: 9 }]);
+      if (url.pathname === "/api/transcode_configs") return Response.json([{ id: "07925780-d3ba-476e-ba5c-bf0d89c58245", isDefault: true }]);
+      if (url.pathname === `/api/channels/${existingChannelId}` && method === "PUT") {
+        updatePayload = JSON.parse(String(init?.body));
+        return Response.json({});
+      }
+      if (url.pathname.endsWith("/programming") && method === "POST") return Response.json({});
+      return Response.json({ message: `Unexpected ${method} ${url.pathname}` }, { status: 404 });
+    }));
+
+    try {
+      const result = await publishSourceToTunarr(source.id, { channelName: "Renumber Test TV", programmingOrder: "playlist" });
+      expect(result.channelNumber).toBe(5);
+      expect(updatePayload).toMatchObject({ number: 5 });
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  });
 });

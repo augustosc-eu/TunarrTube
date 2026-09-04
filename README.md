@@ -56,7 +56,7 @@ Binary discovery checks `YTARR_YTDLP_PATH` / `YTARR_FFMPEG_PATH`, then `which`, 
 
 Configure the Tunarr base URL in Settings (default `http://127.0.0.1:8000`) and use **Test Tunarr**. YTarr reads the configured server's `/openapi.json` and refuses mutations when required API capabilities are absent.
 
-Downloaded MP4s embed the video's title/description/uploader as container metadata, which is how Tunarr's own library scan picks up a proper title instead of the bare YouTube ID (YTarr never sends title/description to Tunarr's API directly — Tunarr matches scanned files back to YTarr videos by filename). Videos downloaded before this was added, or that still show their YouTube ID as the title in Tunarr, can be fixed with **Repair video metadata** in Settings — it re-tags existing files in place (no re-download) and refreshes any linked Tunarr channels.
+YTarr never sends title/description to Tunarr's API directly — Tunarr matches scanned files back to YTarr videos by filename. Instead, every downloaded video gets a companion `<youtubeId>.nfo` file next to its `.mp4`, which is what Tunarr's local media scanner actually reads for the title/description shown in its guide. Videos downloaded before this existed, or that still show their YouTube ID as the title in Tunarr, can be fixed with **Repair video metadata** in Settings — it regenerates the sidecar files in place (no re-download, the media file itself isn't touched) and refreshes any linked Tunarr channels.
 
 ## Workflow
 
