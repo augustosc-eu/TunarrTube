@@ -152,6 +152,16 @@ export async function getYtDlpPath() {
   return executable();
 }
 
+// yt-dlp surfaces YouTube's throttling as an HTTP 429 in the extractor error it prints to stderr, which
+// `runProcess` folds into the failure message. Distinct from "Sign in to confirm you're not a bot", which
+// is a bot-check that would need cookies/auth to resolve (see AGENTS.md's stance on that) -- this is purely
+// "you're requesting too fast," which calling code should treat as a signal to pause and back off, not fail.
+const RATE_LIMIT_SIGNAL = /HTTP Error 429|429 Client Error|Too Many Requests/i;
+
+export function isRateLimitedError(message: string) {
+  return RATE_LIMIT_SIGNAL.test(message);
+}
+
 export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality = "best", signal?: AbortSignal) {
   const result = await runProcess(await executable(), [
     "--get-url", "--no-playlist", "--no-warnings",

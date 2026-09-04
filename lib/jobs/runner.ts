@@ -5,8 +5,13 @@ import { enrichVideo } from "@/lib/metadata/service";
 import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
+import { isRateLimitedError } from "@/lib/youtube/ytdlp";
 
-const globalWorker = globalThis as unknown as { ytarrWorker?: Promise<void>; ytarrRecovered?: boolean; ytarrWakeTimer?: NodeJS.Timeout };
+const globalWorker = globalThis as unknown as { ytarrWorker?: Promise<void>; ytarrRecovered?: boolean; ytarrWakeTimer?: NodeJS.Timeout; ytarrRateLimitHits?: number };
+
+// Media-fetching job types that shell out to yt-dlp for the actual video bytes, as opposed to the light
+// metadata/listing calls made by "sync" -- these are the ones worth pausing as a group on a 429.
+const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
 
 async function recoverJobs() {
   if (globalWorker.ytarrRecovered) return;
@@ -53,6 +58,47 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>)
   throw new Error(`Invalid ${job.type} job payload.`);
 }
 
+// Exported so tests can exercise the rate-limit-vs-ordinary-failure branching directly, without going
+// through claimJob()/work()'s table-wide scan -- that scan has no per-test scoping, so driving it from a
+// test risks racing a *different* test file's own kickWorker() call over the same shared dev database.
+export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (job.type === "sync" && job.sourceId) {
+    await db.source.update({ where: { id: job.sourceId }, data: { lastSyncStatus: "failed" } }).catch(() => undefined);
+  }
+  if (RATE_LIMITED_JOB_TYPES.includes(job.type) && isRateLimitedError(message)) {
+    // YouTube is throttling us, not rejecting this particular video: don't burn one of the job's
+    // limited attempts on it (undo claimJob's increment), and don't just delay this one job -- push
+    // every other queued download/cache job's runAfter out too, so the whole queue backs off together
+    // instead of the next job immediately tripping the same 429. Escalate the cooldown on repeated
+    // hits and reset it (see the success path in work()) once a download actually gets through.
+    const hits = (globalWorker.ytarrRateLimitHits ?? 0) + 1;
+    globalWorker.ytarrRateLimitHits = hits;
+    const cooldownSeconds = Math.min(30 * 60, 120 * 2 ** (hits - 1));
+    const cooldownUntil = new Date(Date.now() + cooldownSeconds * 1000);
+    await db.job.update({
+      where: { id: job.id },
+      data: { status: "queued", attempts: { decrement: 1 }, error: message.slice(-2000), runAfter: cooldownUntil, finishedAt: null }
+    }).catch(() => undefined);
+    await db.job.updateMany({
+      where: { status: "queued", type: { in: RATE_LIMITED_JOB_TYPES }, id: { not: job.id }, runAfter: { lt: cooldownUntil } },
+      data: { runAfter: cooldownUntil }
+    });
+    await writeLog({
+      level: "warn", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined,
+      message: `YouTube rate-limited (429) on ${job.type}; pausing download/cache jobs for ${cooldownSeconds}s.`
+    });
+    return;
+  }
+  const retry = job.attempts < job.maxAttempts;
+  const delaySeconds = Math.min(60, 2 ** job.attempts * 2);
+  await db.job.update({
+    where: { id: job.id },
+    data: { status: retry ? "queued" : "failed", error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
+  }).catch(() => undefined);
+  await writeLog({ level: "error", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message}` });
+}
+
 async function work() {
   await recoverJobs();
   for (;;) {
@@ -60,6 +106,7 @@ async function work() {
     if (!job) return;
     try {
       await handleJob(job);
+      if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.ytarrRateLimitHits = 0;
       await db.job.update({ where: { id: job.id }, data: { status: "complete", finishedAt: new Date() } }).catch(() => undefined);
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
         const linked = await db.source.findUnique({ where: { id: job.sourceId }, select: { tunarrChannelId: true } });
@@ -69,17 +116,7 @@ async function work() {
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (job.type === "sync" && job.sourceId) {
-        await db.source.update({ where: { id: job.sourceId }, data: { lastSyncStatus: "failed" } }).catch(() => undefined);
-      }
-      const retry = job.attempts < job.maxAttempts;
-      const delaySeconds = Math.min(60, 2 ** job.attempts * 2);
-      await db.job.update({
-        where: { id: job.id },
-        data: { status: retry ? "queued" : "failed", error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
-      }).catch(() => undefined);
-      await writeLog({ level: "error", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message}` });
+      await handleJobFailure(job, error);
     }
   }
 }
