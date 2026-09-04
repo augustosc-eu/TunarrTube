@@ -38,7 +38,7 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>)
   if (job.type === "thumbnail" && job.sourceId) return persistSourceThumbnails(job.sourceId);
   if (job.type === "sync" && job.sourceId) return syncSource(job.sourceId);
   if (job.type === "download" && job.sourceId && job.videoId) return downloadVideo(job.sourceId, job.videoId);
-  if (job.type === "cache" && job.videoId) return cacheVideo(job.videoId);
+  if (job.type === "cache" && job.videoId) return cacheVideo(job.videoId, job.sourceId ?? undefined);
   if (job.type === "retag" && job.sourceId && job.videoId) return retagVideo(job.sourceId, job.videoId);
   if (job.type === "tunarr_publish" && job.sourceId && job.payloadJson) {
     return publishSourceToTunarr(job.sourceId, JSON.parse(job.payloadJson) as PublishTunarrInput);

@@ -1,0 +1,26 @@
+# vexp - internal files (auto-generated, not user-managed)
+# index.db is rebuilt from manifest.json on checkout
+index.db
+index.db-wal
+index.db-shm
+index.lock
+vexp.log*
+daemon.log*
+daemon.sock
+daemon.pid
+daemon.pipe
+mcp.port
+healthy
+start-blocked
+stop-gate-*.done
+idle-gate-*.done
+task-*.txt
+coverage.json
+edit-hints/
+search-hints/
+read-hints/
+parent_workspace.json
+token-savings-report.md
+daemon-job-warning
+mcp.token
+backups/

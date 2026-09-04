@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { VIDEO_QUALITIES } from "@/lib/youtube/quality";
+
+export const videoQualitySchema = z.enum(VIDEO_QUALITIES);
 
 export const analyzeSourceSchema = z.object({
   url: z.string().url(),
@@ -10,6 +13,7 @@ export const createSourceSchema = z.object({
   draftId: z.string().min(1),
   name: z.string().trim().min(1).max(160).optional(),
   playbackMode: z.enum(["download", "cache", "stream"]).default("download"),
+  videoQuality: videoQualitySchema.nullable().optional(),
   syncEnabled: z.boolean().default(false),
   syncIntervalMinutes: z.number().int().min(15).max(43_200).default(360)
 });
@@ -21,6 +25,7 @@ export const addCollectionVideosSchema = z.object({
 export const patchSourceSchema = z.object({
   name: z.string().trim().min(1).max(160).optional(),
   playbackMode: z.enum(["download", "cache", "stream"]).optional(),
+  videoQuality: videoQualitySchema.nullable().optional(),
   syncEnabled: z.boolean().optional(),
   syncIntervalMinutes: z.number().int().min(15).max(43_200).optional()
 }).refine((input) => Object.keys(input).length > 0, { message: "At least one source setting is required." });
@@ -36,6 +41,7 @@ export const settingsSchema = z.object({
   tunarrUrl: z.string().trim().url().optional(),
   cacheMaxMegabytes: z.number().int().min(128).max(10_000_000).optional(),
   cacheMaxAgeDays: z.number().int().min(1).max(3650).optional(),
+  defaultVideoQuality: videoQualitySchema.optional(),
   pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional()
 }).refine((input) => Object.values(input).some((value) => value !== undefined), {
   message: "At least one setting is required."

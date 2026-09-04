@@ -7,6 +7,7 @@ import { requireFfmpeg } from "@/lib/ffmpeg/service";
 import { writeLog } from "@/lib/logging/service";
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
+import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
 import { getYtDlpPath } from "@/lib/youtube/ytdlp";
 
 async function exists(file: string) {
@@ -47,7 +48,7 @@ async function writeNfo(target: string, video: { title: string; description: str
   await rename(temp, target);
 }
 
-async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string) {
+async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string, quality: VideoQuality) {
   const targetDirectory = path.dirname(target);
   await mkdir(targetDirectory, { recursive: true });
   const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
@@ -60,7 +61,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
     await runProcess(ytdlp, [
       "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
       "--ffmpeg-location", path.dirname(ffmpeg),
-      "-f", "bv*[vcodec^=avc]+ba[acodec^=mp4a]/b[ext=mp4]/best",
+      "-f", downloadFormatSelector(quality),
       "--merge-output-format", "mp4", "--recode-video", "mp4", "--embed-metadata",
       "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), "--", youtubeUrl
     ], { timeoutMs: 12 * 60 * 60_000 });
@@ -108,7 +109,9 @@ export async function downloadVideo(sourceId: string, videoId: string) {
   let reused = await reuseExistingAsset(sourceId, videoId, target);
   try {
     if (!reused) {
-      await downloadMp4(membership.video.youtubeId, membership.video.youtubeUrl, target);
+      const settings = await getSettings();
+      const quality = resolveEffectiveQuality(membership.source.videoQuality, settings.defaultVideoQuality);
+      await downloadMp4(membership.video.youtubeId, membership.video.youtubeUrl, target, quality);
     }
     const details = await stat(target);
     await writeSidecar(sidecar, {
@@ -158,7 +161,10 @@ export async function retagVideo(sourceId: string, videoId: string) {
   return { localPath: membership.localPath };
 }
 
-export async function cacheVideo(videoId: string) {
+// A Video/CacheAsset is 1:1, but a Video can be shared across multiple Sources with different quality
+// overrides; the cache isn't keyed by quality, so whichever source's job fills it first determines the
+// cached resolution until eviction -- same class of behavior as reuseExistingAsset's hardlink sharing.
+export async function cacheVideo(videoId: string, sourceId?: string) {
   const video = await db.video.findUnique({ where: { id: videoId }, include: { cacheAsset: true } });
   if (!video) throw new AppError("VIDEO_NOT_FOUND", "Video not found.", 404);
   if (video.cacheAsset?.status === "complete" && video.cacheAsset.localPath && await exists(video.cacheAsset.localPath)) {
@@ -166,6 +172,8 @@ export async function cacheVideo(videoId: string) {
     return video.cacheAsset;
   }
   const settings = await getSettings();
+  const source = sourceId ? await db.source.findUnique({ where: { id: sourceId }, select: { videoQuality: true } }) : null;
+  const quality = resolveEffectiveQuality(source?.videoQuality, settings.defaultVideoQuality);
   const directory = path.join(settings.mediaBaseDirectory, "._ytarr-cache", "videos");
   const target = await assertWithinDirectory(settings.mediaBaseDirectory, path.join(directory, `${video.youtubeId}.mp4`));
   const asset = await db.cacheAsset.upsert({
@@ -174,7 +182,7 @@ export async function cacheVideo(videoId: string) {
     update: { status: "downloading", localPath: target, error: null }
   });
   try {
-    await downloadMp4(video.youtubeId, video.youtubeUrl, target);
+    await downloadMp4(video.youtubeId, video.youtubeUrl, target, quality);
     const details = await stat(target);
     const complete = await db.cacheAsset.update({ where: { id: asset.id }, data: { status: "complete", fileSize: details.size, cachedAt: new Date(), lastAccessedAt: new Date(), error: null } });
     await writeLog({ category: "cache", videoId, message: `Cached ${video.youtubeId}.` });
@@ -197,7 +205,7 @@ export async function materializeForTunarr(sourceId: string, videoId: string) {
   const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { source: true, video: true } });
   if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
   if (membership.retentionOrigin === "permanent" && membership.localPath && await exists(membership.localPath)) return membership.localPath;
-  const asset = await cacheVideo(videoId);
+  const asset = await cacheVideo(videoId, sourceId);
   if (!asset.localPath) throw new AppError("CACHE_OUTPUT_MISSING", "The cached file is unavailable.", 500);
   await mkdir(membership.source.mediaDirectory, { recursive: true });
   const target = await assertWithinDirectory(membership.source.mediaDirectory, path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.mp4`));

@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { ListVideo, LoaderCircle, Search } from "lucide-react";
+import { VIDEO_QUALITY_OPTIONS } from "@/components/settings-form";
 
 type Draft = { id: string; name: string; uploaderName: string | null; thumbnailUrl: string | null; videoCount: number; sourceType: "playlist" | "channel" | "collection"; feedType: string; historyLimit: number | null };
 async function data(response: Response) { const body = await response.json(); if (!response.ok) throw new Error(body.error?.message ?? "Request failed"); return body.data; }
@@ -12,6 +13,7 @@ export function AddSourceForm() {
   const router = useRouter();
   const [url, setUrl] = useState(""); const [draft, setDraft] = useState<Draft | null>(null); const [name, setName] = useState("");
   const [feedType, setFeedType] = useState("videos"); const [history, setHistory] = useState("100"); const [mode, setMode] = useState("download");
+  const [videoQuality, setVideoQuality] = useState("");
   const [syncEnabled, setSyncEnabled] = useState(false); const [interval, setIntervalValue] = useState("360");
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
   const looksLikeChannel = /youtube\.com\/(?:@|channel\/|user\/|c\/)/i.test(url) && !/[?&]list=/.test(url);
@@ -27,7 +29,7 @@ export function AddSourceForm() {
   async function create() {
     if (!draft) return; setBusy(true); setError(null);
     try {
-      const source = await data(await fetch("/api/sources", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draftId: draft.id, name, playbackMode: mode, syncEnabled: draft.sourceType === "collection" ? false : syncEnabled, syncIntervalMinutes: Number(interval) }) }));
+      const source = await data(await fetch("/api/sources", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draftId: draft.id, name, playbackMode: mode, videoQuality: videoQuality || null, syncEnabled: draft.sourceType === "collection" ? false : syncEnabled, syncIntervalMinutes: Number(interval) }) }));
       router.push(`/sources/${source.id}`); router.refresh();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Source creation failed"); setBusy(false); }
   }
@@ -39,6 +41,7 @@ export function AddSourceForm() {
     <div className="field"><label htmlFor="source-name">Source name</label><input className="input" id="source-name" value={name} onChange={(event) => setName(event.target.value)} /></div>
     <div className="meta"><span>YouTube {draft.sourceType}</span><span>·</span><span>{draft.videoCount} detected videos</span>{draft.uploaderName ? <><span>·</span><span>{draft.uploaderName}</span></> : null}</div>
     <div className="field section-heading"><label htmlFor="playback-mode">Playback mode</label><select className="input" id="playback-mode" value={mode} onChange={(event) => setMode(event.target.value)}><option value="download">Permanent — download automatically</option><option value="cache">Cache — download on first play</option><option value="stream">Stream — no local retention</option></select></div>
+    <div className="field"><label htmlFor="video-quality">Video quality</label><select className="input" id="video-quality" value={videoQuality} onChange={(event) => setVideoQuality(event.target.value)}><option value="">Use default (from Settings)</option>{VIDEO_QUALITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
     {draft.sourceType !== "collection" ? <label className="choice"><span><input type="checkbox" checked={syncEnabled} onChange={(event) => setSyncEnabled(event.target.checked)} /> Automatic synchronization</span>{syncEnabled ? <select value={interval} onChange={(event) => setIntervalValue(event.target.value)}><option value="60">Hourly</option><option value="360">Every 6 hours</option><option value="720">Every 12 hours</option><option value="1440">Daily</option></select> : null}</label> : <p>Add more individual videos from the collection page after creating it.</p>}
     <button className="button" type="button" disabled={busy || !name.trim()} onClick={create}>{busy ? <LoaderCircle size={16} className="animate-spin" /> : null} Add Source</button>
   </div></section> : null}</div>;

@@ -62,7 +62,7 @@ async function uniqueDirectoryName(name: string) {
   return candidate;
 }
 
-export async function createSourceFromDraft(draftId: string, requestedName?: string, playbackMode = "download", syncEnabled = false, syncIntervalMinutes = 360) {
+export async function createSourceFromDraft(draftId: string, requestedName?: string, playbackMode = "download", syncEnabled = false, syncIntervalMinutes = 360, videoQuality: string | null = null) {
   const draft = await db.importDraft.findUnique({ where: { id: draftId } });
   if (!draft || draft.expiresAt < new Date() || draft.consumedAt) throw new AppError("INVALID_IMPORT_DRAFT", "This analysis expired or was already used. Analyze the playlist again.", 410);
   if (draft.sourceType !== "collection") {
@@ -77,7 +77,7 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
   const entries = restoreEntries(draft.entriesJson);
   const source = await db.$transaction(async (tx) => {
     const canSync = draft.sourceType !== "collection" && syncEnabled;
-    const created = await tx.source.create({ data: { name, url: draft.url, sourceType: draft.sourceType, youtubeId: draft.sourceType === "collection" ? `collection:${draft.id}` : draft.youtubeId, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, playbackMode, feedType: draft.feedType, historyLimit: draft.historyLimit, directoryName, mediaDirectory, syncEnabled: canSync, syncIntervalMinutes, nextSyncAt: canSync ? new Date(Date.now() + syncIntervalMinutes * 60_000) : null } });
+    const created = await tx.source.create({ data: { name, url: draft.url, sourceType: draft.sourceType, youtubeId: draft.sourceType === "collection" ? `collection:${draft.id}` : draft.youtubeId, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, playbackMode, videoQuality, feedType: draft.feedType, historyLimit: draft.historyLimit, directoryName, mediaDirectory, syncEnabled: canSync, syncIntervalMinutes, nextSyncAt: canSync ? new Date(Date.now() + syncIntervalMinutes * 60_000) : null } });
     for (const entry of entries) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },

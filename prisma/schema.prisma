@@ -17,6 +17,7 @@ model Source {
   thumbnailUrl                 String?
   thumbnailPath                String?
   playbackMode                 String        @default("download")
+  videoQuality                 String?
   feedType                     String        @default("playlist")
   historyLimit                 Int?
   directoryName                String
@@ -133,13 +134,14 @@ model Job {
 }
 
 model AppSettings {
-  id                 Int      @id @default(1)
-  mediaBaseDirectory String
-  tunarrUrl          String   @default("http://127.0.0.1:8000")
-  cacheMaxMegabytes  Int      @default(20480)
-  cacheMaxAgeDays    Int      @default(30)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                  Int      @id @default(1)
+  mediaBaseDirectory  String
+  tunarrUrl           String   @default("http://127.0.0.1:8000")
+  cacheMaxMegabytes   Int      @default(20480)
+  cacheMaxAgeDays     Int      @default(30)
+  defaultVideoQuality String   @default("best")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model CacheAsset {

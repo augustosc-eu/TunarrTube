@@ -4,7 +4,9 @@ import { Readable } from "node:stream";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { touchCacheAsset } from "@/lib/downloads/service";
+import { getSettings } from "@/lib/settings/service";
 import { enqueueUniqueJob } from "@/lib/sources/service";
+import { resolveEffectiveQuality } from "@/lib/youtube/quality";
 import { resolveStreamUrl } from "@/lib/youtube/ytdlp";
 
 export function parseRange(value: string | null, size: number) {
@@ -46,7 +48,9 @@ export async function playbackResponse(sourceId: string, videoId: string, reques
   const localPath = membership.downloadStatus === "complete" && membership.localPath ? membership.localPath : cache?.status === "complete" ? cache.localPath : null;
   if (!localPath) {
     if (membership.source.playbackMode !== "stream") throw new AppError("PLAYBACK_NOT_READY", "The video is still being prepared.", 409);
-    const upstream = await fetch(await resolveStreamUrl(membership.video.youtubeUrl, request.signal), {
+    const settings = await getSettings();
+    const quality = resolveEffectiveQuality(membership.source.videoQuality, settings.defaultVideoQuality);
+    const upstream = await fetch(await resolveStreamUrl(membership.video.youtubeUrl, quality, request.signal), {
       method: head ? "HEAD" : "GET",
       signal: request.signal,
       headers: request.headers.get("range") ? { Range: request.headers.get("range")! } : {},

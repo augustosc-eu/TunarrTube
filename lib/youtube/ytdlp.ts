@@ -4,6 +4,7 @@ import { runProcess } from "@/lib/system/process";
 import { normalizeChannel, normalizeEntry, normalizePlaylist } from "@/lib/youtube/normalize";
 import type { AnalyzeSourceOptions, ChannelFeed, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
 import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
+import { streamFormatSelector, type VideoQuality } from "@/lib/youtube/quality";
 
 async function executable() {
   const binary = await discoverBinary("yt-dlp");
@@ -151,10 +152,10 @@ export async function getYtDlpPath() {
   return executable();
 }
 
-export async function resolveStreamUrl(youtubeUrl: string, signal?: AbortSignal) {
+export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality = "best", signal?: AbortSignal) {
   const result = await runProcess(await executable(), [
     "--get-url", "--no-playlist", "--no-warnings",
-    "-f", "b[ext=mp4][vcodec^=avc][acodec^=mp4a]/b[ext=mp4]/best",
+    "-f", streamFormatSelector(quality),
     "--", youtubeUrl
   ], { signal, timeoutMs: 2 * 60_000 });
   const value = result.stdout.trim().split(/\r?\n/)[0];
