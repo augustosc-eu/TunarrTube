@@ -21,6 +21,9 @@ Each entry is labeled:
 ### A prior completed download is never deleted because the video disappeared online
 **Explicit.** README: "TunarrTube never deletes a prior completed file because an online video disappeared." Directly evidenced in `lib/sources/service.ts:syncSource`, which sets `membershipStatus: "missing"` on a `SourceVideo` rather than deleting it or its `localPath`.
 
+### Deleting a source never deletes its media directory or its linked Tunarr channel
+**Evidenced.** `lib/sources/service.ts:deleteSource` removes the `Source` row (cascading its `SourceVideo`/queued `Job` rows), deletes only the source's own thumbnail plus orphaned videos' thumbnail/cache-asset files, and explicitly returns `preservedMediaDirectory: source.mediaDirectory` — the directory holding permanently-downloaded MP4s is never touched. It also never calls `TunarrApiClient` or clears any `tunarr*` field before the row is dropped, so a source's linked Tunarr channel and Local Media source are left exactly as they were, now orphaned rather than deleted. Consistent with the "prior completed download is never deleted" decision above and with `lib/tunarr/service.ts:unlinkTunarr`'s own log message, "Unlinked Tunarr without deleting remote objects" — nothing in this codebase ever deletes a remote Tunarr object.
+
 ### Hardlink-first, copy-fallback reuse of already-downloaded files
 **Evidenced.** `lib/downloads/service.ts:reuseExistingAsset` and `materializeForTunarr` both attempt `link()` first and fall back to `copyFile` on failure (e.g. across filesystems/volumes). Not documented in prose, but the intent is unambiguous: avoid storing duplicate copies of the same video when it's referenced by more than one source, or when a cached copy is promoted to a permanent one, while still working when a hardlink isn't possible.
 
