@@ -301,6 +301,7 @@ Use `npm run test:watch` during development and `npm run db:migrate` after editi
 
 Architecture and product context live in:
 
+- [Release notes](RELEASE_NOTES.md)
 - [Product overview](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Engineering decisions](docs/DECISIONS.md)
