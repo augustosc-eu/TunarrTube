@@ -1,5 +1,7 @@
 # vexp - internal files (auto-generated, not user-managed)
-# index.db is rebuilt from manifest.json on checkout
+# manifest.json and index.db are local index state, rewritten on nearly every
+# vexp query; untracked so they stop showing up as a perpetual pending change
+manifest.json
 index.db
 index.db-wal
 index.db-shm
