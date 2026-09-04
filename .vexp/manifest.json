@@ -109,11 +109,11 @@
     "tests/youtube.test.ts": "4650fdc9c3d135f4f23bbcf4a77320137c0d54b66b89036c2fa15dc62f089955",
     "vitest.config.ts": "55cb220215e202cecae6640d51ee9d9fdd59232dec8110f3417a83252410642e"
   },
-  "indexed_at_commit": "aa5831c79f4be6c502403f4446a3e0344edafca6",
-  "indexed_at_timestamp": "2026-09-04T06:06:56.227185+00:00",
+  "indexed_at_commit": "b8eccfa41c032b4566c52c53e4971c1b8ff9299f",
+  "indexed_at_timestamp": "2026-09-04T06:07:02.369494+00:00",
   "schema_version": 3,
   "stats": {
-    "total_edges": 926,
+    "total_edges": 993,
     "total_files": 108,
     "total_nodes": 571
   },
