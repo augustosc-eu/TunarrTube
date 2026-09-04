@@ -8,7 +8,7 @@ import { THEME_STORAGE_KEY } from "@/components/theme-constants";
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
-  title: { default: "YTarr", template: "%s · YTarr" },
+  title: { default: "TunarrTube", template: "%s · TunarrTube" },
   description: "A local-first YouTube companion for Tunarr"
 };
 

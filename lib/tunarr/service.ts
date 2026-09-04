@@ -28,7 +28,7 @@ async function ensureLocalMediaSource(client: TunarrApiClient, source: { id: str
   let mediaSources = await client.listMediaSources(signal);
   let mediaSource = mediaSources.find((candidate) => candidate.type === "local" && candidate.paths?.some((candidatePath) => samePath(candidatePath, tunarrDirectory)));
   if (!mediaSource) {
-    const id = await client.createLocalMediaSource(`YTarr - ${source.name}`, tunarrDirectory, signal);
+    const id = await client.createLocalMediaSource(`TunarrTube - ${source.name}`, tunarrDirectory, signal);
     mediaSources = await client.listMediaSources(signal);
     mediaSource = mediaSources.find((candidate) => candidate.id === id);
   }
@@ -74,7 +74,7 @@ function channelPayload(input: PublishTunarrInput, id: string, number: number, d
     duration,
     startTime: typeof existing?.startTime === "number" ? existing.startTime : Math.floor(Date.now() / 60_000) * 60_000,
     disableFillerOverlay: typeof existing?.disableFillerOverlay === "boolean" ? existing.disableFillerOverlay : false,
-    groupTitle: typeof existing?.groupTitle === "string" ? existing.groupTitle : "YTarr",
+    groupTitle: typeof existing?.groupTitle === "string" ? existing.groupTitle : "TunarrTube",
     guideMinimumDuration: typeof existing?.guideMinimumDuration === "number" ? existing.guideMinimumDuration : 30_000,
     stealth: typeof existing?.stealth === "boolean" ? existing.stealth : false,
     streamMode: typeof existing?.streamMode === "string" ? existing.streamMode : "hls",
@@ -115,7 +115,7 @@ export async function publishSourceToTunarr(sourceId: string, input: PublishTuna
   const programs = await client.listLibraryPrograms(local.libraryId, signal);
   const orderedMemberships = orderMemberships(source.videos, input.programmingOrder);
   const lineup = mapPrograms(programs, orderedMemberships);
-  if (!lineup.length) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "Tunarr completed its scan but did not find any downloaded YTarr videos in this source directory.", 422);
+  if (!lineup.length) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "Tunarr completed its scan but did not find any downloaded TunarrTube videos in this source directory.", 422);
 
   const [channels, transcodeConfigId] = await Promise.all([client.listChannels(signal), client.getDefaultTranscodeConfigId(signal)]);
   const existing = source.tunarrChannelId ? channels.find((channel) => channel.id === source.tunarrChannelId) : undefined;

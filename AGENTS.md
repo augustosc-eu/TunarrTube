@@ -8,13 +8,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-# YTarr — Agent Instructions
+# TunarrTube — Agent Instructions
 
 These are the persistent engineering instructions for any AI agent (Claude, Codex, or otherwise) working in this repository. They are operational, not exhaustive — for product and architectural knowledge, read the docs listed below before making non-trivial changes.
 
 ## Read first
 
-- [docs/PRODUCT.md](docs/PRODUCT.md) — what YTarr is, who it serves, core user journeys, terminology.
+- [docs/PRODUCT.md](docs/PRODUCT.md) — what TunarrTube is, who it serves, core user journeys, terminology.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the architecture that actually exists: structure, data flow, integrations, persistence, build/deploy.
 - [docs/DECISIONS.md](docs/DECISIONS.md) — decisions that are explicit or strongly evidenced in the code, and open questions that aren't.
 - [README.md](README.md) — user-facing setup, workflow, and troubleshooting; kept in sync with actual behavior and a reliable source of truth for intended behavior.
@@ -39,7 +39,7 @@ These are the persistent engineering instructions for any AI agent (Claude, Code
 7. **Sanitize before logging.** Route error messages, process output, and `writeLog` calls through `sanitizeLogValue` (`lib/logging/service.ts`) — it redacts signed YouTube/Googlevideo URLs and `--cookies` flags. Never log raw yt-dlp stderr or stream URLs.
 8. **Background work goes through the job queue.** Don't spawn `yt-dlp`/FFmpeg or call the Tunarr API directly from a request handler for anything that can be slow; enqueue a `Job` via `enqueueUniqueJob` (`lib/sources/service.ts`) and let `lib/jobs/runner.ts` process it. Call `kickWorker()` after enqueueing so the job runs promptly instead of waiting for the next poll.
 9. **This app assumes a single running instance.** The job worker and scheduler use in-process `globalThis` state with no distributed locking (see `lib/jobs/runner.ts`, `lib/jobs/scheduler.ts`). Do not add code that assumes multiple replicas share work safely against the same SQLite file.
-10. **YTarr never deletes a previously completed download just because the source video disappeared upstream.** Sync marks memberships `missing`, it doesn't delete `SourceVideo`/media. Preserve this guarantee in any change to `syncSource` or download logic.
+10. **TunarrTube never deletes a previously completed download just because the source video disappeared upstream.** Sync marks memberships `missing`, it doesn't delete `SourceVideo`/media. Preserve this guarantee in any change to `syncSource` or download logic.
 11. **The MVP only accepts public HTTPS YouTube URLs** on the hosts allow-listed in `lib/youtube/url.ts`. Don't add cookie/auth-based extraction without discussing the security implications (credentials would need to reach a background job process).
 
 ## Commands

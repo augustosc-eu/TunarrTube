@@ -3,7 +3,7 @@ import { discoverBinary, inspectBinary } from "@/lib/system/binaries";
 
 export async function requireFfmpeg() {
   const binary = await discoverBinary("ffmpeg");
-  if (!binary) throw new AppError("FFMPEG_NOT_FOUND", "FFmpeg was not found. Install it or set YTARR_FFMPEG_PATH.", 503);
+  if (!binary) throw new AppError("FFMPEG_NOT_FOUND", "FFmpeg was not found. Install it or set TUNARRTUBE_FFMPEG_PATH.", 503);
   return binary;
 }
 

@@ -7,7 +7,7 @@ import { db } from "@/lib/db/client";
 
 const ALLOWED_HOSTS = ["ytimg.com", "ggpht.com", "googleusercontent.com", "youtube.com"];
 
-function thumbnailRoot() { return path.resolve(process.env.YTARR_THUMBNAIL_DIR ?? path.join(process.cwd(), "storage", "thumbnails")); }
+function thumbnailRoot() { return path.resolve(process.env.TUNARRTUBE_THUMBNAIL_DIR ?? process.env.YTARR_THUMBNAIL_DIR ?? path.join(process.cwd(), "storage", "thumbnails")); }
 function safeRemoteUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "https:" || !ALLOWED_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) throw new AppError("THUMBNAIL_URL_REJECTED", "Thumbnail host is not allowed.", 422);

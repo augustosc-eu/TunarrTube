@@ -63,7 +63,7 @@ export function TunarrChannelForm({ sourceId, sourceName, downloadedCount, playb
 
   return <section className="card integration-card">
     <div className="integration-heading"><div><span className="eyebrow">Tunarr integration</span><h2>{isLinked ? "Update channel" : "Create channel"}</h2></div><Clapperboard size={24} /></div>
-    <p>YTarr registers this source directory as Tunarr Local Media. Cache and Stream sources are fully prefetched on their first publication.</p>
+    <p>TunarrTube registers this source directory as Tunarr Local Media. Cache and Stream sources are fully prefetched on their first publication.</p>
     <div className="form-grid">
       <div className="field"><label htmlFor="tunarr-channel-name">Channel name</label><input className="input" id="tunarr-channel-name" value={name} maxLength={160} onChange={(event) => setName(event.target.value)} /></div>
       <div className="field"><label htmlFor="tunarr-channel-number">Channel number</label><input className="input" id="tunarr-channel-number" type="number" min="1" placeholder="Next available" value={number} onChange={(event) => setNumber(event.target.value)} /></div>

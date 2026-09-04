@@ -1,14 +1,14 @@
 services:
-  ytarr:
+  tunarrtube:
     build: .
-    container_name: ytarr
+    container_name: tunarrtube
     ports:
-      - "127.0.0.1:${YTARR_PORT:-3000}:3000"
+      - "127.0.0.1:${TUNARRTUBE_PORT:-${YTARR_PORT:-3000}}:3000"
     environment:
       DATABASE_URL: file:/config/ytarr.db
-      YTARR_MEDIA_DIR: /media
-      YTARR_THUMBNAIL_DIR: /config/thumbnails
-      YTARR_TUNARR_URL: ${YTARR_TUNARR_URL:-http://tunarr:8000}
+      TUNARRTUBE_MEDIA_DIR: /media
+      TUNARRTUBE_THUMBNAIL_DIR: /config/thumbnails
+      TUNARRTUBE_TUNARR_URL: ${TUNARRTUBE_TUNARR_URL:-${YTARR_TUNARR_URL:-http://tunarr:8000}}
       TZ: ${TZ:-UTC}
     volumes:
       - ytarr-config:/config
@@ -36,6 +36,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  # Legacy volume keys are intentionally stable so upgrades keep existing data.
   ytarr-config:
   ytarr-media:
   tunarr-config:

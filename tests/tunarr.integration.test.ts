@@ -34,7 +34,7 @@ describe("Tunarr publish pipeline", () => {
       const url = new URL(urlValue);
       const method = init?.method ?? "GET";
       if (url.pathname === "/openapi.json") return Response.json({ info: { version: "1.3.13" }, paths });
-      if (url.pathname === "/api/media-sources" && method === "GET") return Response.json(mediaSourceCreated ? [{ id: "source-1", name: "YTarr - Tunarr test", type: "local", paths: [mediaDirectory], libraries: [{ id: "library-1", name: mediaDirectory, mediaType: "other_videos", externalKey: mediaDirectory, enabled: true }] }] : []);
+      if (url.pathname === "/api/media-sources" && method === "GET") return Response.json(mediaSourceCreated ? [{ id: "source-1", name: "TunarrTube - Tunarr test", type: "local", paths: [mediaDirectory], libraries: [{ id: "library-1", name: mediaDirectory, mediaType: "other_videos", externalKey: mediaDirectory, enabled: true }] }] : []);
       if (url.pathname === "/api/media-sources" && method === "POST") { mediaSourceCreated = true; return Response.json({ id: "source-1" }, { status: 201 }); }
       if (url.pathname.endsWith("/scan") && method === "POST") return Response.json({}, { status: 202 });
       if (url.pathname.endsWith("/status")) return Response.json({ state: "not_scanning" });
@@ -53,9 +53,9 @@ describe("Tunarr publish pipeline", () => {
     }));
 
     try {
-      const result = await publishSourceToTunarr(source.id, { channelName: "YTarr Test TV", channelNumber: 42, programmingOrder: "playlist" });
+      const result = await publishSourceToTunarr(source.id, { channelName: "TunarrTube Test TV", channelNumber: 42, programmingOrder: "playlist" });
       expect(result).toMatchObject({ channelNumber: 42, programCount: 1, mediaSourceId: "source-1", libraryId: "library-1" });
-      expect(channelPayload).toMatchObject({ name: "YTarr Test TV", number: 42, duration: 60_000, groupTitle: "YTarr" });
+      expect(channelPayload).toMatchObject({ name: "TunarrTube Test TV", number: 42, duration: 60_000, groupTitle: "TunarrTube" });
       expect(programmingPayload).toEqual({ type: "manual", lineup: [{ type: "content", id: "program-1", duration: 60_000 }], append: false });
       const linked = await db.source.findUnique({ where: { id: source.id } });
       expect(linked).toMatchObject({ tunarrMediaSourceId: "source-1", tunarrLibraryId: "library-1", tunarrChannelNumber: 42 });
@@ -84,7 +84,7 @@ describe("Tunarr publish pipeline", () => {
       const url = new URL(urlValue);
       const method = init?.method ?? "GET";
       if (url.pathname === "/openapi.json") return Response.json({ info: { version: "1.3.13" }, paths });
-      if (url.pathname === "/api/media-sources" && method === "GET") return Response.json([{ id: "source-1", name: "YTarr - Renumber test", type: "local", paths: [mediaDirectory], libraries: [{ id: "library-1", name: mediaDirectory, mediaType: "other_videos", externalKey: mediaDirectory, enabled: true }] }]);
+      if (url.pathname === "/api/media-sources" && method === "GET") return Response.json([{ id: "source-1", name: "TunarrTube - Renumber test", type: "local", paths: [mediaDirectory], libraries: [{ id: "library-1", name: mediaDirectory, mediaType: "other_videos", externalKey: mediaDirectory, enabled: true }] }]);
       if (url.pathname.endsWith("/scan") && method === "POST") return Response.json({}, { status: 202 });
       if (url.pathname.endsWith("/status")) return Response.json({ state: "not_scanning" });
       if (url.pathname === "/api/media-libraries/library-1/programs") return Response.json([{ type: "content", id: "program-1", duration: 60_000, program: { externalId: `${mediaDirectory}/${video.youtubeId}.mp4` } }]);

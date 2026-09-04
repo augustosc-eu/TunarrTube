@@ -35,8 +35,8 @@ describe("Tunarr client", () => {
       received = JSON.parse(String(init.body));
       return Response.json({ id: "local-source" }, { status: 201 });
     }));
-    await expect(new TunarrApiClient("http://tunarr.test").createLocalMediaSource("YTarr - News", "/media/news")).resolves.toBe("local-source");
-    expect(received).toEqual({ name: "YTarr - News", type: "local", mediaType: "other_videos", paths: ["/media/news"], pathReplacements: [] });
+    await expect(new TunarrApiClient("http://tunarr.test").createLocalMediaSource("TunarrTube - News", "/media/news")).resolves.toBe("local-source");
+    expect(received).toEqual({ name: "TunarrTube - News", type: "local", mediaType: "other_videos", paths: ["/media/news"], pathReplacements: [] });
   });
 });
 

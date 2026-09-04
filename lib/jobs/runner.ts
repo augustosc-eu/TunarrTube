@@ -18,7 +18,7 @@ async function recoverJobs() {
   globalWorker.ytarrRecovered = true;
   await db.job.updateMany({
     where: { status: "running" },
-    data: { status: "queued", error: "Recovered after YTarr restarted.", runAfter: new Date() }
+    data: { status: "queued", error: "Recovered after TunarrTube restarted.", runAfter: new Date() }
   });
   await db.sourceVideo.updateMany({ where: { downloadStatus: "downloading" }, data: { downloadStatus: "queued" } });
 }

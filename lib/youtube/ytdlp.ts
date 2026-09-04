@@ -8,7 +8,7 @@ import { streamFormatSelector, type VideoQuality } from "@/lib/youtube/quality";
 
 async function executable() {
   const binary = await discoverBinary("yt-dlp");
-  if (!binary) throw new AppError("YTDLP_NOT_FOUND", "yt-dlp was not found. Install it or set YTARR_YTDLP_PATH.", 503);
+  if (!binary) throw new AppError("YTDLP_NOT_FOUND", "yt-dlp was not found. Install it or set TUNARRTUBE_YTDLP_PATH.", 503);
   return binary;
 }
 
@@ -140,7 +140,7 @@ export async function fetchVideoAvailabilityReason(youtubeUrl: string, signal?: 
   const url = validateVideoUrl(youtubeUrl);
   const timeout = AbortSignal.timeout(30_000);
   const response = await fetch(`${url}&hl=en`, {
-    headers: { "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (compatible; YTarr/0.1)" },
+    headers: { "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (compatible; TunarrTube/0.1)" },
     cache: "no-store",
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout
   });

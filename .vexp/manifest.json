@@ -37,18 +37,18 @@
     "app/api/videos/[id]/route.ts": "95f0fe5d11351d44870f85a7419dd80e4984f00edbd58300184f24398c5f7af4",
     "app/api/videos/route.ts": "7a99628150260c9ac9d33381a89118c795be6a0555484153f15d569e30cefa4d",
     "app/cache/page.tsx": "1bef32cc61b93d25facdcbf5f5e172f661478f4829a46ab089ce4c008b85bd5c",
-    "app/error.tsx": "85b49890e2c9633ae4b0232c3fb0fcb6fd6267286c0d96ab5c3ae7bcb125b082",
+    "app/error.tsx": "e295ae4e61f8ccd3d29506c8f593ddf832cff9a92ee4a1cb618b06b95a3eba2d",
     "app/globals.css": "2a904bb5df96be6d873fe9cdfe134b09190cf64b72ae5a5d1c33d2bd3b159909",
     "app/jobs/page.tsx": "69fe321d770f67eb890f0b45ab6060632c6d80b4e971f7286464fc809791f98f",
     "app/layout.tsx": "7a684155d7432f59834af2057b9972268a687611a91749f592c6bc84ccd6befd",
-    "app/logs/page.tsx": "9840a8e4dc00c6c19e45944df882385d9b9253c0b0e9e4b97fcf002d1add73ce",
-    "app/not-found.tsx": "28bd6b6f7336098d218e15aa65636127aabc60ae1cc1495530b80126c78273d2",
-    "app/page.tsx": "3d8372b8459ab9d04935e4ea52407a7c4d3df574688d3e18400766c8b2e93c60",
+    "app/logs/page.tsx": "0626f7992c522d530b7742fb19f6521906ad549620f722f72cfec3c6aa3f3e1e",
+    "app/not-found.tsx": "78de5da8932be499c829eec8b84abe1568a882edd125bfe1876f0b002dc2c25a",
+    "app/page.tsx": "7f6c627b96b0b6eab2dbefbd62e0d31095d563c5e467e010fed96c1aff95321e",
     "app/settings/page.tsx": "19e60abd9022d33f8a21a2770a5655c9aef96029f24f936aac362cd70b753421",
     "app/sources/[id]/page.tsx": "9a42123c212c561170962c59c746029cc5666aeeb928ef2acb978ec6640af5aa",
     "app/sources/new/page.tsx": "97e85c99a05765b885c6ea8fab447bc76032aacc516159c427e29afb6750bfdc",
     "app/sources/page.tsx": "9f6e4f84f2062f13416292a74a3e25252fe0720ce7fafa98baadba7294c465d0",
-    "app/videos/page.tsx": "7808cb06707e7f683a10cad1f934ee7680b14d71fb2c83e3e3fb9aff849cfc0c",
+    "app/videos/page.tsx": "b0611faf6ba3530062acab621ff4bb50cb745b7497a232cda065762c30fd7986",
     "components/add-collection-videos.tsx": "bf853866db3ee62003a169b03c0f3a8ef06e9d891a5c4704d2067b0583749613",
     "components/add-source-form.tsx": "6391b6dd604e0f221394ad69c0e5193d23d70c55b2a5389d62188f1669676401",
     "components/brand-mark.tsx": "0fd739d77e84435b62c6114b878f4f0a28f11c6a9e88642c4c59abc32bbe54e7",
@@ -117,13 +117,13 @@
     "tests/youtube.test.ts": "4650fdc9c3d135f4f23bbcf4a77320137c0d54b66b89036c2fa15dc62f089955",
     "vitest.config.ts": "55cb220215e202cecae6640d51ee9d9fdd59232dec8110f3417a83252410642e"
   },
-  "indexed_at_commit": "79323da02bdc081d88fc3cb239ca457ac5544056",
-  "indexed_at_timestamp": "2026-09-04T14:29:40.093877+00:00",
+  "indexed_at_commit": "7cb99de2cfcbc0df2b9fd3b51eb9168a82c612ce",
+  "indexed_at_timestamp": "2026-09-04T14:58:36.991662+00:00",
   "schema_version": 3,
   "stats": {
-    "total_edges": 852,
+    "total_edges": 891,
     "total_files": 116,
-    "total_nodes": 679
+    "total_nodes": 680
   },
   "vexp_version": "3.1.1"
 }

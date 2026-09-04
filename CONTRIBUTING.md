@@ -1,6 +1,6 @@
-# Contributing to YTarr
+# Contributing to TunarrTube
 
-Thanks for helping improve YTarr. For substantial changes, open an issue first so the approach and product scope can be agreed before implementation.
+Thanks for helping improve TunarrTube. For substantial changes, open an issue first so the approach and product scope can be agreed before implementation.
 
 ## Development setup
 

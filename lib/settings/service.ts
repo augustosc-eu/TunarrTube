@@ -25,9 +25,9 @@ export async function getSettings() {
       ? existing
       : db.appSettings.update({ where: { id: 1 }, data: { mediaBaseDirectory } });
   }
-  const configured = process.env.YTARR_MEDIA_DIR ?? DEFAULT_MEDIA_ROOT;
+  const configured = process.env.TUNARRTUBE_MEDIA_DIR ?? process.env.YTARR_MEDIA_DIR ?? DEFAULT_MEDIA_ROOT;
   const mediaBaseDirectory = await validateMediaDirectory(configured);
-  const tunarrUrl = normalizeTunarrUrl(process.env.YTARR_TUNARR_URL ?? "http://127.0.0.1:8000");
+  const tunarrUrl = normalizeTunarrUrl(process.env.TUNARRTUBE_TUNARR_URL ?? process.env.YTARR_TUNARR_URL ?? "http://127.0.0.1:8000");
   return db.appSettings.create({ data: { id: 1, mediaBaseDirectory, tunarrUrl } });
 }
 
@@ -71,14 +71,14 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   const tunarrUrl = input.tunarrUrl ? normalizeTunarrUrl(input.tunarrUrl) : current.tunarrUrl;
   const mappings = input.pathMappings ? input.pathMappings.map((mapping, position) => {
     if (!path.isAbsolute(mapping.ytarrPrefix) || !isAbsoluteTunarrPath(mapping.tunarrPrefix)) {
-      throw new AppError("INVALID_PATH_MAPPING", "The YTarr prefix must be absolute on this host, and the Tunarr prefix must be an absolute Unix or Windows path.");
+      throw new AppError("INVALID_PATH_MAPPING", "The TunarrTube prefix must be absolute on this host, and the Tunarr prefix must be an absolute Unix or Windows path.");
     }
     const tunarrPrefix = isWindowsAbsolutePath(mapping.tunarrPrefix)
       ? path.win32.normalize(mapping.tunarrPrefix)
       : path.posix.normalize(mapping.tunarrPrefix);
     return { ytarrPrefix: path.normalize(mapping.ytarrPrefix), tunarrPrefix, position };
   }) : null;
-  if (mappings && new Set(mappings.map((mapping) => mapping.ytarrPrefix)).size !== mappings.length) throw new AppError("DUPLICATE_PATH_MAPPING", "YTarr mapping prefixes must be unique.");
+  if (mappings && new Set(mappings.map((mapping) => mapping.ytarrPrefix)).size !== mappings.length) throw new AppError("DUPLICATE_PATH_MAPPING", "TunarrTube mapping prefixes must be unique.");
   const sources = await db.source.findMany({ select: { id: true, directoryName: true } });
   const destinations = sources.map((source) => ({
     ...source,

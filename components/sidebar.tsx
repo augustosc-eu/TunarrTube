@@ -21,7 +21,7 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <Link className="brand" href="/"><BrandMark /> YTarr</Link>
+      <Link className="brand" href="/"><BrandMark /> TunarrTube</Link>
       <nav className="nav" aria-label="Main navigation">
         {links.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);

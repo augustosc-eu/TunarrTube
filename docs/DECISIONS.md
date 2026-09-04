@@ -1,4 +1,4 @@
-# YTarr — Decisions
+# TunarrTube — Decisions
 
 This document records architectural and product decisions that can be reliably traced to this repository — either stated explicitly in documentation/comments, or strongly evidenced by the implementation. It does not speculate about historical reasoning that isn't recoverable from the checkout.
 
@@ -9,8 +9,8 @@ Each entry is labeled:
 
 ---
 
-### Single YTarr process; no distributed job coordination
-**Explicit.** The README states: "Automatic synchronization is configured per source and runs inside the single YTarr process. Do not run multiple replicas against the same SQLite database." This matches the implementation directly: `lib/jobs/runner.ts` and `lib/jobs/scheduler.ts` hold worker/scheduler state on `globalThis` with no lock table, advisory lock, or leader-election mechanism — only safe under a single running instance.
+### Single TunarrTube process; no distributed job coordination
+**Explicit.** The README states: "Automatic synchronization is configured per source and runs inside the single TunarrTube process. Do not run multiple replicas against the same SQLite database." This matches the implementation directly: `lib/jobs/runner.ts` and `lib/jobs/scheduler.ts` hold worker/scheduler state on `globalThis` with no lock table, advisory lock, or leader-election mechanism — only safe under a single running instance.
 
 ### SQLite as the only datastore
 **Explicit.** `prisma/schema.prisma`'s `datasource db { provider = "sqlite" }`, and the README: "stores metadata in SQLite." The deployment model reinforces this as deliberate rather than incidental: the Dockerfile ships a single-file DB under `/config`, and `compose.yaml` defines no separate database service.
@@ -19,13 +19,13 @@ Each entry is labeled:
 **Explicit** (behavior) **/ Evidenced** (mechanism). README: "Downloads use temporary directories and are published only after `yt-dlp` and FFmpeg finish successfully." The mechanism — a per-attempt temp subdirectory under `._ytarr-tmp/`, `rename()` into the final path, `rm -rf` of the temp directory in a `finally` — is in `lib/downloads/service.ts:downloadMp4`. The same temp-then-rename pattern is reused for JSON sidecars (`writeSidecar`) and mirrored thumbnails (`lib/thumbnails/service.ts:persist`), which is evidenced-only (not called out in prose) but is clearly the same deliberate pattern applied consistently.
 
 ### A prior completed download is never deleted because the video disappeared online
-**Explicit.** README: "YTarr never deletes a prior completed file because an online video disappeared." Directly evidenced in `lib/sources/service.ts:syncSource`, which sets `membershipStatus: "missing"` on a `SourceVideo` rather than deleting it or its `localPath`.
+**Explicit.** README: "TunarrTube never deletes a prior completed file because an online video disappeared." Directly evidenced in `lib/sources/service.ts:syncSource`, which sets `membershipStatus: "missing"` on a `SourceVideo` rather than deleting it or its `localPath`.
 
 ### Hardlink-first, copy-fallback reuse of already-downloaded files
 **Evidenced.** `lib/downloads/service.ts:reuseExistingAsset` and `materializeForTunarr` both attempt `link()` first and fall back to `copyFile` on failure (e.g. across filesystems/volumes). Not documented in prose, but the intent is unambiguous: avoid storing duplicate copies of the same video when it's referenced by more than one source, or when a cached copy is promoted to a permanent one, while still working when a hardlink isn't possible.
 
 ### Tunarr integration is capability-gated via OpenAPI discovery, not version-string matching
-**Explicit.** README: "YTarr reads the configured server's `/openapi.json` and refuses mutations when required API capabilities are absent." Implemented in `lib/tunarr/client.ts:discover`, which checks a fixed map of required (path, method) pairs before any create/update call is permitted, and is invoked from `publishSourceToTunarr` before any mutation.
+**Explicit.** README: "TunarrTube reads the configured server's `/openapi.json` and refuses mutations when required API capabilities are absent." Implemented in `lib/tunarr/client.ts:discover`, which checks a fixed map of required (path, method) pairs before any create/update call is permitted, and is invoked from `publishSourceToTunarr` before any mutation.
 
 ### Videos are matched to scanned Tunarr programs by filename (YouTube ID), not a stored external mapping
 **Evidenced.** `lib/tunarr/service.ts:mapPrograms` extracts `path.basename(externalId, ext)` from each scanned Tunarr program and matches it against `video.youtubeId`. No comment states why, but it directly depends on the download naming convention (`<youtubeId>.mp4`) being stable, and avoids needing to persist or synchronize a separate Tunarr-program-to-video mapping table.
@@ -55,7 +55,7 @@ Each entry is labeled:
 **Evidenced.** The committed migrations progress from the initial schema through Tunarr integration, Phase 2 playback/cache support, video availability reasons, and per-source quality settings.
 
 ### `next build --webpack` (Turbopack not used for the production build)
-**Unclear** why the original author chose this, but a concrete failure mode for the unflagged (Turbopack) build was observed and is worth recording. `package.json`'s `build` script explicitly passes `--webpack`; Next.js 16.3.4 defaults to Turbopack, so this is a deliberate opt-out. Nothing in the repository states the original reason. Separately, in this session's sandboxed execution environment, running `next build` *without* `--webpack` failed because Turbopack's PostCSS worker could not bind an internal port — a restricted-environment issue, not a demonstrated incompatibility between YTarr and Turbopack in general. The `/* turbopackIgnore: true */` annotations already present in `lib/sources/service.ts`, `lib/settings/service.ts`, and `lib/downloads/service.ts` (each on a dynamic `path.join()` call using a runtime-resolved directory) show the codebase is written to be Turbopack-aware, which cuts against assuming an unresolved incompatibility. Do not treat the sandbox failure as proof the flag is required in the app's intended host or Docker environment — confirm with an unflagged build there before removing `--webpack`, and consult `node_modules/next/dist/docs/` for this Next.js version's current guidance either way.
+**Unclear** why the original author chose this, but a concrete failure mode for the unflagged (Turbopack) build was observed and is worth recording. `package.json`'s `build` script explicitly passes `--webpack`; Next.js 16.3.4 defaults to Turbopack, so this is a deliberate opt-out. Nothing in the repository states the original reason. Separately, in this session's sandboxed execution environment, running `next build` *without* `--webpack` failed because Turbopack's PostCSS worker could not bind an internal port — a restricted-environment issue, not a demonstrated incompatibility between TunarrTube and Turbopack in general. The `/* turbopackIgnore: true */` annotations already present in `lib/sources/service.ts`, `lib/settings/service.ts`, and `lib/downloads/service.ts` (each on a dynamic `path.join()` call using a runtime-resolved directory) show the codebase is written to be Turbopack-aware, which cuts against assuming an unresolved incompatibility. Do not treat the sandbox failure as proof the flag is required in the app's intended host or Docker environment — confirm with an unflagged build there before removing `--webpack`, and consult `node_modules/next/dist/docs/` for this Next.js version's current guidance either way.
 
 ### No client-side state management library
 **Evidenced.** Every client component in `components/` uses local `useState` plus direct `fetch` calls and `router.refresh()`; no Redux/Zustand/React Query/SWR appears in `package.json` or anywhere in the codebase. Not stated as a decision, but consistently applied with no exception — including `components/theme-toggle.tsx`, added later for light/dark mode, which reaches for local `useState`/`useEffect` rather than any state or theming library — which rules out mere oversight.

@@ -1,10 +1,10 @@
-# YTarr — Product
+# TunarrTube — Product
 
 ## What it is
 
-YTarr is a local-first companion application for [Tunarr](https://tunarr.com) (a self-hosted "live TV from your media library" server). It turns public YouTube playlists and channels into a synchronized local media library, then can publish that library as a live-TV-style channel inside Tunarr.
+TunarrTube is a local-first companion application for [Tunarr](https://tunarr.com) (a self-hosted "live TV from your media library" server). It turns public YouTube playlists and channels into a synchronized local media library, then can publish that library as a live-TV-style channel inside Tunarr.
 
-Concretely, YTarr:
+Concretely, TunarrTube:
 
 1. Analyzes a YouTube playlist or channel with `yt-dlp` and stores the resulting metadata in a local SQLite database.
 2. Detects new/removed items on manual or scheduled sync, without discarding history.
@@ -38,14 +38,14 @@ On a source's detail page ([app/sources/[id]/page.tsx](../app/sources/%5Bid%5D/p
 
 ### 3. Sync a source
 - **Sync Now** ([components/source-actions.tsx](../components/source-actions.tsx)) calls `POST /api/sources/[id]/sync`, which re-analyzes the source URL, adds newly found videos, and marks memberships no longer present as `missing` — it does **not** delete video metadata or already-downloaded media.
-- Automatic sync runs the same logic on a per-source interval, driven by `lib/jobs/scheduler.ts` inside the single YTarr process.
+- Automatic sync runs the same logic on a per-source interval, driven by `lib/jobs/scheduler.ts` inside the single TunarrTube process.
 - Bounded channel syncs (a channel source with a `historyLimit`) skip the "mark missing" sweep so older, previously-seen entries that fall outside the current inspection window are preserved rather than flagged missing (`lib/sources/service.ts:syncSource`).
 
 ### 4. Publish to Tunarr
 From a source's **Tunarr integration** panel ([components/tunarr-channel-form.tsx](../components/tunarr-channel-form.tsx)):
 - Choose a channel name, optional channel number (defaults to the next available Tunarr number), and a programming order (playlist order / oldest first / newest first / random).
 - **Create/Update Tunarr Channel** (`POST /api/sources/[id]/tunarr`) enqueues a `tunarr_publish` job. That job:
-  - Ensures a Tunarr "Local Media" source exists pointing at this source's media directory (translated through configured path mappings if YTarr and Tunarr see different absolute paths).
+  - Ensures a Tunarr "Local Media" source exists pointing at this source's media directory (translated through configured path mappings if TunarrTube and Tunarr see different absolute paths).
   - Triggers and waits for a Tunarr library scan.
   - Matches scanned Tunarr programs to downloaded videos by filename (the YouTube ID), in the requested programming order.
   - Creates or updates the Tunarr channel and replaces its entire programming lineup.
@@ -84,16 +84,16 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 | **History limit** | For channel sources, how many recent items `yt-dlp` should inspect per sync. `null` means unbounded. |
 | **Programming order** | How a Tunarr channel's videos are ordered when a lineup is published: `playlist`, `oldest`, `newest`, or `random`. |
 | **CacheAsset** | The cache-mode counterpart to a downloaded file: a single shared cached copy of a `Video`, independent of any one source, with pin/eviction state. |
-| **Path mapping** | An ordered, longest-prefix translation from a YTarr filesystem path to the path Tunarr sees for the same directory (needed when the two run in different containers/mounts). |
+| **Path mapping** | An ordered, longest-prefix translation from a TunarrTube filesystem path to the path Tunarr sees for the same directory (needed when the two run in different containers/mounts). |
 
 ## Intended behavior and constraints
 
 These are explicit, stated constraints — either in the README or directly enforced in code — not assumptions:
 
 - **Public HTTPS YouTube URLs only**, on `youtube.com`/`www.youtube.com`/`m.youtube.com`/`music.youtube.com` (`lib/youtube/url.ts`). Private/unlisted-via-cookie, age-restricted, or authenticated extraction is explicitly out of scope for this MVP (README, "Troubleshooting").
-- **Single YTarr process.** The README explicitly warns not to run multiple replicas against the same SQLite database; the job worker and scheduler rely on in-process state with no distributed locking.
+- **Single TunarrTube process.** The README explicitly warns not to run multiple replicas against the same SQLite database; the job worker and scheduler rely on in-process state with no distributed locking.
 - **Never destroys a completed download because the source disappeared online.** A sync marks a `SourceVideo` `missing`; it does not delete the file or its metadata (README, and enforced in `lib/sources/service.ts:syncSource`).
 - **At least one fully downloaded video is required before a Tunarr channel can be created** (`lib/tunarr/service.ts:publishSourceToTunarr`).
-- **YTarr and Tunarr must agree on the same absolute media path.** Docker path translation is never inferred automatically — the operator must configure an ordered path mapping in Settings when the two see different mount points.
-- **Tunarr integration is capability-gated.** Before any mutation, YTarr reads the configured Tunarr server's `/openapi.json` and refuses to proceed if a required endpoint is missing, rather than guessing at compatibility (README; `lib/tunarr/client.ts:discover`).
+- **TunarrTube and Tunarr must agree on the same absolute media path.** Docker path translation is never inferred automatically — the operator must configure an ordered path mapping in Settings when the two see different mount points.
+- **Tunarr integration is capability-gated.** Before any mutation, TunarrTube reads the configured Tunarr server's `/openapi.json` and refuses to proceed if a required endpoint is missing, rather than guessing at compatibility (README; `lib/tunarr/client.ts:discover`).
 - **Downloads are atomic from the caller's perspective.** A video is only recorded as downloaded after `yt-dlp` and FFmpeg both finish successfully into a temporary location that is then renamed into place; interrupted jobs are recovered (requeued) on the next application start and retried up to three times.
