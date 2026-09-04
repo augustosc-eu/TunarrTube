@@ -13,3 +13,10 @@ storage/*
 !storage/media/
 storage/media/*
 !storage/media/.gitkeep
+
+# OS and machine-local editor/agent-tool state (personal, not project config)
+.DS_Store
+Thumbs.db
+.claude/hooks/
+.claude/settings.json
+.codex/
