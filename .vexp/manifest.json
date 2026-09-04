@@ -8,7 +8,7 @@
     "CLAUDE.md": "eb5f48bc10e0c22ebc0d90b72401142f812ff998d8107c18dc572adc562fde08",
     "CONTRIBUTING.md": "4e62341e7238a76e9175cf095d3d88603827eb49ce6d20981f750e5dc8dfc21b",
     "Dockerfile": "66e6a9b6f470f7efa4dda1ab933a45a7bb1d1dfabe8cc444bcc3525d1d02d104",
-    "README.md": "161d03dfc1d3ef86cf19ad4d9a27fd245466c1a4ca54603ac54c6c9bfb83642a",
+    "README.md": "430933b64ae2203d4c09f72433d38c7a0a762e7b0698dde9a5a30d75abcfef43",
     "SECURITY.md": "ac63f479bc8ad3126a92be9183be9b96b04263ed190509f7800dc1cd99ce349a",
     "app/api/cache/[id]/route.ts": "55359045a073ba6f1f17bd4ba05dcb7287536cb509524e8287fbc4fc3b243231",
     "app/api/cache/route.ts": "0cc2fb50f63de3854ee2d5b73606f41f8be02f14b86e8b5a581357cdd224522b",
@@ -64,9 +64,9 @@
     "components/theme-toggle.tsx": "b3888bcf0609bdd7b0eff3c2223f46fae46064cb0161f97308418009f73d9c42",
     "components/tunarr-channel-form.tsx": "cd65c26e639ec13709ba92476a6302f4270e843108c1a610baa6544f80920669",
     "components/video-selection-table.tsx": "f64f461ec68a2607a00aaafafabd6845d07f565c5638308537a6d8b74719e3d9",
-    "docs/ARCHITECTURE.md": "3052c544deab29e4770b89b797a3b6ad5d81e3aea91e88e01ef6c32a45320ea8",
-    "docs/DECISIONS.md": "be19b3017ea006d7b3769b69cfb2cfc9d75af5315766dd578a2fb9329b416463",
-    "docs/PRODUCT.md": "445e8bc1b5e8a56cc439de9256e099a717f8c82ab7fe7f0941b9f42c7826b41b",
+    "docs/ARCHITECTURE.md": "04e7aa0a0d7ff3676f2d46e0079c2b74148ad000834a47111973b83328dd97ba",
+    "docs/DECISIONS.md": "41d17fefa7f8cd4d324b47fe42affddf899722d543d9faec267288c949558690",
+    "docs/PRODUCT.md": "7289dfe5e0e221ac8b2ef1e7271e6608ada5c20551aafbfb17e82f80c784d522",
     "instrumentation.ts": "4ed6d9d53486b764a110d99513809da58fca8386494223551ae29090aaeccb04",
     "lib/api.ts": "360012c7981da45f270b964587d5fb8b19a91860354e0e20bde5e07f64f05fbd",
     "lib/cache/service.ts": "c30194cc5ff9c9b7250a818b357fc44832ab3e6bbdb8e2533f2ddbd8b58b99eb",
@@ -117,13 +117,13 @@
     "tests/youtube.test.ts": "4650fdc9c3d135f4f23bbcf4a77320137c0d54b66b89036c2fa15dc62f089955",
     "vitest.config.ts": "55cb220215e202cecae6640d51ee9d9fdd59232dec8110f3417a83252410642e"
   },
-  "indexed_at_commit": "6de54aed2bbba3987d0941b02ee6a06f2ffc71e2",
-  "indexed_at_timestamp": "2026-09-04T15:34:08.782385+00:00",
+  "indexed_at_commit": "7304886e89bc66f6bb8d75533564a9224ad0dacf",
+  "indexed_at_timestamp": "2026-09-04T15:48:47.700382+00:00",
   "schema_version": 3,
   "stats": {
-    "total_edges": 813,
+    "total_edges": 951,
     "total_files": 116,
-    "total_nodes": 691
+    "total_nodes": 704
   },
   "vexp_version": "3.1.1"
 }
