@@ -21,6 +21,7 @@ storage/                 Default local media/ and thumbnails/ roots
 scripts/prepare-dev.mjs  Pre-dev/pre-start: ensures DB file, runs prisma generate + migrate deploy
 tests/                   vitest tests against lib/ modules
 instrumentation.ts       Next.js server-boot hook: starts the job worker + scheduler
+proxy.ts                 Rejects browser cross-site mutations to API routes
 next.config.ts, Dockerfile, compose.yaml
 ```
 
@@ -59,6 +60,7 @@ Next.js App Router, file-system based. All data-driven pages set `export const d
 | `/sources/new` | `app/sources/new/page.tsx` | Analyze + create a source |
 | `/sources/[id]` | `app/sources/[id]/page.tsx` | Source detail: videos, settings, Tunarr panel |
 | `/videos` | `app/videos/page.tsx` | Canonical cross-source video library |
+| `/jobs` | `app/jobs/page.tsx` | Background job queue: running/queued/recent jobs, polling |
 | `/cache` | `app/cache/page.tsx` | Cache dashboard |
 | `/logs` | `app/logs/page.tsx` | Operational log viewer (filterable by `?category=`) |
 | `/settings` | `app/settings/page.tsx` | App configuration |
@@ -80,6 +82,7 @@ Next.js App Router, file-system based. All data-driven pages set `export const d
 | `GET /api/videos` | inline Prisma query (`?sourceId=` filter) | `lib/db/client.ts` |
 | `GET /api/videos/[id]` | inline Prisma query | `lib/db/client.ts` |
 | `GET /api/jobs/[id]` | `getJob` | `lib/jobs/service.ts` |
+| `GET /api/jobs` | `listJobs` | `lib/jobs/service.ts` (running + queued + last 30 terminal jobs, polled by `/jobs`) |
 | `GET/POST /api/cache` | `cacheDashboard` / `enforceCachePolicy` | `lib/cache/service.ts` |
 | `PATCH /api/cache/[id]` | `mutateCacheAsset` (pin/unpin/evict) | `lib/cache/service.ts` |
 | `POST /api/playback/prepare` | `preparePlayback` | `lib/playback/service.ts` |
@@ -112,7 +115,8 @@ Server-side "state" (in the sense of process-lifetime singletons) is kept on `gl
 
 All under `components/`. Most are `"use client"`; three (`page-header.tsx`, `source-card.tsx`, `brand-mark.tsx`) have no client directive and render as Server Components — they're static/presentational and take no interactive state:
 
-- **`sidebar.tsx`** *(client)* — top-level navigation (Dashboard/Sources/Videos/Cache/Logs/Settings). Client-only because it uses `next/navigation`'s `usePathname()` to highlight the active route (`aria-current="page"`); also renders `BrandMark` and mounts `ThemeToggle` in a footer row.
+- **`sidebar.tsx`** *(client)* — top-level navigation (Dashboard/Sources/Videos/Queue/Cache/Logs/Settings). Client-only because it uses `next/navigation`'s `usePathname()` to highlight the active route (`aria-current="page"`); also renders `BrandMark` and mounts `ThemeToggle` in a footer row.
+- **`job-queue.tsx`** *(client)* — the `/jobs` queue view: running/queued/recent job tables, self-polling `GET /api/jobs` every 3s (plus a 1s tick for live elapsed/waiting timers) independent of `router.refresh()`.
 - **`brand-mark.tsx`** *(server)* — the app's logo: a small inline `<svg>` glyph filled with `var(--accent)`, sized via a `size` prop.
 - **`theme-toggle.tsx`** *(client)* — sidebar-footer button that flips `<html data-theme>` between `"light"`/`"dark"`, persists the choice to `localStorage` (key from `theme-constants.ts`), and reflects the current theme in its icon/label. No dependency beyond local `useState`/`useEffect` — see "Theming" below.
 - **`page-header.tsx`** *(server)* — trivial `{eyebrow, title, action}` header, reused by every page.
@@ -131,7 +135,7 @@ All under `components/`. Most are `"use client"`; three (`page-header.tsx`, `sou
 - **`downloads/service.ts`** — `downloadVideo` (permanent download via `yt-dlp`+FFmpeg into the source's directory, with hardlink/copy reuse of an identical file already downloaded for another source via `reuseExistingAsset`), `cacheVideo` (same download machinery, targeting the shared cache directory), `materializeForTunarr` (promotes a cache/stream video to a real file in the source directory so Tunarr can scan it), `retagVideo` (regenerates the `.json`/`.nfo` sidecars for an already-downloaded video from the current `Video` row, for videos downloaded before NFO sidecars existed — pure local file writes, no ffmpeg, the media file itself is never touched), `touchCacheAsset`.
 - **`jobs/runner.ts`** — the single background worker: `recoverJobs()` requeues anything left `running`/`downloading` from a previous crash; `claimJob()` atomically claims the oldest due `queued` job (`updateMany` with a `status: "queued"` guard, `attempts: increment`), in three priority tiers — `retag` first (a purely local sidecar write, no network or ffmpeg), then any other non-`download` job (metadata/thumbnail/sync/cache/tunarr_*), then `download` last — so a large download backlog (slow `yt-dlp` calls, up to a 12h timeout each) can't starve quick jobs behind it; `handleJob()` dispatches by `job.type` to the relevant service function (`metadata`, `thumbnail`, `sync`, `download`, `cache`, `retag`, `tunarr_publish`, `tunarr_refresh`); `work()` loops until no jobs remain, retries failures with capped exponential backoff (`min(60, 2^attempts * 2)` seconds) up to `job.maxAttempts` (3, except `tunarr_refresh` = 100), and re-enqueues a `tunarr_refresh` job after any `download`/`cache`/`retag` job completes for a source with a linked Tunarr channel. A `download`/`cache` failure whose message matches `isRateLimitedError` (`lib/youtube/ytdlp.ts`, an HTTP 429/"Too Many Requests" signal from `yt-dlp`) is treated as YouTube throttling rather than an ordinary failure: it skips the per-job backoff entirely, undoes its own `attempts` increment (so a 429 never counts toward `maxAttempts`), and pushes `runAfter` for *every* other queued `download`/`cache` job out to the same cooldown — an in-process `globalThis` counter (`ytarrRateLimitHits`) escalates that cooldown (120s, doubling, capped at 30 min) across consecutive 429s and resets to zero the next time a `download`/`cache` job succeeds. `kickWorker()` starts/wakes the loop and self-schedules a wake timer for the next due job.
 - **`jobs/scheduler.ts`** — `runDueSyncs()` finds sources with `syncEnabled` and a due `nextSyncAt`, updates `nextSyncAt`, and enqueues a `sync` job for each; `startScheduler()` runs it once immediately, then every 60s via `setInterval`, plus an hourly `enforceCachePolicy()` and a one-time `reconcileCacheFiles()` at boot.
-- **`jobs/service.ts`** — `enqueueDownloads` (bulk, validates membership, skips already-complete), `getJob`.
+- **`jobs/service.ts`** — `enqueueDownloads` (bulk, validates membership, skips already-complete), `getJob`, `listJobs` (running + queued + last 30 terminal jobs, each with its `source`/`video` names — powers the `/jobs` queue page).
 - **`tunarr/client.ts`** — `TunarrApiClient`: thin typed wrapper over the Tunarr HTTP API (`/openapi.json`, `/api/version`, `/api/system/health`, `/api/media-sources`, `/api/media-sources/{id}/libraries/{id}/scan`, `/api/media-sources/{id}/{libraryId}/status`, `/api/media-libraries/{id}/programs`, `/api/channels`, `/api/channels/{id}`, `/api/channels/{id}/programming`, `/api/transcode_configs`). `discover()` checks that every required (path, method) pair is present in the target server's OpenAPI document before anything is allowed to mutate.
 - **`tunarr/service.ts`** — `publishSourceToTunarr` (the full publish flow: prefetch if needed → ensure local media source/library → scan → wait for scan → list programs → match by filename via `mapPrograms` → order via `orderMemberships` → create/update channel → replace programming), `tunarrLinkStatus`, `reconcileTunarrLink`, `unlinkTunarr` (deletes only locally-materialized `retentionOrigin: "tunarr"` files, never the remote Tunarr channel), `testTunarrConnection`, `enqueueTunarrPublish`. `channelPayload`'s channel `number` defaults to the *existing* channel's current number (`existing?.number`), not "next available", when updating a channel that's already linked — only a genuinely new channel or an explicit `input.channelNumber` picks a fresh number. Getting this wrong silently renumbers the channel on every automatic `tunarr_refresh`.
   - **How Tunarr actually gets a real title**: YTarr never sends title/description over the Tunarr API — `replaceProgramming` only posts `{type, id, duration}`. Tunarr's `other_videos` local-media scanner ignores the video file's own container metadata entirely and instead reads a Kodi-style `<youtubeId>.nfo` sidecar (`<movie><title>…</title><plot>…</plot></movie>`, same basename as the `.mp4`) — see `lib/downloads/service.ts:buildNfo`/`writeNfo`, written alongside the `.json` sidecar by `downloadVideo`, `materializeForTunarr`, and `retagVideo`. Without that `.nfo` file, Tunarr falls back to the bare filename (the YouTube ID) as the title, with no error. Confirmed against a live Tunarr instance: neither embedding ffmpeg container tags nor calling `POST /api/programs/{id}/scan` changes the displayed title — only the `.nfo` file does, and only after a fresh `scanLibrary` (Docs: https://tunarr.com/configure/media_sources/local/other_videos/).
@@ -182,11 +186,13 @@ SQLite via Prisma ([prisma/schema.prisma](../prisma/schema.prisma)). Dev default
 - **`TunarrPathMapping`** — unique on `ytarrPrefix`, ordered by `position`; used by `translatePathWithMappings` for longest-prefix path translation.
 - **`LogEntry`** — sanitized operational log, `level`/`category`/`message`/`details`, optional `sourceId`/`videoId` (`onDelete: SetNull`).
 
-Three committed migrations trace the schema's evolution: `20260903130000_init`, `20260903183000_tunarr_integration`, `20260903210000_phase2` (adds `feedType`/`historyLimit`/cache/playback-mode/path-mapping fields) — names line up with the README's MVP → Tunarr integration → Phase 2 narrative, though this checkout is not a git repository, so no commit history is available to confirm timing or authorship beyond the migration filenames themselves.
+Five committed migrations trace the schema's evolution: the initial schema, Tunarr integration, Phase 2 playback/cache support, video availability reasons, and per-source video quality.
 
 ## Authentication
 
-None is implemented. There is no user/session/credential model in `prisma/schema.prisma`, no `middleware.ts`, and no auth check in any `app/api/**/route.ts` handler. The Tunarr HTTP client sends no auth header. This is consistent with the product's "local-first, single operator" framing (see [docs/PRODUCT.md](PRODUCT.md)) but is not itself documented as a deliberate security boundary anywhere in the repo — treat it as an absence, not a designed guarantee, if this app is ever exposed beyond a trusted local network.
+None is implemented. There is no user/session/credential model in `prisma/schema.prisma` and no authorization check in any `app/api/**/route.ts` handler. The Tunarr HTTP client sends no auth header. This is an explicit local, single-operator security boundary documented in `README.md` and `SECURITY.md`: YTarr must not be exposed directly to the public internet or an untrusted LAN. Native production startup and Compose publish to host loopback by default.
+
+`proxy.ts` adds defense in depth for browser-based CSRF by rejecting state-changing API requests whose Fetch Metadata identifies them as `cross-site`. Requests without browser Fetch Metadata (such as trusted scripts) are permitted; this is not authentication and does not make a network-exposed YTarr safe. `next.config.ts` adds restrictive framing, MIME-sniffing, referrer, feature, and partial CSP headers.
 
 ## Environment configuration
 
@@ -205,11 +211,11 @@ Beyond first boot, the effective media directory, Tunarr URL, and cache limits l
 
 ## Build and deployment model
 
-- **`package.json` scripts**: `predev`/`prestart` run `scripts/prepare-dev.mjs` (ensures the SQLite file exists, `prisma generate`, `prisma migrate deploy`) before `next dev` / `next start`; `prebuild` runs `prisma generate` before `next build --webpack` (the build explicitly opts out of Turbopack — reason not documented in-repo).
-- **`next.config.ts`**: `output: "standalone"` (self-contained server output for Docker); `outputFileTracingExcludes` keeps `storage/`, the SQLite files, and `.next/` out of the traced output; `serverExternalPackages: ["@prisma/client"]`; `images.remotePatterns` allow-lists the YouTube/Google thumbnail hosts.
-- **`Dockerfile`**: three-stage build (`deps` → `builder` → `runner`). The runner stage installs `ffmpeg` and `yt-dlp` (via `apt`/`pip3 --break-system-packages`) directly into the image, creates a non-root `ytarr` user/group (uid/gid `1001`), copies the Next.js standalone output plus `prisma/` and `node_modules`, exposes port `3000`, defines a `HEALTHCHECK` against `/api/health`, and its `CMD` runs `prisma migrate deploy` then `node server.js`.
-- **`compose.yaml`**: a `ytarr` service (built from the local `Dockerfile`, persists `/config` and shares `/media`) and an optional `tunarr` service gated behind the `tunarr` Compose profile (`chrisbenincasa/tunarr:latest`, mounts `/media` read-only). Named volumes `ytarr-config`, `ytarr-media`, `tunarr-config`. `YTARR_TUNARR_URL` defaults to `http://tunarr:8000` (the Compose service name) when the `tunarr` profile is used, or must be set to an external Tunarr URL otherwise.
-- No CI configuration (no `.github/workflows`, no other CI config file) was found in this repository — build/test/deploy automation beyond the above is not discoverable from the checkout.
+- **`package.json` scripts**: `predev`/`prestart` run `scripts/prepare-dev.mjs` (ensures the SQLite file exists, `prisma generate`, `prisma migrate deploy`) before `next dev` / `next start`; production `npm start` binds to `127.0.0.1`, while the explicit `start:lan` script binds all interfaces; `prebuild` runs `prisma generate` before `next build --webpack` (the build explicitly opts out of Turbopack — reason not documented in-repo).
+- **`next.config.ts`**: `output: "standalone"` (self-contained server output for Docker); `outputFileTracingExcludes` keeps `storage/`, the SQLite files, and `.next/` out of the traced output; `serverExternalPackages: ["@prisma/client"]`; `images.remotePatterns` allow-lists the YouTube/Google thumbnail hosts; global response headers provide browser hardening.
+- **`Dockerfile`**: three-stage build (`deps` → `builder` → `runner`). The dependency stage installs OpenSSL and copies `prisma/schema.prisma` before `npm ci` because Prisma Client generation runs in `postinstall`. The runner stage installs `ffmpeg` and `yt-dlp` (via `apt`/`pip3 --break-system-packages`) directly into the image, creates a non-root `ytarr` user/group (uid/gid `1001`), copies the Next.js standalone output plus `prisma/` and `node_modules`, exposes port `3000`, defines a `HEALTHCHECK` against `/api/health`, and its `CMD` runs `prisma migrate deploy` then `node server.js`.
+- **`compose.yaml`**: a least-privilege `ytarr` service (built from the local `Dockerfile`, all Linux capabilities dropped, privilege escalation disabled, persists `/config` and shares `/media`) and an optional `tunarr` service gated behind the `tunarr` Compose profile (`TUNARR_IMAGE`, defaulting to `chrisbenincasa/tunarr:latest`, mounts `/media` read-only). Named volumes `ytarr-config`, `ytarr-media`, `tunarr-config`. Both published ports bind to host loopback. The YTarr service defines `host.docker.internal:host-gateway` so it can address a native Tunarr host on Linux as well as Docker Desktop. `YTARR_TUNARR_URL` defaults to `http://tunarr:8000` when the profile is used, or must point to an external Tunarr otherwise.
+- **CI/dependency maintenance**: `.github/workflows/ci.yml` runs tests, type checking, and a production build on pushes and pull requests. `.github/dependabot.yml` checks npm and GitHub Actions dependencies weekly.
 
 ## Testing structure
 
@@ -217,7 +223,7 @@ Beyond first boot, the effective media directory, Tunarr URL, and cache limits l
 
 | File | Covers |
 |---|---|
-| `tests/paths.test.ts` | `assertWithinDirectory` path-traversal guard |
+| `tests/paths.test.ts` | `assertWithinDirectory` path-traversal guard and cross-platform Tunarr path translation |
 | `tests/validation.test.ts` | zod schemas in `lib/validation.ts` |
 | `tests/youtube.test.ts` | `lib/youtube/normalize.ts`, `lib/youtube/url.ts` |
 | `tests/process.test.ts` | `lib/system/process.ts:runProcess` |

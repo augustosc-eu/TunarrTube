@@ -3,7 +3,7 @@ services:
     build: .
     container_name: ytarr
     ports:
-      - "${YTARR_PORT:-3000}:3000"
+      - "127.0.0.1:${YTARR_PORT:-3000}:3000"
     environment:
       DATABASE_URL: file:/config/ytarr.db
       YTARR_MEDIA_DIR: /media
@@ -13,14 +13,21 @@ services:
     volumes:
       - ytarr-config:/config
       - ytarr-media:/media
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
     restart: unless-stopped
 
   tunarr:
-    image: chrisbenincasa/tunarr:latest
+    image: ${TUNARR_IMAGE:-chrisbenincasa/tunarr:latest}
     container_name: tunarr
     profiles: ["tunarr"]
     ports:
-      - "${TUNARR_PORT:-8000}:8000"
+      - "127.0.0.1:${TUNARR_PORT:-8000}:8000"
     environment:
       TZ: ${TZ:-UTC}
     volumes:

@@ -22,3 +22,19 @@ export async function getJob(id: string) {
   if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
   return job;
 }
+
+// Powers the /jobs queue view: running and queued jobs (the actual work in flight or waiting on the
+// single in-process worker, see lib/jobs/runner.ts) plus a bounded tail of recent terminal jobs so
+// finished/failed work stays visible for a bit after it clears the active queue.
+export async function listJobs() {
+  const include = {
+    source: { select: { id: true, name: true } },
+    video: { select: { id: true, title: true, youtubeId: true } }
+  } as const;
+  const [running, queued, recent] = await Promise.all([
+    db.job.findMany({ where: { status: "running" }, orderBy: { startedAt: "asc" }, include }),
+    db.job.findMany({ where: { status: "queued" }, orderBy: [{ runAfter: "asc" }, { createdAt: "asc" }], include }),
+    db.job.findMany({ where: { status: { in: ["complete", "failed", "cancelled"] } }, orderBy: { finishedAt: "desc" }, take: 30, include })
+  ]);
+  return { running, queued, recent };
+}

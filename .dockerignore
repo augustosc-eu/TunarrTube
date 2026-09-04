@@ -1,7 +1,9 @@
 node_modules
 .next
 .git
+.vexp
+coverage
 prisma/*.db*
-storage/media
+storage
 npm-debug.log*
 .env*

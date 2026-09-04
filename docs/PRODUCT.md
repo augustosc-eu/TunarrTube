@@ -15,7 +15,7 @@ Source: [README.md](../README.md), corroborated end-to-end by [lib/sources/servi
 
 ## Who it serves
 
-A single local operator who self-hosts Tunarr and wants specific YouTube playlists/channels to behave like TV channels, without manually downloading and organizing video files. There is no multi-user, multi-tenant, or authentication concept anywhere in the schema or API (see [docs/ARCHITECTURE.md](ARCHITECTURE.md#authentication) and [docs/DECISIONS.md](DECISIONS.md)) — the product is built for one trusted operator on a local network or self-managed server, consistent with the README's "local-first companion" framing.
+A single local operator who self-hosts Tunarr and wants specific YouTube playlists/channels to behave like TV channels, without manually downloading and organizing video files. There is no multi-user, multi-tenant, or authentication concept anywhere in the schema or API (see [docs/ARCHITECTURE.md](ARCHITECTURE.md#authentication) and [docs/DECISIONS.md](DECISIONS.md)) — the product is built for one trusted operator on a loopback-only host or behind an operator-managed authenticated boundary, consistent with the README's "local-first companion" framing.
 
 ## Core user journeys
 
@@ -27,12 +27,12 @@ These are traced directly from the route handlers, service functions, and page/c
 - **Analyze** (`POST /api/sources/analyze`) runs `yt-dlp --dump-single-json --flat-playlist` and stores the result as a time-limited `ImportDraft` (1 hour TTL, `lib/sources/service.ts:analyzeAndStoreDraft`). The UI shows the detected name, uploader, thumbnail, and video count.
 - For channel URLs, the user also picks a feed type (Videos / Shorts / archived Live / All) and a history limit (how many recent items to consider).
 - Choose a playback mode (Permanent download / Cache on first play / Stream on demand) and optionally enable automatic sync with an interval.
-- **Create** (`POST /api/sources`) consumes the draft, creates the `Source` and its `Video`/`SourceVideo` rows, and enqueues background `metadata`, `thumbnail`, and (if download mode) `download` jobs for every video.
+- **Create** (`POST /api/sources`) consumes the draft, creates the `Source` and its `Video`/`SourceVideo` rows, and enqueues background `metadata`, `thumbnail`, and (if download mode) `download` jobs for every video — see "Choose a retention strategy per source" below for what each playback mode auto-queues.
 
 ### 2. Review and download videos
 On a source's detail page ([app/sources/[id]/page.tsx](../app/sources/%5Bid%5D/page.tsx), [components/video-selection-table.tsx](../components/video-selection-table.tsx)):
 - Videos appear immediately after creation; per-video metadata (description, duration, upload date) fills in as background `metadata` jobs complete.
-- The user selects videos and clicks **Download selected**, which posts to `POST /api/downloads` and polls job status until each finishes.
+- The user selects videos and clicks **Download selected**, which posts to `POST /api/downloads` and polls job status until each finishes. For a **download**-mode source this is largely redundant with step 1's auto-queue (see below) and mainly useful for a video whose download failed or was skipped; for **cache**/**stream**-mode sources it is the only thing that triggers a permanent download ahead of playback.
 - Completed downloads are written as `<mediaDirectory>/<youtubeId>.mp4` plus a `<youtubeId>.json` sidecar with title/description/duration/source metadata.
 - A **Play** button on each row prepares playback (`POST /api/playback/prepare`) and opens an inline `<video>` player streamed from `GET /api/playback/[sourceId]/[videoId]`.
 
@@ -64,6 +64,7 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 ### 6. Operate and monitor
 - **Dashboard** (`/`) — source count, unique video count, downloaded asset count, and the most recently updated sources.
 - **Videos** (`/videos`) — the canonical, deduplicated video library across all sources, with availability and duration.
+- **Queue** (`/jobs`) — every running, queued, and recently finished background job (download, cache, metadata, thumbnail, sync, retag, Tunarr publish/refresh) with its target and status, self-polling every few seconds.
 - **Cache** (`/cache`) — usage dashboard (used/pinned/protected/evictable bytes), per-asset pin/unpin/evict actions, and manual "enforce limits" / "clear evictable" actions.
 - **Logs** (`/logs`) — sanitized operational history (source, sync, metadata, download, video categories), filterable by category. Signed YouTube URLs and cookie flags are redacted before any log line is persisted.
 - **Settings** (`/settings`) — base media directory, `yt-dlp`/FFmpeg detection ("Test" buttons), Tunarr base URL and connectivity test, cache size/age limits, and ordered Tunarr path mappings with a live preview.

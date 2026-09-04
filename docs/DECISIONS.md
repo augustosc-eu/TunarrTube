@@ -1,6 +1,6 @@
 # YTarr — Decisions
 
-This document records architectural and product decisions that can be reliably traced to this repository — either stated explicitly in documentation/comments, or strongly evidenced by the implementation. It does not speculate about historical reasoning that isn't recoverable from the checkout. This repository is **not a git repository** (no `.git` directory), so no commit history, PR discussion, or commit-message rationale is available; every decision below is sourced from the current README and source code only.
+This document records architectural and product decisions that can be reliably traced to this repository — either stated explicitly in documentation/comments, or strongly evidenced by the implementation. It does not speculate about historical reasoning that isn't recoverable from the checkout.
 
 Each entry is labeled:
 - **Explicit** — stated directly in the README or a code comment.
@@ -40,7 +40,7 @@ Each entry is labeled:
 **Evidenced.** `publishSourceToTunarr` calls `materializeForTunarr` for every membership when `source.playbackMode !== "download"` and `input.prefetch !== false`. Not called out in the README in these terms, but it follows necessarily from Tunarr needing real local files to scan, and the UI states it plainly: "Cache and Stream sources are fully prefetched on their first publication" (`components/tunarr-channel-form.tsx`).
 
 ### No authentication or multi-user model
-**Evidenced**, not stated as a decision anywhere. There is no user/session/credential model in the Prisma schema, no `middleware.ts`, and no auth check in any API route or the Tunarr client. This is consistent with the product's "local-first companion" framing but the repository never states this absence as an intentional security boundary — treat it as unaddressed rather than deliberately scoped out.
+**Explicit.** There is no user/session/credential model in the Prisma schema and no auth check in any API route or the Tunarr client. `README.md` and `SECURITY.md` define this as a local, single-operator boundary: default production bindings are loopback-only, and any broader exposure requires an operator-managed authenticating proxy or VPN. `proxy.ts` blocks browser requests identified as cross-site, but is defense in depth rather than authorization.
 
 ### Log and error-message sanitization of signed URLs and cookie flags
 **Evidenced.** `lib/logging/service.ts:sanitizeLogValue` specifically targets `googlevideo`/`youtube` URLs and `--cookies[-from-browser]` argument values with dedicated regexes, and is applied both to every persisted `LogEntry` and to `runProcess`'s failure messages (`lib/system/process.ts`). No comment explains the motivation, but the specificity of the redaction targets (signed CDN URLs, credential-bearing CLI flags) makes the intent — never let short-lived authenticated URLs or credentials land in persisted logs or bubble into a client-visible error message — unambiguous.
@@ -52,7 +52,7 @@ Each entry is labeled:
 **Explicit.** README: "Docker path mapping is not inferred; configure a path visible to Tunarr" and "Longest-prefix matching is used." Implemented in `lib/settings/service.ts:translatePathWithMappings`, sorting candidate mappings by resolved-prefix length before selecting a match.
 
 ### Migration history follows the README's stated phases
-**Evidenced**, with a caveat. The three committed migrations — `20260903130000_init`, `20260903183000_tunarr_integration`, `20260903210000_phase2` — line up in name and content with the README's MVP → Tunarr integration → Phase 2 sections. This correlation is strong, but this checkout has no git history, so the actual chronology, authorship, or reasoning behind the phased rollout beyond what the README already states cannot be independently confirmed.
+**Evidenced.** The committed migrations progress from the initial schema through Tunarr integration, Phase 2 playback/cache support, video availability reasons, and per-source quality settings.
 
 ### `next build --webpack` (Turbopack not used for the production build)
 **Unclear** why the original author chose this, but a concrete failure mode for the unflagged (Turbopack) build was observed and is worth recording. `package.json`'s `build` script explicitly passes `--webpack`; Next.js 16.3.4 defaults to Turbopack, so this is a deliberate opt-out. Nothing in the repository states the original reason. Separately, in this session's sandboxed execution environment, running `next build` *without* `--webpack` failed because Turbopack's PostCSS worker could not bind an internal port — a restricted-environment issue, not a demonstrated incompatibility between YTarr and Turbopack in general. The `/* turbopackIgnore: true */` annotations already present in `lib/sources/service.ts`, `lib/settings/service.ts`, and `lib/downloads/service.ts` (each on a dynamic `path.join()` call using a runtime-resolved directory) show the codebase is written to be Turbopack-aware, which cuts against assuming an unresolved incompatibility. Do not treat the sandbox failure as proof the flag is required in the app's intended host or Docker environment — confirm with an unflagged build there before removing `--webpack`, and consult `node_modules/next/dist/docs/` for this Next.js version's current guidance either way.
@@ -63,5 +63,5 @@ Each entry is labeled:
 ### Hand-rolled theming (CSS custom properties + a bootstrap script), not `next-themes`
 **Evidenced.** Light/dark mode is implemented entirely with CSS custom properties in `app/globals.css` (`:root` for light, `@media (prefers-color-scheme: dark)` for the system default, `:root[data-theme]` for an explicit override) plus a `beforeInteractive` inline script in `app/layout.tsx` and a small `components/theme-toggle.tsx` client component. `next-themes` is not in `package.json`. Nothing in the repo states this choice in prose, but it's consistent with the "No client-side state management library" decision above: the app has a standing preference for zero-dependency, hand-written solutions over pulling in a library for something a ~30-line component and a few CSS rules can do directly.
 
-### No CI configuration is present in this checkout
-**Unclear** whether this reflects a deliberate choice (e.g. CI configured outside this repository, or not yet set up) or simply hasn't been added yet. No `.github/workflows`, `.gitlab-ci.yml`, or equivalent was found. This is a gap to flag, not a decision to attribute.
+### CI verifies every proposed change
+**Explicit.** `.github/workflows/ci.yml` runs the test suite, TypeScript type checking, and the production build for pull requests and default-branch pushes. Dependabot checks npm and GitHub Actions dependencies weekly.

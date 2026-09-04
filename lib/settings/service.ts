@@ -49,6 +49,20 @@ export function normalizeTunarrUrl(input: string) {
   return url.toString().replace(/\/$/, "");
 }
 
+export function isAbsoluteTunarrPath(input: string) {
+  return path.posix.isAbsolute(input) || isWindowsAbsolutePath(input);
+}
+
+function isWindowsAbsolutePath(input: string) {
+  return /^[a-zA-Z]:[\\/]/.test(input) || input.startsWith("\\\\");
+}
+
+function joinTunarrPath(prefix: string, relative: string) {
+  return isWindowsAbsolutePath(prefix)
+    ? path.win32.join(prefix, ...relative.split(path.sep))
+    : path.posix.join(prefix, relative.replaceAll("\\", "/"));
+}
+
 export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; defaultVideoQuality?: string; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }> }) {
   const current = await getSettings();
   const valid = input.mediaBaseDirectory
@@ -56,8 +70,13 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
     : current.mediaBaseDirectory;
   const tunarrUrl = input.tunarrUrl ? normalizeTunarrUrl(input.tunarrUrl) : current.tunarrUrl;
   const mappings = input.pathMappings ? input.pathMappings.map((mapping, position) => {
-    if (!path.isAbsolute(mapping.ytarrPrefix) || !path.isAbsolute(mapping.tunarrPrefix)) throw new AppError("INVALID_PATH_MAPPING", "Both mapping prefixes must be absolute paths.");
-    return { ytarrPrefix: path.normalize(mapping.ytarrPrefix), tunarrPrefix: path.normalize(mapping.tunarrPrefix), position };
+    if (!path.isAbsolute(mapping.ytarrPrefix) || !isAbsoluteTunarrPath(mapping.tunarrPrefix)) {
+      throw new AppError("INVALID_PATH_MAPPING", "The YTarr prefix must be absolute on this host, and the Tunarr prefix must be an absolute Unix or Windows path.");
+    }
+    const tunarrPrefix = isWindowsAbsolutePath(mapping.tunarrPrefix)
+      ? path.win32.normalize(mapping.tunarrPrefix)
+      : path.posix.normalize(mapping.tunarrPrefix);
+    return { ytarrPrefix: path.normalize(mapping.ytarrPrefix), tunarrPrefix, position };
   }) : null;
   if (mappings && new Set(mappings.map((mapping) => mapping.ytarrPrefix)).size !== mappings.length) throw new AppError("DUPLICATE_PATH_MAPPING", "YTarr mapping prefixes must be unique.");
   const sources = await db.source.findMany({ select: { id: true, directoryName: true } });
@@ -95,7 +114,7 @@ export function translatePathWithMappings(input: string, mappings: Array<{ ytarr
   }).sort((left, right) => right.prefix.length - left.prefix.length);
   const match = matches[0];
   if (!match) throw new AppError("TUNARR_PATH_UNMAPPED", `No Tunarr path mapping covers ${input}.`, 422);
-  return path.posix.join(match.tunarrPrefix.replaceAll("\\", "/"), match.relative.replaceAll("\\", "/"));
+  return joinTunarrPath(match.tunarrPrefix, match.relative);
 }
 
 export async function translatePathForTunarr(input: string) {

@@ -1,7 +1,11 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci
+COPY prisma/schema.prisma ./prisma/schema.prisma
+RUN npm ci --no-audit --no-fund
 
 FROM deps AS builder
 COPY . .
