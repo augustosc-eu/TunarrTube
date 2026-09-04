@@ -69,7 +69,7 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
       <td>{duration(row.durationSeconds)}</td>
       <td><span className={`badge ${row.availability === "unavailable" ? "unavailable" : row.metadataStatus}`}>{row.availability === "unavailable" ? "unavailable" : row.metadataStatus}</span>{row.availabilityReason ? <span className="availability-reason">{row.availabilityReason}</span> : null}</td>
       <td><span className={`badge ${row.downloadStatus}`}>{row.downloadStatus.replaceAll("_", " ")}</span></td>
-      <td><button className="button secondary" disabled={preparing === row.videoId || row.membershipStatus !== "present"} onClick={() => play(row)}>{preparing === row.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Play size={14}/>}</button></td>
+      <td><button className="button secondary" aria-label={`Play ${row.title}`} disabled={preparing === row.videoId || row.membershipStatus !== "present"} onClick={() => play(row)}>{preparing === row.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Play size={14}/>}</button></td>
     </tr>)}</tbody></table></div>
   </>;
 }
