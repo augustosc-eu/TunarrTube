@@ -58,6 +58,87 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     }
   }, 15_000);
 
+  it("mirrors the video's local thumbnail into a <youtubeId>-poster.<ext> sidecar so Tunarr's scanner has artwork", async () => {
+    // Tunarr's "other_videos" scanner also scans for local artwork next to the .nfo (Kodi's
+    // "<basename>-poster.<ext>" convention) to power its guide/now-playing image. Without it, Tunarr shows
+    // a broken thumbnail for the program.
+    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-poster-test-"));
+    cleanup.push(root);
+    const sourceDirectory = path.join(root, "source");
+    const fakeYtDlp = path.join(root, "yt-dlp");
+    const fakeFfmpeg = path.join(root, "ffmpeg");
+    await writeFile(fakeYtDlp, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const template = args[args.indexOf("-o") + 1];
+fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
+`);
+    await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
+    await chmod(fakeYtDlp, 0o755);
+    await chmod(fakeFfmpeg, 0o755);
+    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+
+    const thumbnailPath = path.join(root, "mirrored-thumb.webp");
+    await writeFile(thumbnailPath, "fake-thumbnail-bytes");
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: { name: "Poster test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `video-${suffix}`, title: "Poster test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`, thumbnailPath }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+
+    try {
+      await downloadVideo(source.id, video.id);
+      const poster = await readFile(path.join(sourceDirectory, `${video.youtubeId}-poster.webp`), "utf8");
+      expect(poster).toBe("fake-thumbnail-bytes");
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }, 15_000);
+
+  it("skips the poster sidecar without failing the download when no local thumbnail is mirrored yet", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-poster-missing-test-"));
+    cleanup.push(root);
+    const sourceDirectory = path.join(root, "source");
+    const fakeYtDlp = path.join(root, "yt-dlp");
+    const fakeFfmpeg = path.join(root, "ffmpeg");
+    await writeFile(fakeYtDlp, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const template = args[args.indexOf("-o") + 1];
+fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
+`);
+    await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
+    await chmod(fakeYtDlp, 0o755);
+    await chmod(fakeFfmpeg, 0o755);
+    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: { name: "Poster missing test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `video-${suffix}`, title: "Poster missing test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+
+    try {
+      const result = await downloadVideo(source.id, video.id);
+      expect((await stat(result.localPath)).isFile()).toBe(true);
+      const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } } });
+      expect(membership?.downloadStatus).toBe("complete");
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }, 15_000);
+
   it("regenerates the .nfo/.json sidecars for an already-downloaded video without touching the media file", async () => {
     // Tunarr's "other_videos" scanner reads title/plot from a Kodi-style .nfo sidecar, never from the
     // video file's own container metadata -- so repairing metadata must not re-encode or rewrite the .mp4.
@@ -70,8 +151,10 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     const source = await db.source.create({
       data: { name: "Retag test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory }
     });
+    const thumbnailPath = path.join(root, "mirrored-thumb.jpg");
+    await writeFile(thumbnailPath, "fake-thumbnail-bytes");
     const video = await db.video.create({
-      data: { youtubeId: `video-${suffix}`, title: "Retag <test> & video", description: "A description with a & an <ampersand>", uploader: "Some Uploader", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
+      data: { youtubeId: `video-${suffix}`, title: "Retag <test> & video", description: "A description with a & an <ampersand>", uploader: "Some Uploader", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`, thumbnailPath }
     });
     const localPath = path.join(sourceDirectory, `${video.youtubeId}.mp4`);
     await writeFile(localPath, "original-mp4");
@@ -87,6 +170,10 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
       expect(nfo).toContain("<studio>Some Uploader</studio>");
       const sidecar = JSON.parse(await readFile(path.join(sourceDirectory, `${video.youtubeId}.json`), "utf8"));
       expect(sidecar).toMatchObject({ youtubeId: video.youtubeId, title: "Retag <test> & video" });
+      // Backfills the poster sidecar for videos downloaded before this existed, or whose thumbnail
+      // mirror job finished after the download did.
+      const poster = await readFile(path.join(sourceDirectory, `${video.youtubeId}-poster.jpg`), "utf8");
+      expect(poster).toBe("fake-thumbnail-bytes");
     } finally {
       await db.source.delete({ where: { id: source.id } });
       await db.video.delete({ where: { id: video.id } });
