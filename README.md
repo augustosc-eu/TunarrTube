@@ -22,6 +22,10 @@ TunarrTube is a self-hosted, local-first companion for Tunarr. It discovers vide
 - Recover interrupted jobs after a restart without deleting previously completed media.
 - Run natively on macOS, Linux, or Windows, or use the included Docker configuration.
 
+## Screenshots
+
+![Dashboard](docs/images/dashboard-screenshot.png)
+
 ## How it works
 
 ```text
