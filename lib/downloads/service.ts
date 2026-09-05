@@ -48,6 +48,19 @@ async function writeNfo(target: string, video: { title: string; description: str
   await rename(temp, target);
 }
 
+// Tunarr's "other_videos" scanner also "scans for associated artwork files" next to each video (same
+// docs page as the NFO convention above), following Kodi's local-artwork naming: "<video basename>-poster.<ext>"
+// in the same directory. Without this file Tunarr has no image for the program and its guide/now-playing
+// UI shows a broken thumbnail. Source: the video's own thumbnail already mirrored locally by
+// lib/thumbnails/service.ts -- best-effort, since that mirror job can finish after (or fail before) this runs.
+async function writePosterArtwork(mediaDirectory: string, video: { youtubeId: string; thumbnailPath: string | null }) {
+  if (!video.thumbnailPath || !(await exists(video.thumbnailPath))) return;
+  const target = await assertWithinDirectory(mediaDirectory, path.join(mediaDirectory, `${video.youtubeId}-poster${path.extname(video.thumbnailPath)}`));
+  const temp = `${target}.${process.pid}.tmp`;
+  await copyFile(video.thumbnailPath, temp);
+  await rename(temp, target);
+}
+
 async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string, quality: VideoQuality, signal?: AbortSignal) {
   const targetDirectory = path.dirname(target);
   await mkdir(targetDirectory, { recursive: true });
@@ -124,6 +137,7 @@ export async function downloadVideo(sourceId: string, videoId: string, signal?: 
       originalUrl: membership.video.youtubeUrl
     });
     await writeNfo(nfo, membership.video);
+    await writePosterArtwork(sourceDir, membership.video);
     await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "complete", localPath: target, fileSize: details.size, retentionOrigin: "permanent" } });
     await writeLog({ category: "download", sourceId, videoId, message: `${reused ? "Linked" : "Downloaded"} ${membership.video.youtubeId}.` });
     return { localPath: target, fileSize: details.size, reused };
@@ -160,6 +174,7 @@ export async function retagVideo(sourceId: string, videoId: string) {
     originalUrl: membership.video.youtubeUrl
   });
   await writeNfo(nfo, membership.video);
+  await writePosterArtwork(membership.source.mediaDirectory, membership.video);
   await writeLog({ category: "download", sourceId, videoId, message: `Refreshed metadata sidecar for ${membership.video.youtubeId}.` });
   return { localPath: membership.localPath };
 }
@@ -232,6 +247,7 @@ export async function materializeForTunarr(sourceId: string, videoId: string) {
     source: membership.source.name, originalUrl: membership.video.youtubeUrl
   });
   await writeNfo(path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.nfo`), membership.video);
+  await writePosterArtwork(membership.source.mediaDirectory, membership.video);
   await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "complete", localPath: target, fileSize: details.size, retentionOrigin: "tunarr" } });
   return target;
 }

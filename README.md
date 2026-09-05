@@ -229,6 +229,7 @@ Native defaults:
 - Thumbnails: `storage/thumbnails/`
 - Source files: `<media-root>/<source-directory>/<youtubeId>.mp4`
 - Metadata: matching `<youtubeId>.json` and `<youtubeId>.nfo` files
+- Artwork: a matching `<youtubeId>-poster.jpg` (or `.png`/`.webp`) file, mirrored from the video's thumbnail so Tunarr's guide and "now playing" screen have an image for it
 
 Back up the SQLite database and media root before upgrades.
 

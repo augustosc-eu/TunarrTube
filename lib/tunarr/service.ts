@@ -111,7 +111,10 @@ export async function publishSourceToTunarr(sourceId: string, input: PublishTuna
 
   const local = await ensureLocalMediaSource(client, source, signal);
   await client.scanLibrary(local.mediaSourceId, local.libraryId, signal);
-  await client.waitForLibraryScan(local.mediaSourceId, local.libraryId, signal);
+  await client.waitForLibraryScan(local.mediaSourceId, local.libraryId, signal, async () => {
+    const indexedPrograms = await client.listLibraryPrograms(local.libraryId, signal);
+    return mapPrograms(indexedPrograms, source.videos).length === source.videos.length;
+  });
   const programs = await client.listLibraryPrograms(local.libraryId, signal);
   const orderedMemberships = orderMemberships(source.videos, input.programmingOrder);
   const lineup = mapPrograms(programs, orderedMemberships);
@@ -175,6 +178,9 @@ export async function unlinkTunarr(sourceId: string) {
       await rm(membership.localPath, { force: true });
       await rm(membership.localPath.replace(/\.mp4$/i, ".json"), { force: true });
       await rm(membership.localPath.replace(/\.mp4$/i, ".nfo"), { force: true });
+      for (const extension of ["jpg", "png", "webp"]) {
+        await rm(membership.localPath.replace(/\.mp4$/i, `-poster.${extension}`), { force: true });
+      }
     }
     await db.sourceVideo.update({ where: { id: membership.id }, data: { localPath: null, fileSize: null, downloadStatus: "not_downloaded", retentionOrigin: "none" } });
   }

@@ -118,11 +118,18 @@ export class TunarrApiClient {
     await this.request(`/api/media-sources/${encodeURIComponent(mediaSourceId)}/libraries/${encodeURIComponent(libraryId)}/scan?forceScan=true`, { method: "POST" }, signal);
   }
 
-  async waitForLibraryScan(mediaSourceId: string, libraryId: string, signal?: AbortSignal) {
+  async waitForLibraryScan(mediaSourceId: string, libraryId: string, signal?: AbortSignal, isReady?: () => Promise<boolean>) {
     const deadline = Date.now() + 120_000;
+    let observedScan = false;
     while (Date.now() < deadline) {
       const status = object(await this.request(`/api/media-sources/${encodeURIComponent(mediaSourceId)}/${encodeURIComponent(libraryId)}/status`, undefined, signal));
-      if (status?.state === "not_scanning") return;
+      if (status?.state === "not_scanning") {
+        // The scan endpoint only queues work, so its first status response can
+        // still describe the idle state from before the queued scan starts.
+        if (observedScan || !isReady || await isReady()) return;
+      } else {
+        observedScan = true;
+      }
       await new Promise((resolve, reject) => {
         const timer = setTimeout(resolve, 1_000);
         signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });

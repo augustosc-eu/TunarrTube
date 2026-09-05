@@ -3,7 +3,10 @@ import { TunarrApiClient } from "@/lib/tunarr/client";
 import { mapPrograms, orderMemberships } from "@/lib/tunarr/service";
 import { normalizeTunarrUrl } from "@/lib/settings/service";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const paths = {
   "/api/media-sources": { get: {}, post: {} },
@@ -37,6 +40,24 @@ describe("Tunarr client", () => {
     }));
     await expect(new TunarrApiClient("http://tunarr.test").createLocalMediaSource("TunarrTube - News", "/media/news")).resolves.toBe("local-source");
     expect(received).toEqual({ name: "TunarrTube - News", type: "local", mediaType: "other_videos", paths: ["/media/news"], pathReplacements: [] });
+  });
+
+  it("waits for a queued library scan to actually start when the initial status is idle", async () => {
+    vi.useFakeTimers();
+    const states = ["not_scanning", "in_progress", "not_scanning"];
+    const fetchMock = vi.fn(async () => Response.json({ state: states.shift() ?? "not_scanning" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wait = new TunarrApiClient("http://tunarr.test").waitForLibraryScan(
+      "source-1",
+      "library-1",
+      undefined,
+      async () => false
+    );
+    await vi.runAllTimersAsync();
+
+    await expect(wait).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
