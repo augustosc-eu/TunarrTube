@@ -1,5 +1,7 @@
 # TunarrTube
 
+![TunarrTube](docs/images/banner.png)
+
 Turn public YouTube videos, playlists, and channels into a local media library and publish them as live-TV-style channels in [Tunarr](https://tunarr.com).
 
 TunarrTube is a self-hosted, local-first companion for Tunarr. It discovers videos with `yt-dlp`, stores its catalog in SQLite, downloads or streams media according to each source's retention policy, and keeps linked Tunarr channels up to date.
