@@ -226,7 +226,7 @@ Back up the SQLite database and media root before upgrades.
 
 ## Operations
 
-- **Queue** shows running, queued, retrying, and recently completed background work.
+- **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. Cancelling a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. A job already running can't be interrupted; it has to finish or fail on its own.
 - **Cache** shows used, pinned, protected, and evictable storage.
 - **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence.
 - **Settings** tests binary discovery and Tunarr connectivity, controls cache limits, repairs older metadata sidecars, and previews path mappings.

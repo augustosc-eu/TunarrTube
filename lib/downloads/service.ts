@@ -203,9 +203,12 @@ export async function touchCacheAsset(id: string) {
 }
 
 export async function materializeForTunarr(sourceId: string, videoId: string) {
-  const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { source: true, video: true } });
+  const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { source: true, video: { include: { cacheAsset: true } } } });
   if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
   if (membership.retentionOrigin === "permanent" && membership.localPath && await exists(membership.localPath)) return membership.localPath;
+  // A user-cancelled cache job must stay cancelled through automatic Tunarr publish/refresh prefetching --
+  // leave this video out of the lineup (same as one that was never cached) until an explicit retry.
+  if (membership.video.cacheAsset?.status === "cancelled") return null;
   const asset = await cacheVideo(videoId, sourceId);
   if (!asset.localPath) throw new AppError("CACHE_OUTPUT_MISSING", "The cached file is unavailable.", 500);
   await mkdir(membership.source.mediaDirectory, { recursive: true });

@@ -1,6 +1,7 @@
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { kickWorker } from "@/lib/jobs/runner";
+import { writeLog } from "@/lib/logging/service";
 import { enqueueUniqueJob } from "@/lib/sources/service";
 
 export async function enqueueDownloads(items: Array<{ sourceId: string; videoId: string }>) {
@@ -21,6 +22,43 @@ export async function getJob(id: string) {
   const job = await db.job.findUnique({ where: { id } });
   if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
   return job;
+}
+
+// Cancelling only reaches jobs still waiting in the queue (including ones sitting in a retry backoff) --
+// a job already claimed as "running" has no interrupt point (see runProcess/downloadMp4), so it has to
+// finish or fail on its own. Cancellation is sticky: it marks the underlying SourceVideo/CacheAsset so
+// automatic re-enqueue paths (syncSource, materializeForTunarr) leave it alone until retryJob() below.
+export async function cancelJob(id: string) {
+  const job = await db.job.findUnique({ where: { id } });
+  if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
+  if (job.status !== "queued") throw new AppError("JOB_NOT_CANCELLABLE", "Only a queued job can be cancelled; a running job has to finish or fail on its own.", 409);
+  await db.job.update({ where: { id }, data: { status: "cancelled", error: "Cancelled by user.", finishedAt: new Date() } });
+  if (job.type === "download" && job.sourceId && job.videoId) {
+    await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: job.sourceId, videoId: job.videoId } }, data: { downloadStatus: "cancelled" } }).catch(() => undefined);
+  }
+  if (job.type === "cache" && job.videoId) {
+    await db.cacheAsset.updateMany({ where: { videoId: job.videoId }, data: { status: "cancelled", error: null } });
+  }
+  await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job cancelled by user.` });
+  return { cancelled: true };
+}
+
+// Re-queues a cancelled or failed job as a brand-new Job row (fresh attempts counter) via the same
+// enqueueUniqueJob() every automatic path uses, rather than resurrecting the old row.
+export async function retryJob(id: string) {
+  const job = await db.job.findUnique({ where: { id } });
+  if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
+  if (!["cancelled", "failed"].includes(job.status)) throw new AppError("JOB_NOT_RETRYABLE", "Only a cancelled or failed job can be retried.", 409);
+  if (job.type === "download" && job.sourceId && job.videoId) {
+    await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: job.sourceId, videoId: job.videoId } }, data: { downloadStatus: "queued" } }).catch(() => undefined);
+  }
+  if (job.type === "cache" && job.videoId) {
+    await db.cacheAsset.updateMany({ where: { videoId: job.videoId, status: { in: ["cancelled", "failed"] } }, data: { status: "not_cached", error: null } });
+  }
+  const fresh = await enqueueUniqueJob(job.type, job.sourceId ?? undefined, job.videoId ?? undefined, job.payloadJson ? JSON.parse(job.payloadJson) : undefined);
+  await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job retried by user.` });
+  kickWorker();
+  return fresh;
 }
 
 // Powers the /jobs queue view: running and queued jobs (the actual work in flight or waiting on the
