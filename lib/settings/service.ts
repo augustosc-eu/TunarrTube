@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, realpath, access } from "node:fs/promises";
 import { constants } from "node:fs";
+import { Prisma } from "@prisma/client";
 import { AppError } from "@/lib/api";
 import { DEFAULT_MEDIA_ROOT } from "@/lib/constants";
 import { db } from "@/lib/db/client";
@@ -19,16 +20,29 @@ export async function validateMediaDirectory(input: string, create = true) {
 
 export async function getSettings() {
   const existing = await db.appSettings.findUnique({ where: { id: 1 } });
-  if (existing) {
-    const mediaBaseDirectory = await validateMediaDirectory(existing.mediaBaseDirectory);
-    return mediaBaseDirectory === existing.mediaBaseDirectory
-      ? existing
-      : db.appSettings.update({ where: { id: 1 }, data: { mediaBaseDirectory } });
-  }
+  if (existing) return reconcileMediaDirectory(existing);
+
   const configured = process.env.TUNARRTUBE_MEDIA_DIR ?? process.env.YTARR_MEDIA_DIR ?? DEFAULT_MEDIA_ROOT;
   const mediaBaseDirectory = await validateMediaDirectory(configured);
   const tunarrUrl = normalizeTunarrUrl(process.env.TUNARRTUBE_TUNARR_URL ?? process.env.YTARR_TUNARR_URL ?? "http://127.0.0.1:8000");
-  return db.appSettings.create({ data: { id: 1, mediaBaseDirectory, tunarrUrl } });
+  try {
+    return await db.appSettings.create({ data: { id: 1, mediaBaseDirectory, tunarrUrl } });
+  } catch (error) {
+    // Another process/worker can win the create race between our findUnique and create (tests run
+    // several files concurrently against the same SQLite file, and multiple app instances could too).
+    // Fall back to reading what the winner just inserted instead of failing the request.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return reconcileMediaDirectory(await db.appSettings.findUniqueOrThrow({ where: { id: 1 } }));
+    }
+    throw error;
+  }
+}
+
+async function reconcileMediaDirectory(settings: Awaited<ReturnType<typeof db.appSettings.findUniqueOrThrow>>) {
+  const mediaBaseDirectory = await validateMediaDirectory(settings.mediaBaseDirectory);
+  return mediaBaseDirectory === settings.mediaBaseDirectory
+    ? settings
+    : db.appSettings.update({ where: { id: 1 }, data: { mediaBaseDirectory } });
 }
 
 export async function getSettingsView() {
