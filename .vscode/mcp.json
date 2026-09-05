@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "vexp": {
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/node",
+      "args": [
+        "/Users/augusto/.vscode/extensions/vexp.vexp-vscode-3.1.1-darwin-arm64/dist/mcp-server.cjs"
+      ],
+      "env": {
+        "VEXP_WORKSPACE": "/Volumes/MyPassport/Repo_Central/yt-tunarr"
+      }
+    }
+  }
+}
