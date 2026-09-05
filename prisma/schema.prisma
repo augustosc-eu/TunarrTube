@@ -140,6 +140,7 @@ model AppSettings {
   cacheMaxMegabytes   Int      @default(20480)
   cacheMaxAgeDays     Int      @default(30)
   defaultVideoQuality String   @default("best")
+  jobsPaused          Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }

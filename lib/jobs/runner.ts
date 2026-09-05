@@ -3,15 +3,43 @@ import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo } from "@/l
 import { writeLog } from "@/lib/logging/service";
 import { enrichVideo } from "@/lib/metadata/service";
 import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
+import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
 import { isRateLimitedError } from "@/lib/youtube/ytdlp";
 
-const globalWorker = globalThis as unknown as { ytarrWorker?: Promise<void>; ytarrRecovered?: boolean; ytarrWakeTimer?: NodeJS.Timeout; ytarrRateLimitHits?: number };
+const globalWorker = globalThis as unknown as {
+  ytarrWorker?: Promise<void>;
+  ytarrRecovered?: boolean;
+  ytarrWakeTimer?: NodeJS.Timeout;
+  ytarrRateLimitHits?: number;
+  ytarrControllers?: Map<string, AbortController>;
+};
+
+function controllers() {
+  return (globalWorker.ytarrControllers ??= new Map());
+}
 
 // Media-fetching job types that shell out to yt-dlp for the actual video bytes, as opposed to the light
 // metadata/listing calls made by "sync" -- these are the ones worth pausing as a group on a 429.
 const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
+
+// Job types whose underlying work actually listens for the AbortController below (they end up in
+// runProcess()/fetch calls that take a signal) -- "retag" (a near-instant local ffmpeg remux) and
+// "thumbnail" (a couple of quick image fetches) don't check it, so stopping one wouldn't do anything
+// but leave the UI showing a request that never lands. Exported so lib/jobs/service.ts's stopJob() can
+// reject those up front instead of silently no-oping.
+export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh"];
+
+// Called by stopJob() (lib/jobs/service.ts) for a job that's currently claimed as "running". Returns
+// false if no controller is registered for it (already finished, or never supported stopping), in which
+// case the caller should report the job as not stoppable rather than pretending the request landed.
+export function requestJobStop(jobId: string) {
+  const controller = controllers().get(jobId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
 
 // Thrown by the tunarr_refresh guard in handleJob() when other download/cache/sync jobs for the same
 // source are still active. This is an expected, routine wait -- not a real failure -- so handleJobFailure
@@ -43,24 +71,38 @@ async function claimJob() {
   return claimed.count === 1 ? db.job.findUnique({ where: { id: candidate.id } }) : null;
 }
 
-async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>) {
-  if (job.type === "metadata" && job.videoId) return enrichVideo(job.videoId);
+async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>, signal: AbortSignal) {
+  if (job.type === "metadata" && job.videoId) return enrichVideo(job.videoId, signal);
   if (job.type === "thumbnail" && job.sourceId) return persistSourceThumbnails(job.sourceId);
-  if (job.type === "sync" && job.sourceId) return syncSource(job.sourceId);
-  if (job.type === "download" && job.sourceId && job.videoId) return downloadVideo(job.sourceId, job.videoId);
-  if (job.type === "cache" && job.videoId) return cacheVideo(job.videoId, job.sourceId ?? undefined);
+  if (job.type === "sync" && job.sourceId) return syncSource(job.sourceId, signal);
+  if (job.type === "download" && job.sourceId && job.videoId) return downloadVideo(job.sourceId, job.videoId, signal);
+  if (job.type === "cache" && job.videoId) return cacheVideo(job.videoId, job.sourceId ?? undefined, signal);
   if (job.type === "retag" && job.sourceId && job.videoId) return retagVideo(job.sourceId, job.videoId);
   if (job.type === "tunarr_publish" && job.sourceId && job.payloadJson) {
-    return publishSourceToTunarr(job.sourceId, JSON.parse(job.payloadJson) as PublishTunarrInput);
+    return publishSourceToTunarr(job.sourceId, JSON.parse(job.payloadJson) as PublishTunarrInput, signal);
   }
   if (job.type === "tunarr_refresh" && job.sourceId) {
     const source = await db.source.findUnique({ where: { id: job.sourceId } });
     if (!source?.tunarrChannelId || !source.tunarrChannelName) return;
     const active = await db.job.count({ where: { sourceId: job.sourceId, id: { not: job.id }, type: { in: ["download", "cache", "sync"] }, status: { in: ["queued", "running"] } } });
     if (active) throw new SourceJobsActiveError("Waiting for source media jobs before refreshing Tunarr.");
-    return publishSourceToTunarr(job.sourceId, { channelName: source.tunarrChannelName, channelNumber: source.tunarrRequestedChannelNumber ?? undefined, programmingOrder: source.tunarrProgrammingOrder as PublishTunarrInput["programmingOrder"], prefetch: false });
+    return publishSourceToTunarr(job.sourceId, { channelName: source.tunarrChannelName, channelNumber: source.tunarrRequestedChannelNumber ?? undefined, programmingOrder: source.tunarrProgrammingOrder as PublishTunarrInput["programmingOrder"], prefetch: false }, signal);
   }
   throw new Error(`Invalid ${job.type} job payload.`);
+}
+
+// Shared by the runner's stop-abort path below and cancelJob() (lib/jobs/service.ts, the queued-job
+// case) so both land on the same terminal state: the Job row cancelled, and the SourceVideo/CacheAsset
+// it was working on marked "cancelled" (sticky, so syncSource/materializeForTunarr's automatic
+// re-enqueue paths leave it alone until an explicit retry).
+export async function markJobCancelled(job: { id: string; type: string; sourceId: string | null; videoId: string | null }, message: string) {
+  await db.job.update({ where: { id: job.id }, data: { status: "cancelled", error: message, finishedAt: new Date() } }).catch(() => undefined);
+  if (job.type === "download" && job.sourceId && job.videoId) {
+    await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: job.sourceId, videoId: job.videoId } }, data: { downloadStatus: "cancelled" } }).catch(() => undefined);
+  }
+  if (job.type === "cache" && job.videoId) {
+    await db.cacheAsset.updateMany({ where: { videoId: job.videoId }, data: { status: "cancelled", error: null } });
+  }
 }
 
 // Exported so tests can exercise the rate-limit-vs-ordinary-failure branching directly, without going
@@ -114,10 +156,16 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
 async function work() {
   await recoverJobs();
   for (;;) {
+    // Checked before every claim (not just once at the top) so a pause requested mid-drain takes effect
+    // between jobs -- it never interrupts whichever job is already running, that's what stopJob()/
+    // requestJobStop() above are for.
+    if ((await getSettings()).jobsPaused) return;
     const job = await claimJob();
     if (!job) return;
+    const controller = new AbortController();
+    controllers().set(job.id, controller);
     try {
-      await handleJob(job);
+      await handleJob(job, controller.signal);
       if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.ytarrRateLimitHits = 0;
       await db.job.update({ where: { id: job.id }, data: { status: "complete", finishedAt: new Date() } }).catch(() => undefined);
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
@@ -128,7 +176,14 @@ async function work() {
         }
       }
     } catch (error) {
-      await handleJobFailure(job, error);
+      if (controller.signal.aborted) {
+        await markJobCancelled(job, "Stopped by user.");
+        await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job stopped by user.` });
+      } else {
+        await handleJobFailure(job, error);
+      }
+    } finally {
+      controllers().delete(job.id);
     }
   }
 }
@@ -138,6 +193,7 @@ export function kickWorker() {
   if (!globalWorker.ytarrWorker) {
     globalWorker.ytarrWorker = work().finally(async () => {
       globalWorker.ytarrWorker = undefined;
+      if ((await getSettings()).jobsPaused) return;
       const next = await db.job.findFirst({ where: { status: "queued" }, orderBy: { runAfter: "asc" }, select: { runAfter: true } });
       if (next) {
         const delay = Math.max(25, Math.min(60_000, next.runAfter.getTime() - Date.now()));

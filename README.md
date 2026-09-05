@@ -193,6 +193,8 @@ Publishing creates or reuses a Local Media source for the directory, waits for T
 
 Cache limits default to 20 GB and 30 idle days and can be changed in Settings. Pinned, actively playing, and Tunarr-linked assets are protected from eviction.
 
+> **A Tunarr channel never plays a live YouTube stream, regardless of playback mode.** Tunarr's local-media scanner only reads real files sitting in a directory it's watching — it has no way to accept a remote URL per program, and the short-lived signed CDN URL TunarrTube resolves for `stream` playback expires far too quickly to serve a channel that might replay that item hours or days later. So publishing a Cache or Stream source still fully downloads (materializes) every video into the source's directory first, exactly like Permanent download — the playback mode only changes *when* and *how long* that copy is retained outside of Tunarr publishing, not whether Tunarr channels stream live. Live, on-demand streaming without ever writing a file only happens in TunarrTube's own in-app preview player, never in a published Tunarr channel.
+
 Manual or scheduled synchronization detects new videos and marks missing memberships without deleting previously completed downloads. Channel sources can limit how much recent history is inspected. Run only one TunarrTube process against a given SQLite database; the worker and scheduler are intentionally single-instance.
 
 ## Configuration
@@ -226,7 +228,7 @@ Back up the SQLite database and media root before upgrades.
 
 ## Operations
 
-- **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. Cancelling a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. A job already running can't be interrupted; it has to finish or fail on its own.
+- **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled outright or postponed to a later time (15 minutes up to a week) without losing its place; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. A running download, cache, sync, metadata, or Tunarr publish/refresh job can be stopped mid-flight — it's killed and lands in the same cancelled state as a queued cancellation; a metadata-repair or thumbnail job has no interrupt point and finishes on its own instead. Cancelling or stopping a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. The toolbar's Pause queue toggle stops the worker from picking up any new job (existing running work keeps going until it finishes or you stop it) — use it and Resume queue to hold everything for a while.
 - **Cache** shows used, pinned, protected, and evictable storage.
 - **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence.
 - **Settings** tests binary discovery and Tunarr connectivity, controls cache limits, repairs older metadata sidecars, and previews path mappings.
@@ -281,6 +283,9 @@ No. Only public HTTPS URLs on supported YouTube hosts are accepted. Cookie-based
 
 **If I change the media directory in Settings, does it move my existing downloads?**
 No. Only future downloads use the new directory; already-completed files keep their recorded paths and are not moved.
+
+**Can a Tunarr channel stream a video directly from YouTube, without TunarrTube downloading it?**
+No, for any playback mode. Tunarr's local-media source only scans real files on disk, and the signed YouTube CDN URL TunarrTube resolves for on-demand streaming is short-lived — it can't be handed to Tunarr once and replayed later on a channel's schedule. Publishing a Cache or Stream source to Tunarr therefore materializes (fully downloads) every video first, the same as Permanent download; the playback mode only affects retention outside of Tunarr, not whether a Tunarr channel streams live. This is a limitation of Tunarr's local-media scanner, not a TunarrTube setting — it would need Tunarr to support a remote/URL-backed media source to change.
 
 ## Security
 

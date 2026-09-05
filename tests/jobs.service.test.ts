@@ -4,17 +4,26 @@ import { db } from "@/lib/db/client";
 // cancelJob/retryJob's DB effects are what we're testing here; kickWorker() firing the real, table-wide
 // job drain (see claimJob() in lib/jobs/runner.ts) is exactly the shared-DB race the rate-limit tests
 // avoid -- stub it out so retryJob's assertions stay deterministic instead of racing a background worker.
-vi.mock("@/lib/jobs/runner", () => ({ kickWorker: vi.fn() }));
+// markJobCancelled is re-exported for real (imported below) since cancelJob()'s own test coverage is
+// exactly what exercises it; requestJobStop/STOPPABLE_JOB_TYPES back stopJob()'s tests further down.
+vi.mock("@/lib/jobs/runner", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/jobs/runner")>();
+  return { ...actual, kickWorker: vi.fn() };
+});
 
-const { cancelJob, retryJob } = await import("@/lib/jobs/service");
+const { cancelJob, postponeJob, retryJob, stopJob } = await import("@/lib/jobs/service");
 
 describe("job cancel/retry", () => {
   const cleanupSourceIds: string[] = [];
   const cleanupVideoIds: string[] = [];
+  const cleanupJobIds: string[] = [];
 
   afterEach(async () => {
+    // Source/Video deletion cascades to any Job row referencing them (see schema.prisma); jobs created
+    // with no source/video of their own (the postpone/stop tests below) need their own cleanup.
     await db.source.deleteMany({ where: { id: { in: cleanupSourceIds.splice(0) } } });
     await db.video.deleteMany({ where: { id: { in: cleanupVideoIds.splice(0) } } });
+    await db.job.deleteMany({ where: { id: { in: cleanupJobIds.splice(0) } } });
   });
 
   async function makeSourceVideo(downloadStatus = "queued") {
@@ -86,5 +95,56 @@ describe("job cancel/retry", () => {
     const { source, video } = await makeSourceVideo();
     const job = await db.job.create({ data: { type: "download", sourceId: source.id, videoId: video.id, status: "queued" } });
     await expect(retryJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_RETRYABLE" });
+  });
+
+  it("postpones a queued job by pushing runAfter out without touching status or attempts", async () => {
+    const job = await db.job.create({ data: { type: "sync", status: "queued", attempts: 1 } });
+    cleanupJobIds.push(job.id);
+    const before = Date.now();
+
+    const updated = await postponeJob(job.id, 60);
+    expect(updated.status).toBe("queued");
+    expect(updated.attempts).toBe(1);
+    const minutesOut = (updated.runAfter.getTime() - before) / 60_000;
+    expect(minutesOut).toBeGreaterThan(59);
+    expect(minutesOut).toBeLessThan(61);
+  });
+
+  it("rejects postponing a job that isn't queued", async () => {
+    const job = await db.job.create({ data: { type: "sync", status: "running" } });
+    cleanupJobIds.push(job.id);
+    await expect(postponeJob(job.id, 60)).rejects.toMatchObject({ code: "JOB_NOT_POSTPONABLE" });
+  });
+
+  it("rejects stopping a job that isn't running", async () => {
+    const job = await db.job.create({ data: { type: "download", status: "queued" } });
+    cleanupJobIds.push(job.id);
+    await expect(stopJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_STOPPABLE" });
+  });
+
+  it("rejects stopping a running job type with no interrupt point", async () => {
+    const job = await db.job.create({ data: { type: "retag", status: "running" } });
+    cleanupJobIds.push(job.id);
+    await expect(stopJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_STOPPABLE" });
+  });
+
+  it("rejects stopping a stoppable-type job the runner has no live controller for", async () => {
+    // Simulates a "running" row left over from a crash, before recoverJobs() requeues it -- there's no
+    // in-process AbortController for it (requestJobStop() returns false), so it must be reported as
+    // not stoppable rather than silently accepted.
+    const job = await db.job.create({ data: { type: "download", status: "running" } });
+    cleanupJobIds.push(job.id);
+    await expect(stopJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_STOPPABLE" });
+  });
+
+  it("stops a running job with a live controller and marks it cancelled the same way cancelJob does", async () => {
+    const { source, video } = await makeSourceVideo();
+    const job = await db.job.create({ data: { type: "download", sourceId: source.id, videoId: video.id, status: "running" } });
+    const stopSpy = vi.spyOn(await import("@/lib/jobs/runner"), "requestJobStop").mockReturnValue(true);
+
+    const result = await stopJob(job.id);
+    expect(result).toEqual({ stopping: true });
+    expect(stopSpy).toHaveBeenCalledWith(job.id);
+    stopSpy.mockRestore();
   });
 });

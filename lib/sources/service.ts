@@ -124,11 +124,11 @@ export async function getSource(id: string) {
   return source;
 }
 
-export async function syncSource(sourceId: string) {
+export async function syncSource(sourceId: string, signal?: AbortSignal) {
   const source = await db.source.findUnique({ where: { id: sourceId } });
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   if (source.sourceType === "collection") throw new AppError("COLLECTION_SYNC_UNSUPPORTED", "Curated video collections are updated by adding individual videos.", 422);
-  const analysis = await analyzeSource(source.url, { feedType: source.feedType === "playlist" ? undefined : source.feedType as "videos" | "shorts" | "live" | "all", historyLimit: source.historyLimit });
+  const analysis = await analyzeSource(source.url, { feedType: source.feedType === "playlist" ? undefined : source.feedType as "videos" | "shorts" | "live" | "all", historyLimit: source.historyLimit }, signal);
   const seenAt = new Date();
   let newCount = 0;
   const metadataVideoIds: string[] = [];

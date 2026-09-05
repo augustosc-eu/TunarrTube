@@ -57,6 +57,13 @@ export const testTunarrSchema = z.object({ tunarrUrl: z.string().trim().url() })
 
 export const preparePlaybackSchema = z.object({ sourceId: z.string().min(1), videoId: z.string().min(1) });
 export const cacheMutationSchema = z.object({ action: z.enum(["pin", "unpin", "evict"]) });
-export const jobMutationSchema = z.object({ action: z.enum(["cancel", "retry"]) });
+export const jobMutationSchema = z.object({
+  action: z.enum(["cancel", "retry", "stop", "postpone"]),
+  postponeMinutes: z.number().int().min(1).max(60 * 24 * 30).optional()
+}).refine((input) => input.action !== "postpone" || input.postponeMinutes !== undefined, {
+  message: "postponeMinutes is required to postpone a job.",
+  path: ["postponeMinutes"]
+});
+export const jobsPauseSchema = z.object({ paused: z.boolean() });
 export const cacheEnforceSchema = z.object({ action: z.enum(["enforce", "clear"]).default("enforce") });
 export const reconcileTunarrSchema = z.object({ channelId: z.string().min(1).optional() });

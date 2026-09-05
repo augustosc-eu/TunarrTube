@@ -2,11 +2,11 @@ import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
 import { fetchVideoAvailabilityReason, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
 
-export async function enrichVideo(videoId: string) {
+export async function enrichVideo(videoId: string, signal?: AbortSignal) {
   const video = await db.video.findUnique({ where: { id: videoId } });
   if (!video) return;
   try {
-    const metadata = await fetchVideoMetadata(video.youtubeUrl);
+    const metadata = await fetchVideoMetadata(video.youtubeUrl, signal);
     await db.video.update({
       where: { id: videoId },
       data: {

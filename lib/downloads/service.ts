@@ -48,7 +48,7 @@ async function writeNfo(target: string, video: { title: string; description: str
   await rename(temp, target);
 }
 
-async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string, quality: VideoQuality) {
+async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string, quality: VideoQuality, signal?: AbortSignal) {
   const targetDirectory = path.dirname(target);
   await mkdir(targetDirectory, { recursive: true });
   const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
@@ -64,7 +64,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
       "-f", downloadFormatSelector(quality),
       "--merge-output-format", "mp4", "--recode-video", "mp4", "--embed-metadata",
       "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), "--", youtubeUrl
-    ], { timeoutMs: 12 * 60 * 60_000 });
+    ], { timeoutMs: 12 * 60 * 60_000, signal });
     const files = await readdir(tempDirectory);
     const output = files.find((file) => file === `${youtubeId}.mp4`);
     if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);
@@ -89,7 +89,7 @@ async function reuseExistingAsset(sourceId: string, videoId: string, target: str
   return true;
 }
 
-export async function downloadVideo(sourceId: string, videoId: string) {
+export async function downloadVideo(sourceId: string, videoId: string, signal?: AbortSignal) {
   const membership = await db.sourceVideo.findUnique({
     where: { sourceId_videoId: { sourceId, videoId } },
     include: { source: true, video: true }
@@ -111,7 +111,7 @@ export async function downloadVideo(sourceId: string, videoId: string) {
     if (!reused) {
       const settings = await getSettings();
       const quality = resolveEffectiveQuality(membership.source.videoQuality, settings.defaultVideoQuality);
-      await downloadMp4(membership.video.youtubeId, membership.video.youtubeUrl, target, quality);
+      await downloadMp4(membership.video.youtubeId, membership.video.youtubeUrl, target, quality, signal);
     }
     const details = await stat(target);
     await writeSidecar(sidecar, {
@@ -128,7 +128,10 @@ export async function downloadVideo(sourceId: string, videoId: string) {
     await writeLog({ category: "download", sourceId, videoId, message: `${reused ? "Linked" : "Downloaded"} ${membership.video.youtubeId}.` });
     return { localPath: target, fileSize: details.size, reused };
   } catch (error) {
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "failed" } });
+    // A user-requested stop (see stopJob() in lib/jobs/service.ts) aborts `signal`, which is what makes
+    // runProcess() reject here -- record it as "cancelled" rather than "failed" so it reads like the
+    // queued-cancellation case instead of a real error, and so automatic re-enqueue paths leave it alone.
+    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: signal?.aborted ? "cancelled" : "failed" } });
     throw error;
   }
 }
@@ -164,7 +167,7 @@ export async function retagVideo(sourceId: string, videoId: string) {
 // A Video/CacheAsset is 1:1, but a Video can be shared across multiple Sources with different quality
 // overrides; the cache isn't keyed by quality, so whichever source's job fills it first determines the
 // cached resolution until eviction -- same class of behavior as reuseExistingAsset's hardlink sharing.
-export async function cacheVideo(videoId: string, sourceId?: string) {
+export async function cacheVideo(videoId: string, sourceId?: string, signal?: AbortSignal) {
   const video = await db.video.findUnique({ where: { id: videoId }, include: { cacheAsset: true } });
   if (!video) throw new AppError("VIDEO_NOT_FOUND", "Video not found.", 404);
   if (video.cacheAsset?.status === "complete" && video.cacheAsset.localPath && await exists(video.cacheAsset.localPath)) {
@@ -183,7 +186,7 @@ export async function cacheVideo(videoId: string, sourceId?: string) {
     update: { status: "downloading", localPath: target, error: null }
   });
   try {
-    await downloadMp4(video.youtubeId, video.youtubeUrl, target, quality);
+    await downloadMp4(video.youtubeId, video.youtubeUrl, target, quality, signal);
     const details = await stat(target);
     const complete = await db.cacheAsset.update({ where: { id: asset.id }, data: { status: "complete", fileSize: details.size, cachedAt: new Date(), lastAccessedAt: new Date(), error: null } });
     await writeLog({ category: "cache", videoId, message: `Cached ${video.youtubeId}.` });
@@ -191,7 +194,12 @@ export async function cacheVideo(videoId: string, sourceId?: string) {
     await enforceCachePolicy();
     return complete;
   } catch (error) {
-    await db.cacheAsset.update({ where: { id: asset.id }, data: { status: "failed", error: (error instanceof Error ? error.message : String(error)).slice(-2000) } });
+    // See the matching comment in downloadVideo() above: a stop request aborts `signal`, and that should
+    // read as "cancelled" rather than a real failure.
+    await db.cacheAsset.update({
+      where: { id: asset.id },
+      data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: (error instanceof Error ? error.message : String(error)).slice(-2000) }
+    });
     throw error;
   }
 }
