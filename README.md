@@ -324,7 +324,6 @@ Architecture and product context live in:
 
 If TunarrTube is useful to you, consider supporting its development:
 
-- [GitHub Sponsors](https://github.com/sponsors/acroix2020)
 - [Ko-fi](https://ko-fi.com/augustosc)
 - [Buy Me a Coffee](https://buymeacoffee.com/augustosc)
 
