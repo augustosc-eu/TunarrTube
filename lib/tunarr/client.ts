@@ -114,6 +114,19 @@ export class TunarrApiClient {
     return body.id;
   }
 
+  // Sibling to createLocalMediaSource, not a change to it: the channel-generator publish path
+  // (lib/tunarr/channel-service.ts) needs Tunarr's "music_videos" scanner (which reads the Kodi
+  // <musicvideo> NFOs this app writes for rendered channel output, lib/sidecar/nfo.ts) instead of
+  // the "other_videos" scanner Sources use.
+  async createMusicVideoLocalMediaSource(name: string, mediaDirectory: string, signal?: AbortSignal) {
+    const body = object(await this.request("/api/media-sources", {
+      method: "POST",
+      body: JSON.stringify({ name, type: "local", mediaType: "music_videos", paths: [mediaDirectory], pathReplacements: [] })
+    }, signal));
+    if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a media source but did not return its ID.", 502);
+    return body.id;
+  }
+
   async scanLibrary(mediaSourceId: string, libraryId: string, signal?: AbortSignal) {
     await this.request(`/api/media-sources/${encodeURIComponent(mediaSourceId)}/libraries/${encodeURIComponent(libraryId)}/scan?forceScan=true`, { method: "POST" }, signal);
   }

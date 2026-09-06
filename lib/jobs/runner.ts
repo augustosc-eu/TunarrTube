@@ -7,6 +7,10 @@ import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
 import { isRateLimitedError } from "@/lib/youtube/ytdlp";
+import { enqueueChannelJob } from "@/lib/channels/service";
+import { scanLocalFolder } from "@/lib/ingest/local-scan";
+import { renderMediaItem } from "@/lib/renders/service";
+import { publishChannelToTunarr } from "@/lib/tunarr/channel-service";
 
 const globalWorker = globalThis as unknown as {
   ytarrWorker?: Promise<void>;
@@ -29,7 +33,7 @@ const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
 // "thumbnail" (a couple of quick image fetches) don't check it, so stopping one wouldn't do anything
 // but leave the UI showing a request that never lands. Exported so lib/jobs/service.ts's stopJob() can
 // reject those up front instead of silently no-oping.
-export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh"];
+export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh", "render", "channel_publish"];
 
 // Called by stopJob() (lib/jobs/service.ts) for a job that's currently claimed as "running". Returns
 // false if no controller is registered for it (already finished, or never supported stopping), in which
@@ -87,6 +91,17 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
     const active = await db.job.count({ where: { sourceId: job.sourceId, id: { not: job.id }, type: { in: ["download", "cache", "sync"] }, status: { in: ["queued", "running"] } } });
     if (active) throw new SourceJobsActiveError("Waiting for source media jobs before refreshing Tunarr.");
     return publishSourceToTunarr(job.sourceId, { channelName: source.tunarrChannelName, channelNumber: source.tunarrRequestedChannelNumber ?? undefined, programmingOrder: source.tunarrProgrammingOrder as PublishTunarrInput["programmingOrder"], prefetch: false }, signal);
+  }
+  if (job.type === "ingest_local_scan" && job.channelId && job.payloadJson) {
+    const { folderPath } = JSON.parse(job.payloadJson) as { folderPath: string };
+    return scanLocalFolder(job.channelId, folderPath);
+  }
+  if (job.type === "render" && job.mediaItemId && job.payloadJson) {
+    const { templateId } = JSON.parse(job.payloadJson) as { templateId: string };
+    return renderMediaItem(job.mediaItemId, templateId, signal);
+  }
+  if (job.type === "channel_publish" && job.channelId) {
+    return publishChannelToTunarr(job.channelId, signal);
   }
   throw new Error(`Invalid ${job.type} job payload.`);
 }
@@ -174,6 +189,16 @@ async function work() {
           if (job.type === "cache" && job.videoId) await materializeForTunarr(job.sourceId, job.videoId);
           await enqueueUniqueJob("tunarr_refresh", job.sourceId);
         }
+      }
+      // Mirrors the download/cache/retag -> tunarr_refresh chain above: a completed render should
+      // republish any already-Tunarr-linked channel that uses this media item, same as a completed
+      // download refreshes an already-linked source's channel.
+      if (job.type === "render" && job.mediaItemId) {
+        const linkedChannels = await db.channel.findMany({
+          where: { tunarrChannelId: { not: null }, items: { some: { mediaItemId: job.mediaItemId } } },
+          select: { id: true }
+        });
+        for (const linked of linkedChannels) await enqueueChannelJob("channel_publish", { channelId: linked.id });
       }
     } catch (error) {
       if (controller.signal.aborted) {

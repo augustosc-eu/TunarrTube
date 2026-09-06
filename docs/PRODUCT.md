@@ -11,7 +11,9 @@ Concretely, TunarrTube:
 3. Downloads explicitly selected videos as stable, re-encoded MP4 files (or caches/streams them, depending on the source's playback mode).
 4. Registers the source's media directory with Tunarr as a Local Media source and creates/updates a Tunarr channel whose programming is built from the downloaded videos.
 
-Source: [README.md](../README.md), corroborated end-to-end by [lib/sources/service.ts](../lib/sources/service.ts), [lib/downloads/service.ts](../lib/downloads/service.ts), and [lib/tunarr/service.ts](../lib/tunarr/service.ts).
+Separately, TunarrTube can also curate a **Channel**: a hand-picked, ordered lineup of clips (from an already-downloaded Source video, a pasted YouTube URL, or a local folder) with a burned-in HTML/CSS overlay (title/artist/album, or any custom template) rendered via FFmpeg+Puppeteer, published as its own, independent Tunarr channel alongside any Source's.
+
+Source: [README.md](../README.md), corroborated end-to-end by [lib/sources/service.ts](../lib/sources/service.ts), [lib/downloads/service.ts](../lib/downloads/service.ts), [lib/tunarr/service.ts](../lib/tunarr/service.ts), [lib/channels/service.ts](../lib/channels/service.ts), and [lib/renders/service.ts](../lib/renders/service.ts).
 
 ## Who it serves
 
@@ -64,10 +66,19 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 ### 6. Operate and monitor
 - **Dashboard** (`/`) — source count, unique video count, downloaded asset count, and the most recently updated sources.
 - **Videos** (`/videos`) — the canonical, deduplicated video library across all sources, with availability and duration.
-- **Queue** (`/jobs`) — every running, queued, and recently finished background job (download, cache, metadata, thumbnail, sync, retag, Tunarr publish/refresh) with its target and status, self-polling every few seconds.
+- **Channels** (`/channels`) and **Templates** (`/templates`) — the curated-overlay-channel feature described in step 7, listed and managed like Sources/Videos.
+- **Queue** (`/jobs`) — every running, queued, and recently finished background job (download, cache, metadata, thumbnail, sync, retag, Tunarr publish/refresh, plus a Channel's own render/local-scan/Tunarr-publish jobs) with its target and status, self-polling every few seconds.
 - **Cache** (`/cache`) — usage dashboard (used/pinned/protected/evictable bytes), per-asset pin/unpin/evict actions, and manual "enforce limits" / "clear evictable" actions.
 - **Logs** (`/logs`) — sanitized operational history (source, sync, metadata, download, video categories), filterable by category. Signed YouTube URLs and cookie flags are redacted before any log line is persisted.
 - **Settings** (`/settings`) — base media directory, `yt-dlp`/FFmpeg detection ("Test" buttons), Tunarr base URL and connectivity test, cache size/age limits, and ordered Tunarr path mappings with a live preview.
+
+### 7. Build a curated, overlay-branded Channel
+`Channels → New channel` ([app/channels/new/page.tsx](../app/channels/new/page.tsx), [components/channel-form.tsx](../components/channel-form.tsx)) then a channel's own detail page ([app/channels/[id]/page.tsx](../app/channels/%5Bid%5D/page.tsx)):
+- Name the channel and pick an overlay template (two ship built-in: a music-video lower-third and a breaking-news banner; more are created via **Templates**).
+- **Add media** three ways: pick a video already downloaded by any existing Source, paste a YouTube URL, or scan a local folder path. Pasting a URL downloads it through a Source dedicated to this channel (auto-created on first use, named after the channel, visible under **Sources** like any other) — Channels never run a second, independent YouTube downloader.
+- **Render all** burns the channel's overlay template into every not-yet-rendered clip (FFmpeg composites a Puppeteer-screenshotted PNG per timed layer onto the source video). The same rendered file is shared across every channel using that exact clip+template pair.
+- Edit a clip's title/artist/album (or any custom fields the template declares) from its own page, with a live overlay preview and a **Look up** button that queries MusicBrainz/iTunes for real metadata + artwork.
+- **Publish to Tunarr** requires every item to already be rendered with the channel's template; it registers a Tunarr `music_videos` local media source pointed at the channel's own storage directory, scans it, and replaces that Tunarr channel's programming — structurally the same flow as a Source's own Tunarr publish, but a fully separate Tunarr channel.
 
 ## Product terminology
 
@@ -85,6 +96,10 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 | **Programming order** | How a Tunarr channel's videos are ordered when a lineup is published: `playlist`, `oldest`, `newest`, or `random`. |
 | **CacheAsset** | The cache-mode counterpart to a downloaded file: a single shared cached copy of a `Video`, independent of any one source, with pin/eviction state. |
 | **Path mapping** | An ordered, longest-prefix translation from a TunarrTube filesystem path to the path Tunarr sees for the same directory (needed when the two run in different containers/mounts). |
+| **Channel** | A curated, ordered lineup of `MediaItem`s behind one overlay template, published as its own Tunarr channel — distinct from a Source's own 1:1 Tunarr channel. Owns a companion "intake" Source for videos added by pasting a YouTube URL directly onto it. |
+| **MediaItem** | A clip curated onto one or more Channels: either a pointer at an already-downloaded `SourceVideo`, or a locally-scanned file. Carries music-video-shaped metadata (artist/album/year/genre) and any template-specific custom fields. |
+| **OverlayTemplate** | A reusable HTML/CSS design with `{{binding}}` placeholders and one or more timed layers, editable via a visual drag-and-drop builder or raw code. Two ship built-in (music video, breaking news). |
+| **RenderedAsset** | One burned-in render of a `MediaItem` with a specific `OverlayTemplate`, shared across every Channel that uses that same clip+template pair. |
 
 ## Intended behavior and constraints
 
@@ -98,3 +113,4 @@ These are explicit, stated constraints — either in the README or directly enfo
 - **TunarrTube and Tunarr must agree on the same absolute media path.** Docker path translation is never inferred automatically — the operator must configure an ordered path mapping in Settings when the two see different mount points.
 - **Tunarr integration is capability-gated.** Before any mutation, TunarrTube reads the configured Tunarr server's `/openapi.json` and refuses to proceed if a required endpoint is missing, rather than guessing at compatibility (README; `lib/tunarr/client.ts:discover`).
 - **Downloads are atomic from the caller's perspective.** A video is only recorded as downloaded after `yt-dlp` and FFmpeg both finish successfully into a temporary location that is then renamed into place; interrupted jobs are recovered (requeued) on the next application start and retried up to three times.
+- **Deleting a Channel never deletes its companion intake Source, downloaded media, rendered files, or a linked Tunarr channel.** Only the Channel's own catalog rows are removed (`lib/channels/service.ts:deleteChannel`) — same non-destructive philosophy as deleting a Source.

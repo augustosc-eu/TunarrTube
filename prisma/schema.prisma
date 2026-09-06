@@ -47,44 +47,45 @@ model Source {
 }
 
 model Video {
-  id              String        @id @default(cuid())
-  youtubeId       String        @unique
-  title           String
-  description     String?
-  uploader        String?
-  durationSeconds Int?
-  uploadDate      DateTime?
-  thumbnailUrl    String?
-  thumbnailPath   String?
-  youtubeUrl      String
-  availability    String        @default("unknown")
+  id                 String        @id @default(cuid())
+  youtubeId          String        @unique
+  title              String
+  description        String?
+  uploader           String?
+  durationSeconds    Int?
+  uploadDate         DateTime?
+  thumbnailUrl       String?
+  thumbnailPath      String?
+  youtubeUrl         String
+  availability       String        @default("unknown")
   availabilityReason String?
-  metadataStatus  String        @default("pending")
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  sources         SourceVideo[]
-  jobs            Job[]
-  logs            LogEntry[]
-  cacheAsset      CacheAsset?
+  metadataStatus     String        @default("pending")
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  sources            SourceVideo[]
+  jobs               Job[]
+  logs               LogEntry[]
+  cacheAsset         CacheAsset?
 
   @@index([createdAt])
 }
 
 model SourceVideo {
-  id               String   @id @default(cuid())
+  id               String     @id @default(cuid())
   sourceId         String
   videoId          String
   playlistIndex    Int?
-  membershipStatus String   @default("present")
-  lastSeenAt       DateTime @default(now())
+  membershipStatus String     @default("present")
+  lastSeenAt       DateTime   @default(now())
   localPath        String?
-  downloadStatus   String   @default("not_downloaded")
+  downloadStatus   String     @default("not_downloaded")
   fileSize         BigInt?
-  retentionOrigin  String   @default("none")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  source           Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  video            Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  retentionOrigin  String     @default("none")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  source           Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  video            Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  mediaItem        MediaItem?
 
   @@unique([sourceId, videoId])
   @@index([sourceId, playlistIndex])
@@ -111,39 +112,46 @@ model ImportDraft {
 }
 
 model Job {
-  id          String    @id @default(cuid())
+  id          String     @id @default(cuid())
   type        String
-  status      String    @default("queued")
+  status      String     @default("queued")
   sourceId    String?
   videoId     String?
+  channelId   String?
+  mediaItemId String?
   payloadJson String?
-  attempts    Int       @default(0)
-  maxAttempts Int       @default(3)
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(3)
   error       String?
-  runAfter    DateTime  @default(now())
-  createdAt   DateTime  @default(now())
+  runAfter    DateTime   @default(now())
+  createdAt   DateTime   @default(now())
   startedAt   DateTime?
   finishedAt  DateTime?
-  updatedAt   DateTime  @updatedAt
-  source      Source?   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  video       Video?    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  updatedAt   DateTime   @updatedAt
+  source      Source?    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  video       Video?     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  channel     Channel?   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  mediaItem   MediaItem? @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
 
   @@index([status, runAfter, createdAt])
   @@index([sourceId, type, status])
   @@index([videoId, type, status])
+  @@index([channelId, type, status])
+  @@index([mediaItemId, type, status])
 }
 
 model AppSettings {
-  id                  Int      @id @default(1)
-  mediaBaseDirectory  String
-  tunarrUrl           String   @default("http://127.0.0.1:8000")
-  cacheMaxMegabytes   Int      @default(20480)
-  cacheMaxAgeDays     Int      @default(30)
-  logRetentionDays    Int      @default(30)
-  defaultVideoQuality String   @default("best")
-  jobsPaused          Boolean  @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                      Int      @id @default(1)
+  mediaBaseDirectory      String
+  tunarrUrl               String   @default("http://127.0.0.1:8000")
+  cacheMaxMegabytes       Int      @default(20480)
+  cacheMaxAgeDays         Int      @default(30)
+  logRetentionDays        Int      @default(30)
+  defaultVideoQuality     String   @default("best")
+  jobsPaused              Boolean  @default(false)
+  musicbrainzContactEmail String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model CacheAsset {
@@ -178,17 +186,157 @@ model TunarrPathMapping {
 }
 
 model LogEntry {
-  id        String   @id @default(cuid())
-  level     String   @default("info")
-  category  String
-  message   String
-  details   String?
-  sourceId  String?
-  videoId   String?
-  createdAt DateTime @default(now())
-  source    Source?  @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  video     Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  id          String     @id @default(cuid())
+  level       String     @default("info")
+  category    String
+  message     String
+  details     String?
+  sourceId    String?
+  videoId     String?
+  channelId   String?
+  mediaItemId String?
+  createdAt   DateTime   @default(now())
+  source      Source?    @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  video       Video?     @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  channel     Channel?   @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  mediaItem   MediaItem? @relation(fields: [mediaItemId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([category, createdAt])
+}
+
+// --- Channel-generator domain: curated, overlay-rendered channels ---------------------------------
+// A Channel groups an ordered list of MediaItems behind one overlay template and, once published, one
+// Tunarr channel -- distinct from a Source's own 1:1 Tunarr channel. channelType exists so a future
+// "news" (or other) template category can reuse every model below without a schema migration -- only
+// "music_video" ships in this pass. intakeSourceId points at a companion Source (sourceType:
+// "collection") this Channel owns for videos added by pasting a YouTube URL directly onto it -- see
+// lib/channels/service.ts:addYoutubeUrlToChannel, which reuses the existing collection pipeline
+// (lib/sources/service.ts:addVideosToCollection) rather than a second YouTube-download implementation.
+model Channel {
+  id                           String    @id @default(cuid())
+  name                         String
+  channelType                  String    @default("music_video")
+  slug                         String    @unique
+  templateId                   String
+  storageDirectory             String
+  logoAssetPath                String?
+  programmingOrder             String    @default("manual") // manual | oldest | newest | random
+  intakeSourceId               String?
+  tunarrMediaSourceId          String?
+  tunarrLibraryId              String?
+  tunarrChannelId              String?
+  tunarrChannelNumber          Int?
+  tunarrChannelName            String?
+  tunarrRequestedChannelNumber Int?
+  tunarrLastPublishedAt        DateTime?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  template OverlayTemplate @relation(fields: [templateId], references: [id])
+  items    ChannelItem[]
+  jobs     Job[]
+  logs     LogEntry[]
+
+  @@index([templateId])
+}
+
+// A clip curated onto one or more Channels -- either a video already downloaded through the normal
+// Source/Video/SourceVideo pipeline (originType "sourceVideo"), or a local file added by folder scan
+// (originType "local"). Deliberately does NOT duplicate YouTube metadata/download logic: a
+// "sourceVideo"-origin MediaItem is a thin pointer at a SourceVideo TunarrTube already manages.
+model MediaItem {
+  id                     String    @id @default(cuid())
+  originType             String // sourceVideo | local
+  sourceVideoId          String?   @unique
+  originLocalPath        String?
+  title                  String
+  artist                 String?
+  album                  String?
+  year                   Int?
+  genre                  String?
+  releaseDate            DateTime?
+  durationSeconds        Int?
+  sourceThumbnailUrl     String?
+  sourceThumbnailPath    String?
+  metadataStatus         String    @default("pending") // pending | manual | matched | failed
+  metadataLookupProvider String? // musicbrainz | itunes
+  metadataLookupId       String?
+  metadataLookupJson     String?
+  customFieldsJson       String? // arbitrary string->string overrides, keyed by an OverlayTemplate binding key --
+  // lets templates outside the built-in title/artist/album shape (e.g. a news template's
+  // "ticker" field) carry real per-item text. See lib/overlay/service.ts:resolveBindingValues.
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  sourceVideo  SourceVideo?    @relation(fields: [sourceVideoId], references: [id], onDelete: SetNull)
+  channelItems ChannelItem[]
+  renders      RenderedAsset[]
+  jobs         Job[]
+  logs         LogEntry[]
+
+  @@index([createdAt])
+}
+
+// Thin ordering join table between a Channel and the MediaItems curated onto it.
+model ChannelItem {
+  id          String   @id @default(cuid())
+  channelId   String
+  mediaItemId String
+  position    Int
+  addedAt     DateTime @default(now())
+
+  channel   Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  mediaItem MediaItem @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, mediaItemId])
+  @@index([channelId, position])
+}
+
+// A reusable overlay design: HTML/CSS with {{binding}} placeholders, plus the field list that drives
+// the editor form/live-preview sample data, plus one or more timed layers. The persistent corner logo
+// bug is deliberately NOT a layer here -- it's set once as Tunarr's own native channel watermark and
+// never burned in.
+model OverlayTemplate {
+  id               String   @id @default(cuid())
+  name             String
+  channelType      String   @default("music_video")
+  description      String?
+  htmlTemplate     String
+  bindingsJson     String // BindingField[]
+  layersJson       String // OverlayLayer[]
+  // Present only for templates authored (or still editable) via the visual drag-and-drop builder --
+  // lib/overlay/visual.ts generates htmlTemplate/bindingsJson from this. Null means "code-only": either
+  // hand-written from the start, or detached by a direct HTML edit past what the builder can represent.
+  visualLayoutJson String? // VisualLayout | null
+  isBuiltIn        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  channels Channel[]
+  renders  RenderedAsset[]
+}
+
+// One burned-in render of a MediaItem with a specific OverlayTemplate. Keyed by the pair (not by
+// channel) because the same rendered file can be reused across every channel that shares both the clip
+// and the template -- a different template always forces a new render.
+model RenderedAsset {
+  id                    String    @id @default(cuid())
+  mediaItemId           String
+  templateId            String
+  status                String    @default("pending") // pending | rendering | complete | failed
+  outputPath            String?
+  outputDurationSeconds Int?
+  outputFileSize        BigInt?
+  overlayPngPaths       String? // JSON string[]
+  ffmpegLog             String?
+  error                 String?
+  renderedAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  mediaItem MediaItem       @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
+  template  OverlayTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([mediaItemId, templateId])
 }

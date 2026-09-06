@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Database, Files, Gauge, ListChecks, ListVideo, ScrollText, Settings } from "lucide-react";
+import { Clapperboard, Database, Files, Gauge, LayoutTemplate, ListChecks, ListVideo, ScrollText, Settings } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -10,6 +10,8 @@ const links = [
   { href: "/", label: "Dashboard", icon: Gauge },
   { href: "/sources", label: "Sources", icon: ListVideo },
   { href: "/videos", label: "Videos", icon: Files },
+  { href: "/channels", label: "Channels", icon: Clapperboard },
+  { href: "/templates", label: "Templates", icon: LayoutTemplate },
   { href: "/jobs", label: "Queue", icon: ListChecks },
   { href: "/cache", label: "Cache", icon: Database },
   { href: "/logs", label: "Logs", icon: ScrollText },

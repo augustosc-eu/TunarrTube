@@ -219,6 +219,11 @@ p { color: var(--text-muted); line-height: 1.65; }
 .source-thumb { width: 76px; height: 76px; border-radius: var(--radius-md); object-fit: cover; background: var(--panel-2); border: 1px solid var(--border); }
 .source-thumb.placeholder { display: grid; place-items: center; color: var(--text-subtle); }
 .source-card h3 { margin: 0 0 7px; font-size: 15px; line-height: 1.35; font-weight: 680; overflow-wrap: anywhere; }
+/* Same shape as .source-card/.source-thumb, under their own names for the Channels list. */
+.channel-card { min-height: 118px; display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 16px; align-items: center; transition: border-color .15s, transform .15s, box-shadow .15s; }
+.channel-card:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.channel-thumb { width: 76px; height: 76px; border-radius: var(--radius-md); object-fit: cover; background: var(--panel-2); border: 1px solid var(--border); display: grid; place-items: center; color: var(--text-subtle); }
+.channel-card h3 { margin: 0 0 7px; font-size: 15px; line-height: 1.35; font-weight: 680; overflow-wrap: anywhere; }
 .meta { color: var(--text-muted); font-size: 12px; line-height: 1.45; display: flex; flex-wrap: wrap; align-items: center; gap: 5px 7px; }
 .empty { min-height: 260px; text-align: center; padding: 54px 24px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--panel) 72%, transparent); color: var(--text-muted); display: grid; align-content: center; gap: 8px; justify-items: center; }
 .empty h2, .empty p { margin: 0; }
@@ -251,6 +256,7 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 p.success { background: var(--success-subtle); border: 1px solid color-mix(in srgb, var(--success) 22%, transparent); padding: 11px 13px; border-radius: var(--radius-md); font-size: 13px; }
 .preview { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--border); display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 22px; align-items: start; }
 .preview .source-thumb { width: 132px; height: 99px; }
+.preview .channel-thumb { width: 132px; height: 99px; }
 .choices { display: grid; gap: 9px; margin: 18px 0; }
 .choice { min-height: 46px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 14px; font-size: 13px; font-weight: 550; }
 .choice > span { display: flex; align-items: center; gap: 9px; }
@@ -279,9 +285,9 @@ tr:last-child td { border-bottom: 0; }
 .title-cell strong { display: block; line-height: 1.4; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .title-cell .meta { margin-top: 3px; }
 .badge { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: var(--radius-full); padding: 4px 8px; font-size: 9px; line-height: 1.2; font-weight: 750; text-transform: uppercase; letter-spacing: .065em; white-space: nowrap; background: var(--panel-2); color: var(--text-muted); }
-.badge.complete, .badge.available { background: var(--success-subtle); color: var(--success); border-color: color-mix(in srgb, var(--success) 18%, transparent); }
-.badge.failed, .badge.unavailable, .badge.missing { background: var(--error-subtle); color: var(--error); border-color: color-mix(in srgb, var(--error) 18%, transparent); }
-.badge.queued, .badge.running, .badge.downloading, .badge.pending { background: var(--warning-subtle); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 18%, transparent); }
+.badge.complete, .badge.available, .badge.matched { background: var(--success-subtle); color: var(--success); border-color: color-mix(in srgb, var(--success) 18%, transparent); }
+.badge.failed, .badge.unavailable, .badge.missing, .badge.cancelled { background: var(--error-subtle); color: var(--error); border-color: color-mix(in srgb, var(--error) 18%, transparent); }
+.badge.queued, .badge.running, .badge.downloading, .badge.pending, .badge.rendering { background: var(--warning-subtle); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 18%, transparent); }
 .availability-reason { display: block; max-width: 34rem; margin-top: 6px; color: var(--text-muted); font-size: 12px; line-height: 1.4; text-transform: none; letter-spacing: normal; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
 .toolbar .toolbar { margin-bottom: 0; }
@@ -312,6 +318,8 @@ tr:last-child td { border-bottom: 0; }
 .player .toolbar { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 /* Video letterboxing intentionally stays black in both themes — do not tokenize. */
 .player video { display: block; width: 100%; max-height: 70vh; background: black; border-radius: var(--radius-md); }
+.preview-frame-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000 url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2220%22 height=%2220%22%3E%3Crect width=%2210%22 height=%2210%22 fill=%22%23222%22/%3E%3Crect x=%2210%22 y=%2210%22 width=%2210%22 height=%2210%22 fill=%22%23222%22/%3E%3C/svg%3E'); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border); }
+.preview-frame-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .meter { height: 9px; overflow: hidden; border-radius: var(--radius-full); background: var(--panel-2); border: 1px solid var(--border); margin: -10px 0 24px; }
 .meter span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-hover)); transition: width .3s ease; }
 .animate-spin { animation: spin .8s linear infinite; }
@@ -348,8 +356,11 @@ tr:last-child td { border-bottom: 0; }
   .grid { gap: 12px; }
   .source-card { min-height: 104px; grid-template-columns: 66px minmax(0, 1fr); gap: 13px; }
   .source-thumb { width: 66px; height: 66px; }
+  .channel-card { min-height: 104px; grid-template-columns: 66px minmax(0, 1fr); gap: 13px; }
+  .channel-thumb { width: 66px; height: 66px; }
   .preview { grid-template-columns: 1fr; }
   .preview .source-thumb { width: 100%; height: auto; aspect-ratio: 4 / 3; }
+  .preview .channel-thumb { width: 100%; height: auto; aspect-ratio: 4 / 3; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .stat { min-height: 92px; padding: 15px; }

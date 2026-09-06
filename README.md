@@ -17,6 +17,7 @@ TunarrTube is a self-hosted, local-first companion for Tunarr. It discovers vide
 - Choose permanent downloads, cache-on-first-play, or stream-on-demand per source.
 - Produce stable MP4 files with JSON and NFO metadata sidecars.
 - Create or update Tunarr Local Media sources and channels.
+- Curate a **Channel**: a hand-picked, ordered lineup of clips (from an already-downloaded video, a pasted YouTube URL, or a local folder) with a burned-in overlay (artist/title/album, or a custom HTML/CSS template you design), published as its own Tunarr channel.
 - Translate media paths when TunarrTube and Tunarr use different host or container paths.
 - Monitor background work, cache usage, and sanitized logs from the web interface.
 - Recover interrupted jobs after a restart without deleting previously completed media.
@@ -96,6 +97,9 @@ To make downloaded files directly visible on the host, replace the `ytarr-media:
 
 TunarrTube needs write access; Tunarr only needs read access. The TunarrTube container runs as UID/GID `1001`.
 
+> [!NOTE]
+> The Channels overlay-render feature needs a working headless Chromium in addition to `yt-dlp`/FFmpeg. The Docker image installs Debian's own `chromium` package for this (rather than Puppeteer's own bundled download) and points Puppeteer at it — no extra setup needed.
+
 ## Native installation
 
 ### Requirements
@@ -104,6 +108,7 @@ TunarrTube needs write access; Tunarr only needs read access. The TunarrTube con
 - A current `yt-dlp`
 - FFmpeg
 - A reachable [Tunarr installation](https://tunarr.com/getting-started/installation/) for channel publishing
+- For the Channels overlay-render feature: `npm install` downloads Puppeteer's own bundled Chromium automatically (no separate browser install needed natively). If your environment blocks that download, set `PUPPETEER_SKIP_DOWNLOAD=1` and point `YTARR_PUPPETEER_EXECUTABLE_PATH` at an existing Chrome/Chromium binary instead.
 
 ### Install dependencies
 
@@ -177,7 +182,7 @@ Add an ordered TunarrTube → Tunarr mapping in Settings when the same files hav
 
 Mappings use longest-prefix matching. Leave them empty when both applications see the same absolute path.
 
-## First channel
+## First Tunarr channel (from a Source)
 
 1. Open **Sources → Add Source**.
 2. Paste a public HTTPS YouTube video, playlist, or channel URL.
@@ -188,6 +193,19 @@ Mappings use longest-prefix matching. Leave them empty when both applications se
 7. Select **Create Tunarr Channel**.
 
 Publishing creates or reuses a Local Media source for the directory, waits for Tunarr's scan, and creates the channel lineup. Publishing again updates the linked channel instead of creating a duplicate.
+
+## First curated Channel (with an overlay)
+
+A **Channel** (the entity under the **Channels** tab, distinct from a Source's own Tunarr channel above) lets you hand-pick clips and burn in a title/artist overlay before publishing:
+
+1. Open **Templates** once to confirm the built-in "Music Video Lower Third" template exists (it seeds itself automatically), or design your own with the visual drag-and-drop editor.
+2. Open **Channels → New channel**, name it, and pick a template.
+3. On the channel's page, add media: pick an already-downloaded video, paste a YouTube URL (downloaded through a Source created automatically for this channel — visible under **Sources**), or scan a local folder.
+4. Edit each clip's title/artist/album (or use **Look up** for MusicBrainz/iTunes metadata + artwork).
+5. Select **Render all**, then wait for rendering to finish (check **Queue**).
+6. Open the channel's **Tunarr** panel and select **Publish to Tunarr**.
+
+This creates a second, independent Tunarr channel alongside any Source-based ones.
 
 ## Playback and retention
 
@@ -218,7 +236,7 @@ curl -X POST http://localhost:3000/api/sources/analyze \
 
 ## Configuration
 
-Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page.
+Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature.
 
 | Variable | Purpose | Default |
 |---|---|---|
@@ -228,6 +246,8 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `TUNARRTUBE_MEDIA_DIR` | Initial media root | `storage/media` |
 | `TUNARRTUBE_THUMBNAIL_DIR` | Thumbnail storage root | `storage/thumbnails` |
 | `TUNARRTUBE_TUNARR_URL` | Initial Tunarr base URL | `http://127.0.0.1:8000` native; `http://tunarr:8000` in Compose |
+| `YTARR_FFPROBE_PATH` | Absolute `ffprobe` executable path (used by Channels rendering) | Auto-discovered |
+| `YTARR_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium |
 | `TUNARRTUBE_PORT` | Docker host port | `3000` |
 | `TUNARR_PORT` | Optional Tunarr Docker host port | `8000` |
 | `TUNARR_IMAGE` | Optional Tunarr image tag or digest | `chrisbenincasa/tunarr:latest` |

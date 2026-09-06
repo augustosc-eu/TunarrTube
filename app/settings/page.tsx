@@ -7,5 +7,5 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const [settings, ytDlp, ffmpeg] = await Promise.all([getSettingsView(), inspectBinary("yt-dlp"), inspectBinary("ffmpeg")]);
-  return <><PageHeader eyebrow="Local configuration" title="Settings" /><SettingsForm initialDirectory={settings.mediaBaseDirectory} initialTunarrUrl={settings.tunarrUrl} initialCacheMegabytes={settings.cacheMaxMegabytes} initialCacheAgeDays={settings.cacheMaxAgeDays} initialLogRetentionDays={settings.logRetentionDays} initialDefaultVideoQuality={settings.defaultVideoQuality} initialMappings={settings.pathMappings} ytDlp={ytDlp} ffmpeg={ffmpeg} /></>;
+  return <><PageHeader eyebrow="Local configuration" title="Settings" /><SettingsForm initialDirectory={settings.mediaBaseDirectory} initialTunarrUrl={settings.tunarrUrl} initialCacheMegabytes={settings.cacheMaxMegabytes} initialCacheAgeDays={settings.cacheMaxAgeDays} initialLogRetentionDays={settings.logRetentionDays} initialDefaultVideoQuality={settings.defaultVideoQuality} initialMusicbrainzContactEmail={settings.musicbrainzContactEmail} initialMappings={settings.pathMappings} ytDlp={ytDlp} ffmpeg={ffmpeg} /></>;
 }
