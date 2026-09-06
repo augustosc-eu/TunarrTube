@@ -75,7 +75,8 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
       "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
       "--ffmpeg-location", path.dirname(ffmpeg),
       "-f", downloadFormatSelector(quality),
-      "--merge-output-format", "mp4", "--recode-video", "mp4", "--embed-metadata",
+      "--concurrent-fragments", "4",
+      "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
       "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), "--", youtubeUrl
     ], { timeoutMs: 12 * 60 * 60_000, signal });
     const files = await readdir(tempDirectory);
