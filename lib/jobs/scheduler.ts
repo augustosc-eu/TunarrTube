@@ -1,8 +1,15 @@
 import { enforceCachePolicy, reconcileCacheFiles } from "@/lib/cache/service";
 import { db } from "@/lib/db/client";
+import { purgeLogs } from "@/lib/logging/service";
+import { getSettings } from "@/lib/settings/service";
 import { enqueueSync, enqueueUniqueJob } from "@/lib/sources/service";
 
-const globalScheduler = globalThis as unknown as { ytarrSchedulerTimer?: NodeJS.Timeout; ytarrCacheTimer?: NodeJS.Timeout; ytarrSchedulerStartedAt?: Date; ytarrSchedulerRunning?: boolean; ytarrAvailabilityBackfillStarted?: boolean };
+const globalScheduler = globalThis as unknown as { ytarrSchedulerTimer?: NodeJS.Timeout; ytarrCacheTimer?: NodeJS.Timeout; ytarrLogPurgeTimer?: NodeJS.Timeout; ytarrSchedulerStartedAt?: Date; ytarrSchedulerRunning?: boolean; ytarrAvailabilityBackfillStarted?: boolean };
+
+async function runLogPurge() {
+  const settings = await getSettings();
+  return purgeLogs(settings.logRetentionDays);
+}
 
 export async function queueAvailabilityReasonBackfill() {
   if (globalScheduler.ytarrAvailabilityBackfillStarted) return 0;
@@ -35,10 +42,13 @@ export function startScheduler() {
   void runDueSyncs();
   void queueAvailabilityReasonBackfill().catch(() => undefined);
   void reconcileCacheFiles().then(() => enforceCachePolicy()).catch(() => undefined);
+  void runLogPurge().catch(() => undefined);
   globalScheduler.ytarrSchedulerTimer = setInterval(() => void runDueSyncs(), 60_000);
   globalScheduler.ytarrCacheTimer = setInterval(() => void enforceCachePolicy(), 60 * 60_000);
+  globalScheduler.ytarrLogPurgeTimer = setInterval(() => void runLogPurge().catch(() => undefined), 60 * 60_000);
   globalScheduler.ytarrSchedulerTimer.unref();
   globalScheduler.ytarrCacheTimer.unref();
+  globalScheduler.ytarrLogPurgeTimer.unref();
 }
 
 export function schedulerStatus() {

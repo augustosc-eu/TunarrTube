@@ -139,6 +139,7 @@ model AppSettings {
   tunarrUrl           String   @default("http://127.0.0.1:8000")
   cacheMaxMegabytes   Int      @default(20480)
   cacheMaxAgeDays     Int      @default(30)
+  logRetentionDays    Int      @default(30)
   defaultVideoQuality String   @default("best")
   jobsPaused          Boolean  @default(false)
   createdAt           DateTime @default(now())

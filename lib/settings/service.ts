@@ -77,7 +77,7 @@ function joinTunarrPath(prefix: string, relative: string) {
     : path.posix.join(prefix, relative.replaceAll("\\", "/"));
 }
 
-export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; defaultVideoQuality?: string; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }> }) {
+export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }> }) {
   const current = await getSettings();
   const valid = input.mediaBaseDirectory
     ? await validateMediaDirectory(input.mediaBaseDirectory)
@@ -102,8 +102,8 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   const settings = await db.$transaction(async (tx) => {
     const saved = await tx.appSettings.upsert({
       where: { id: 1 },
-      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, defaultVideoQuality: input.defaultVideoQuality },
-      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, defaultVideoQuality: input.defaultVideoQuality }
+      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality },
+      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality }
     });
     for (const source of destinations) {
       await tx.source.update({ where: { id: source.id }, data: { mediaDirectory: source.mediaDirectory } });

@@ -203,6 +203,19 @@ Cache limits default to 20 GB and 30 idle days and can be changed in Settings. P
 
 Manual or scheduled synchronization detects new videos and marks missing memberships without deleting previously completed downloads. Channel sources can limit how much recent history is inspected. Run only one TunarrTube process against a given SQLite database; the worker and scheduler are intentionally single-instance.
 
+## API integrations
+
+TunarrTube exposes its HTTP API as an OpenAPI 3.1 document at [`/openapi.json`](http://localhost:3000/openapi.json). Import that URL into Postman, Insomnia, n8n, or an OpenAPI client generator. Operations have stable `operationId` values. JSON successes use `{ "data": ... }`; JSON failures use `{ "error": { "code": "...", "message": "...", "details": ... } }`.
+
+There is no built-in API authentication. API operations can start background jobs, write media, change filesystem destinations, and mutate the configured Tunarr server. Keep TunarrTube on localhost or a trusted private network; for remote integrations, place it behind an authenticated reverse proxy or VPN with TLS.
+
+```bash
+curl http://localhost:3000/api/sources
+curl -X POST http://localhost:3000/api/sources/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/playlist?list=YOUR_PLAYLIST_ID"}'
+```
+
 ## Configuration
 
 Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page.
@@ -237,8 +250,8 @@ Back up the SQLite database and media root before upgrades.
 
 - **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled outright or postponed to a later time (15 minutes up to a week) without losing its place; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. A running download, cache, sync, metadata, or Tunarr publish/refresh job can be stopped mid-flight — it's killed and lands in the same cancelled state as a queued cancellation; a metadata-repair or thumbnail job has no interrupt point and finishes on its own instead. Cancelling or stopping a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. The toolbar's Pause queue toggle stops the worker from picking up any new job (existing running work keeps going until it finishes or you stop it) — use it and Resume queue to hold everything for a while.
 - **Cache** shows used, pinned, protected, and evictable storage.
-- **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence.
-- **Settings** tests binary discovery and Tunarr connectivity, controls cache limits, repairs older metadata sidecars, and previews path mappings.
+- **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence. Entries older than the configured log retention (30 days by default, set in Settings) are purged automatically every hour; **Purge old entries** runs that same cleanup immediately, and **Clear all** empties the log table outright.
+- **Settings** tests binary discovery and Tunarr connectivity, controls cache limits and log retention, repairs older metadata sidecars, and previews path mappings.
 
 Downloads are written to temporary paths and renamed into place only after `yt-dlp` and FFmpeg succeed. Interrupted jobs are requeued after restart and normally retry up to three times.
 

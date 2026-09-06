@@ -41,6 +41,7 @@ export const settingsSchema = z.object({
   tunarrUrl: z.string().trim().url().optional(),
   cacheMaxMegabytes: z.number().int().min(128).max(10_000_000).optional(),
   cacheMaxAgeDays: z.number().int().min(1).max(3650).optional(),
+  logRetentionDays: z.number().int().min(1).max(3650).optional(),
   defaultVideoQuality: videoQualitySchema.optional(),
   pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional()
 }).refine((input) => Object.values(input).some((value) => value !== undefined), {
@@ -66,4 +67,5 @@ export const jobMutationSchema = z.object({
 });
 export const jobsPauseSchema = z.object({ paused: z.boolean() });
 export const cacheEnforceSchema = z.object({ action: z.enum(["enforce", "clear"]).default("enforce") });
+export const logsPurgeSchema = z.object({ action: z.enum(["purge", "clear"]).default("purge") });
 export const reconcileTunarrSchema = z.object({ channelId: z.string().min(1).optional() });

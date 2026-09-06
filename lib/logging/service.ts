@@ -27,3 +27,14 @@ export async function writeLog(input: LogInput) {
     }
   });
 }
+
+// Deletes LogEntry rows older than `retentionDays` (or every row, when `clear` is set) so the table
+// doesn't grow without bound -- mirrors enforceCachePolicy's shape in lib/cache/service.ts. Takes the
+// retention window as a parameter rather than importing lib/settings/service directly, since that module
+// already imports writeLog from here and a mutual import would create a cycle.
+export async function purgeLogs(retentionDays: number, clear = false) {
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+  const { count } = await db.logEntry.deleteMany(clear ? undefined : { where: { createdAt: { lt: cutoff } } });
+  if (count) await writeLog({ category: "maintenance", message: clear ? `Cleared all log entries (${count} removed).` : `Purged ${count} log entr${count === 1 ? "y" : "ies"} older than ${retentionDays} day${retentionDays === 1 ? "" : "s"}.` });
+  return { deleted: count, retentionDays, clear };
+}
