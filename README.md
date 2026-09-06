@@ -265,7 +265,7 @@ Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_
 
 Only public HTTPS URLs on supported YouTube hosts are accepted, including `youtu.be`. Cookie-based access, private/account-only media, and age-restricted authentication are not supported.
 
-YouTube changes its extraction behavior regularly. Update `yt-dlp`, restart TunarrTube, and use **Sync Now**. An existing empty source does not need to be recreated.
+YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), self-update refuses and reports the error; update it with that package manager instead.
 
 ### A download failed
 

@@ -28,6 +28,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   const [tunarr, setTunarr] = useState<TunarrStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<"success" | "error">("error");
 
   async function responseData(response: Response) {
     const body = await response.json();
@@ -40,7 +41,17 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     try {
       const data = await responseData(await fetch(`/api/system/test-${name === "yt-dlp" ? "ytdlp" : "ffmpeg"}`, { method: "POST" }));
       setBinaries((current) => ({ ...current, [name]: data }));
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Test failed"); }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Test failed"); setMessageTone("error"); }
+    finally { setBusy(null); }
+  }
+
+  async function updateYtDlp() {
+    setBusy("yt-dlp-update"); setMessage(null);
+    try {
+      const data = await responseData(await fetch("/api/system/update-ytdlp", { method: "POST" }));
+      setBinaries((current) => ({ ...current, "yt-dlp": { ...current["yt-dlp"], version: data.version } }));
+      setMessage(data.message); setMessageTone("success");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Update failed"); setMessageTone("error"); }
     finally { setBusy(null); }
   }
 
@@ -49,8 +60,8 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     try {
       const data = await responseData(await fetch("/api/system/test-tunarr", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tunarrUrl }) }));
       setTunarr(data);
-      setMessage(`Connected to Tunarr ${data.version.tunarr}. This test is read-only; open a TunarrTube source and choose Create Tunarr Channel to publish it.`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Tunarr test failed"); }
+      setMessage(`Connected to Tunarr ${data.version.tunarr}. This test is read-only; open a TunarrTube source and choose Create Tunarr Channel to publish it.`); setMessageTone("success");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Tunarr test failed"); setMessageTone("error"); }
     finally { setBusy(null); }
   }
 
@@ -58,8 +69,8 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     setBusy("repair"); setMessage(null);
     try {
       const data = await responseData(await fetch("/api/system/repair-metadata", { method: "POST" }));
-      setMessage(`Queued metadata repair for ${data.queued} video${data.queued === 1 ? "" : "s"}.`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Repair failed"); }
+      setMessage(`Queued metadata repair for ${data.queued} video${data.queued === 1 ? "" : "s"}.`); setMessageTone("success");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Repair failed"); setMessageTone("error"); }
     finally { setBusy(null); }
   }
 
@@ -68,12 +79,12 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     try {
       const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, pathMappings: mappings }) }));
       setDirectory(data.mediaBaseDirectory); setTunarrUrl(data.tunarrUrl);
-      setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); }
+      setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`); setMessageTone("success");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); setMessageTone("error"); }
     finally { setBusy(null); }
   }
 
-  async function previewMapping() { setMessage(null); setPreview(null); try { const value = await responseData(await fetch("/api/settings/path-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: directory, mappings }) })); setPreview(value.output); } catch (error) { setMessage(error instanceof Error ? error.message : "Path preview failed"); } }
+  async function previewMapping() { setMessage(null); setPreview(null); try { const value = await responseData(await fetch("/api/settings/path-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: directory, mappings }) })); setPreview(value.output); } catch (error) { setMessage(error instanceof Error ? error.message : "Path preview failed"); setMessageTone("error"); } }
 
   return <div className="card form-card">
     <h2>External tools</h2>
@@ -82,7 +93,10 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
       return <div className="system-row" key={name}>
         <strong>{name}</strong>
         <div><span className={status.found ? "success" : "error"}>{status.found ? <CheckCircle2 size={14} className="inline-icon" /> : <XCircle size={14} className="inline-icon" />}{status.found ? "Found" : "Not found"}</span><div className="code muted">{status.path ?? status.error}</div><div className="meta">{status.version}</div></div>
-        <button className="button secondary" disabled={Boolean(busy)} onClick={() => testBinary(name)}>{busy === name && <LoaderCircle size={14} className="animate-spin" />} Test</button>
+        <div className="toolbar system-row-actions">
+          <button className="button secondary" disabled={Boolean(busy)} onClick={() => testBinary(name)}>{busy === name && <LoaderCircle size={14} className="animate-spin" />} Test</button>
+          {name === "yt-dlp" && <button className="button secondary" disabled={Boolean(busy)} onClick={updateYtDlp}>{busy === "yt-dlp-update" && <LoaderCircle size={14} className="animate-spin" />} Update</button>}
+        </div>
       </div>;
     })}
 
@@ -100,6 +114,6 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     <div className="toolbar"><button className="button secondary" type="button" onClick={() => setMappings((current) => [...current, { ytarrPrefix: directory, tunarrPrefix: "/media" }])}>Add mapping</button><button className="button secondary" type="button" onClick={previewMapping}>Preview media path</button>{preview ? <span className="code success">{preview}</span> : null}</div>
 
     <button className="button" disabled={Boolean(busy)} onClick={save}>{busy === "settings" && <LoaderCircle size={14} className="animate-spin" />} Save Settings</button>
-    {message && <p className={message.includes("saved") || message.includes("Connected") || message.includes("Queued") ? "success" : "error"}>{message}</p>}
+    {message && <p className={messageTone}>{message}</p>}
   </div>;
 }

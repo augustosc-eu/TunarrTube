@@ -298,6 +298,7 @@ tr:last-child td { border-bottom: 0; }
 .code { font-family: var(--font-mono); font-size: 11px; word-break: break-word; color: var(--text-muted); }
 .system-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 17px 0; border-bottom: 1px solid var(--border); }
 .system-row:last-of-type { border-bottom: 0; }
+.system-row-actions { margin-bottom: 0; }
 .muted { color: var(--text-muted); }
 .inline-icon { display: inline; margin-right: 6px; vertical-align: -2px; }
 .integration-card { margin: 0 0 20px; max-width: 1060px; }
@@ -362,8 +363,8 @@ tr:last-child td { border-bottom: 0; }
   .log { grid-template-columns: 1fr auto; gap: 4px 10px; }
   .log > :last-child { grid-column: 1 / -1; padding-top: 4px; }
   .system-row { grid-template-columns: 1fr auto; gap: 8px 12px; }
-  .system-row > div { grid-column: 1 / -1; grid-row: 2; }
-  .system-row > button { grid-column: 2; grid-row: 1; }
+  .system-row > div:not(.system-row-actions) { grid-column: 1 / -1; grid-row: 2; }
+  .system-row > .system-row-actions { grid-column: 2; grid-row: 1; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid > .button { width: 100%; }
   .empty { min-height: 230px; padding: 42px 18px; }
