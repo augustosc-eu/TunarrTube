@@ -25,18 +25,35 @@ describe("updateBinary", () => {
     await expect(updateBinary("ffmpeg")).rejects.toThrow(/self-update/);
   });
 
-  it("reports the self-update result and refreshed version", async () => {
+  it("reports a version bump when the self-update actually changes the version", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-update-test-"));
     cleanup.push(root);
+    const marker = path.join(root, "updated");
     await fakeYtDlp(root, `
+const fs = require("fs");
 const args = process.argv.slice(2);
-if (args[0] === "--update") { process.stdout.write("Updated yt-dlp to stable@2099.01.01\\n"); process.exit(0); }
-if (args[0] === "--version") { process.stdout.write("2099.01.01\\n"); process.exit(0); }
+const marker = ${JSON.stringify(marker)};
+if (args[0] === "--update") { fs.writeFileSync(marker, "1"); process.stdout.write("Updated yt-dlp to stable@2099.01.01\\n"); process.exit(0); }
+if (args[0] === "--version") { process.stdout.write(fs.existsSync(marker) ? "2099.01.01\\n" : "2024.01.01\\n"); process.exit(0); }
 process.exit(1);
 `);
 
     const result = await updateBinary("yt-dlp");
-    expect(result).toMatchObject({ name: "yt-dlp", message: "Updated yt-dlp to stable@2099.01.01", version: "2099.01.01" });
+    expect(result).toMatchObject({ name: "yt-dlp", message: "Updated yt-dlp from 2024.01.01 to 2099.01.01.", version: "2099.01.01", updated: true });
+  });
+
+  it("reports up to date without a version bump when there is nothing to update", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-update-test-"));
+    cleanup.push(root);
+    await fakeYtDlp(root, `
+const args = process.argv.slice(2);
+if (args[0] === "--update") { process.stdout.write("yt-dlp is up to date (stable@2024.01.01)\\n"); process.exit(0); }
+if (args[0] === "--version") { process.stdout.write("2024.01.01\\n"); process.exit(0); }
+process.exit(1);
+`);
+
+    const result = await updateBinary("yt-dlp");
+    expect(result).toMatchObject({ name: "yt-dlp", message: "yt-dlp is already up to date (2024.01.01).", version: "2024.01.01", updated: false });
   });
 
   it("surfaces a package-manager refusal as a failure", async () => {
@@ -44,6 +61,7 @@ process.exit(1);
     cleanup.push(root);
     await fakeYtDlp(root, `
 const args = process.argv.slice(2);
+if (args[0] === "--version") { process.stdout.write("2024.01.01\\n"); process.exit(0); }
 if (args[0] === "--update") { process.stderr.write("ERROR: use brew upgrade yt-dlp instead\\n"); process.exit(1); }
 process.exit(1);
 `);
