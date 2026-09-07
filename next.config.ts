@@ -14,8 +14,14 @@ const nextConfig: NextConfig = {
       ]
     }];
   },
+  // Only the webpack build cache needs to be excluded from the standalone trace -- it's huge
+  // (100s of MB) and never read at runtime. Excluding all of `.next/**` (as a prior version of
+  // this config did) also excludes `.next/server/chunks/*.js`, which webpack-runtime.js requires
+  // at runtime via dynamic `require('./chunks/<id>.js')` calls the tracer can't resolve
+  // statically as "keep" -- that produced `Cannot find module './chunks/<id>.js'` in the
+  // standalone build (GitHub issue #7: missing chunk on a clean Docker build).
   outputFileTracingExcludes: {
-    "/*": ["./storage/**/*", "./prisma/*.db", "./prisma/*.db-*", "./.next/**/*"]
+    "/*": ["./storage/**/*", "./prisma/*.db", "./prisma/*.db-*", "./.next/cache/**/*"]
   },
   serverExternalPackages: ["@prisma/client"],
   images: {
