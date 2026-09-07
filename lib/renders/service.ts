@@ -74,7 +74,7 @@ export async function renderMediaItem(mediaItemId: string, templateId: string, s
       sourcePath,
       layerPngs.map(({ layer, pngPath }) => ({ pngPath, timing: layer.timing })),
       outputPath,
-      { videoWidth: info.width ?? 1920, videoHeight: info.height ?? 1080, audioCodec: info.audioCodec },
+      { videoWidth: info.width ?? 1920, videoHeight: info.height ?? 1080, audioCodec: info.audioCodec, durationSeconds: info.durationSeconds },
       signal
     );
 

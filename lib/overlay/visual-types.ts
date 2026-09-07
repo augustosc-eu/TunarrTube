@@ -4,6 +4,8 @@
 
 export type VisualElement = {
   id: string;
+  // "text" when absent -- every layout saved before image elements shipped has no `kind` at all.
+  kind?: "text" | "image";
   bindingKey: string;
   label?: string;
   sampleValue?: string;
@@ -18,6 +20,12 @@ export type VisualElement = {
   background?: string;
   padding: number;
   borderRadius: number;
+  // kind: "image" only. A data: URI (the image is inlined straight into htmlTemplate, so a template
+  // stays one self-contained JSON blob with no separate asset storage/serving to manage). Rendering
+  // is one static Puppeteer screenshot per layer (lib/overlay/service.ts:renderOverlayLayers) -- an
+  // animated GIF freezes on whichever frame the browser paints first, it will not play.
+  src?: string;
+  opacity?: number; // 0-1, default 1
 };
 
 export type VisualLayout = {

@@ -127,12 +127,17 @@ export const createTemplateSchema = z.object({
   name: z.string().trim().min(1).max(160),
   channelType: z.string().trim().min(1).max(60).default("music_video"),
   description: z.string().trim().max(500).optional(),
-  htmlTemplate: z.string().min(1),
-  bindingsJson: z.string().min(1),
-  layersJson: z.string().min(1),
+  // The visual builder's client-side MAX_IMAGE_BYTES (components/template-visual-editor.tsx, 3MB
+  // raw -> ~4MB as a base64 data: URI) only guards the UI -- a direct API call bypasses it entirely,
+  // so these two need their own server-side ceiling. Generous enough for several embedded images
+  // (htmlTemplate and visualLayoutJson each carry their own copy of every image's data: URI) while
+  // still bounding how much arbitrary text one template row can force into the DB.
+  htmlTemplate: z.string().min(1).max(8_000_000),
+  bindingsJson: z.string().min(1).max(100_000),
+  layersJson: z.string().min(1).max(100_000),
   // Present only while the template is authored/editable via the visual builder -- see
   // lib/overlay/visual.ts and components/template-editor.tsx.
-  visualLayoutJson: z.string().min(1).nullable().optional()
+  visualLayoutJson: z.string().min(1).max(8_000_000).nullable().optional()
 });
 
 export const updateTemplateSchema = createTemplateSchema.partial().refine((input) => Object.keys(input).length > 0, { message: "At least one template field is required." });

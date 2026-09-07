@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { fillTemplate } from "@/lib/overlay/bindings";
 import { layoutToBindings, renderLayoutToHtml } from "@/lib/overlay/visual";
 import { TemplateVisualEditor } from "@/components/template-visual-editor";
@@ -20,6 +21,7 @@ function parseVisualLayout(json: string | null): VisualLayout | null {
 }
 
 export function TemplateEditor({ template }: { template: Template }) {
+  const router = useRouter();
   const initialLayout = useMemo(() => parseVisualLayout(template.visualLayoutJson), [template.visualLayoutJson]);
   const [mode, setMode] = useState<"visual" | "code">(initialLayout ? "visual" : "code");
   const [layout, setLayout] = useState<VisualLayout | null>(initialLayout);
@@ -29,6 +31,7 @@ export function TemplateEditor({ template }: { template: Template }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const bindings = useMemo<BindingField[] | null>(() => {
     try { return JSON.parse(bindingsJson); } catch { return null; }
@@ -41,11 +44,26 @@ export function TemplateEditor({ template }: { template: Template }) {
   }, [layersJson]);
 
   // Every visual edit regenerates htmlTemplate/bindingsJson wholesale from the layout -- the
-  // layout (not the generated HTML) is the source of truth while one is present.
+  // layout (not the generated HTML) is the source of truth while one is present. Each layer's own
+  // canvasWidth/canvasHeight (lib/overlay/service.ts:renderOverlayLayers -- the actual viewport the
+  // renderer screenshots htmlTemplate at) has to track the layout's canvas size the same way:
+  // elements are positioned in absolute pixels against layout.canvasWidth/canvasHeight, so a layer
+  // rendered at any other size renders those same positions into the wrong-size viewport, cropping
+  // or misplacing everything relative to what the visual preview showed.
   function updateLayout(nextLayout: VisualLayout) {
     setLayout(nextLayout);
     setHtml(renderLayoutToHtml(nextLayout));
     setBindingsJson(JSON.stringify(layoutToBindings(nextLayout)));
+    setLayersJson((current) => {
+      try {
+        const parsed = JSON.parse(current) as unknown;
+        if (!Array.isArray(parsed)) return current;
+        const synced = (parsed as OverlayLayer[]).map((layer) => ({ ...layer, canvasWidth: nextLayout.canvasWidth, canvasHeight: nextLayout.canvasHeight }));
+        return JSON.stringify(synced);
+      } catch {
+        return current;
+      }
+    });
   }
 
   // Editing raw HTML by hand can't be reconciled back into element positions, so it detaches the
@@ -74,6 +92,22 @@ export function TemplateEditor({ template }: { template: Template }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(`Delete "${template.name}"? This can't be undone.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/templates/${template.id}`, { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? "Could not delete the template.");
+      router.push("/templates");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDeleting(false);
     }
   }
 
@@ -111,7 +145,14 @@ export function TemplateEditor({ template }: { template: Template }) {
       </div>
       {error ? <p className="error">{error}</p> : null}
       {saved ? <p className="success">Saved. New renders will use the updated design; existing renders are unaffected until re-rendered.</p> : null}
-      <button className="button" type="button" onClick={save} disabled={saving} style={{ marginTop: 14 }}>{saving ? "Saving…" : "Save template"}</button>
+      <div className="toolbar" style={{ marginTop: 14 }}>
+        <button className="button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save template"}</button>
+        {!template.isBuiltIn ? (
+          <button className="button secondary" type="button" onClick={remove} disabled={deleting}>{deleting ? "Deleting…" : "Delete template"}</button>
+        ) : (
+          <span className="muted">Built-in templates can't be deleted.</span>
+        )}
+      </div>
     </div>
   );
 }

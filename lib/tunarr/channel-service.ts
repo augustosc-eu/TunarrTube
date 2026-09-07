@@ -145,8 +145,15 @@ export async function publishChannelToTunarr(channelId: string, signal?: AbortSi
   if (existing) {
     await client.updateChannel(channelIdOnTunarr, payload, signal);
   } else {
+    // Persisted *before and immediately after* createChannel (matching publishSourceToTunarr in
+    // lib/tunarr/service.ts) rather than only once at the very end -- if replaceProgramming (or
+    // anything else below) fails after Tunarr has already created the remote channel, a retry needs
+    // to find it via `existing` above and update it, not generate a fresh randomUUID() and create a
+    // second, orphaned duplicate.
+    await db.channel.update({ where: { id: channel.id }, data: { tunarrChannelId: channelIdOnTunarr, tunarrChannelNumber: number } });
     const created = await client.createChannel(payload, signal);
     channelIdOnTunarr = created.id;
+    await db.channel.update({ where: { id: channel.id }, data: { tunarrChannelId: channelIdOnTunarr } });
   }
   await client.replaceProgramming(channelIdOnTunarr, lineup, signal);
 

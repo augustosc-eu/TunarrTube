@@ -198,7 +198,7 @@ Publishing creates or reuses a Local Media source for the directory, waits for T
 
 A **Channel** (the entity under the **Channels** tab, distinct from a Source's own Tunarr channel above) lets you hand-pick clips and burn in a title/artist overlay before publishing:
 
-1. Open **Templates** once to confirm the built-in "Music Video Lower Third" template exists (it seeds itself automatically), or design your own with the visual drag-and-drop editor.
+1. Open **Templates** once to confirm the built-in "Music Video Lower Third" template exists (it seeds itself automatically), or design your own with the visual drag-and-drop editor. The editor places text elements bound to clip metadata, and static PNG/GIF images (a logo bug, for example) — an animated GIF is baked in as a single still frame, it doesn't play in the render. Templates you create can be deleted from their editor page; built-in templates and ones still assigned to a channel can't be.
 2. Open **Channels → New channel**, name it, and pick a template.
 3. On the channel's page, add media: pick an already-downloaded video, paste a YouTube URL (downloaded through a Source created automatically for this channel — visible under **Sources**), or scan a local folder.
 4. Edit each clip's title/artist/album (or use **Look up** for MusicBrainz/iTunes metadata + artwork).

@@ -50,7 +50,12 @@ export function requestJobStop(jobId: string) {
 // logs and retries it distinctly from an ordinary job error below.
 export class SourceJobsActiveError extends Error {}
 
-async function recoverJobs() {
+// Exported so tests can exercise startup recovery directly rather than through kickWorker()/work()'s
+// table-wide scan -- that scan has no per-test scoping, so driving it from a test risks racing a
+// *different* test file's own kickWorker() call over the same shared dev database (same reasoning as
+// handleJobFailure's export above). Tests should clear globalWorker.ytarrRecovered first so the
+// once-per-process guard below doesn't skip the call.
+export async function recoverJobs() {
   if (globalWorker.ytarrRecovered) return;
   globalWorker.ytarrRecovered = true;
   await db.job.updateMany({
@@ -58,6 +63,13 @@ async function recoverJobs() {
     data: { status: "queued", error: "Recovered after TunarrTube restarted.", runAfter: new Date() }
   });
   await db.sourceVideo.updateMany({ where: { downloadStatus: "downloading" }, data: { downloadStatus: "queued" } });
+  // CacheAsset.activeReaders is incremented in-process for the duration of a playback stream
+  // (lib/playback/service.ts) and only decremented via that stream's close/error/end handlers -- a
+  // restart while a client had a cached file open leaves it stuck above zero forever, since nothing
+  // else ever clears it. That then permanently blocks the asset from cache eviction (it reads as
+  // "still playing"). Since a fresh process has no live streams yet, any nonzero count left over from
+  // before the restart is necessarily stale.
+  await db.cacheAsset.updateMany({ where: { activeReaders: { gt: 0 } }, data: { activeReaders: 0 } });
 }
 
 async function claimJob() {

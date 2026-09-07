@@ -111,4 +111,87 @@ describe("Channel Tunarr publish pipeline", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("doesn't create a duplicate remote channel when a retry follows a failure after createChannel", async () => {
+    // tunarrChannelId used to only get persisted once, at the very end, after replaceProgramming
+    // succeeded. If Tunarr had already created the remote channel but anything after that (the
+    // programming call here) failed, the id was lost -- a retry couldn't find `existing` and generated
+    // a fresh randomUUID(), creating a second, orphaned remote channel instead of updating the first.
+    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-channel-dup-test-"));
+    const storageDirectory = path.join(root, "channel-storage");
+    const renderPath = path.join(root, "rendered.mp4");
+    await writeFile(renderPath, "fake-rendered-mp4");
+
+    const template = await db.overlayTemplate.create({
+      data: { name: "Dup Test Template", htmlTemplate: "<div>{{title}}</div>", bindingsJson: "[]", layersJson: "[]" }
+    });
+    const channel = await db.channel.create({
+      data: { name: "Dup Test Channel", slug: `dup-test-${Date.now()}`, templateId: template.id, storageDirectory }
+    });
+    const mediaItem = await db.mediaItem.create({ data: { originType: "local", originLocalPath: renderPath, title: "Dup Song" } });
+    await db.channelItem.create({ data: { channelId: channel.id, mediaItemId: mediaItem.id, position: 0 } });
+    await db.renderedAsset.create({
+      data: { mediaItemId: mediaItem.id, templateId: template.id, status: "complete", outputPath: renderPath, outputDurationSeconds: 30 }
+    });
+
+    let mediaSourceCreated = false;
+    let createChannelCalls = 0;
+    let updateChannelCalls = 0;
+    let failProgramming = true;
+    let createdChannelId: string | null = null;
+
+    vi.stubGlobal("fetch", vi.fn(async (urlValue: string, init?: RequestInit) => {
+      const url = new URL(urlValue);
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/openapi.json") return Response.json({ info: { version: "1.3.13" }, paths });
+      if (url.pathname === "/api/media-sources" && method === "GET") {
+        return Response.json(mediaSourceCreated
+          ? [{ id: "channel-source-1", name: "TunarrTube Channel - Dup Test Channel", type: "local", paths: [storageDirectory], libraries: [{ id: "library-1", name: storageDirectory, mediaType: "music_videos", externalKey: storageDirectory, enabled: true }] }]
+          : []);
+      }
+      if (url.pathname === "/api/media-sources" && method === "POST") {
+        mediaSourceCreated = true;
+        return Response.json({ id: "channel-source-1" }, { status: 201 });
+      }
+      if (url.pathname.endsWith("/scan") && method === "POST") return Response.json({}, { status: 202 });
+      if (url.pathname.endsWith("/status")) return Response.json({ state: "not_scanning" });
+      if (url.pathname === "/api/media-libraries/library-1/programs") return Response.json([{ type: "content", id: "program-1", duration: 30_000, program: { externalId: `${storageDirectory}/${mediaItem.id}.mp4` } }]);
+      if (url.pathname === "/api/channels" && method === "GET") {
+        return Response.json(createdChannelId ? [{ id: createdChannelId, name: "Dup Test Channel", number: 1 }] : []);
+      }
+      if (url.pathname === "/api/transcode_configs") return Response.json([{ id: "07925780-d3ba-476e-ba5c-bf0d89c58245", isDefault: true }]);
+      if (url.pathname === "/api/channels" && method === "POST") {
+        createChannelCalls += 1;
+        const body = JSON.parse(String(init?.body));
+        createdChannelId = body.channel.id;
+        return Response.json(body.channel, { status: 201 });
+      }
+      if (url.pathname.startsWith("/api/channels/") && method === "PUT") {
+        updateChannelCalls += 1;
+        return Response.json({}, { status: 200 });
+      }
+      if (url.pathname.endsWith("/programming") && method === "POST") {
+        return failProgramming ? Response.json({ message: "simulated failure" }, { status: 500 }) : Response.json({});
+      }
+      return Response.json({ message: `Unexpected ${method} ${url.pathname}` }, { status: 404 });
+    }));
+
+    try {
+      await expect(publishChannelToTunarr(channel.id)).rejects.toThrow();
+      const afterFailedAttempt = await db.channel.findUniqueOrThrow({ where: { id: channel.id } });
+      expect(afterFailedAttempt.tunarrChannelId).toBe(createdChannelId);
+
+      failProgramming = false;
+      const result = await publishChannelToTunarr(channel.id);
+
+      expect(createChannelCalls).toBe(1);
+      expect(updateChannelCalls).toBe(1);
+      expect(result.channelId).toBe(createdChannelId);
+    } finally {
+      await db.channel.delete({ where: { id: channel.id } });
+      await db.mediaItem.delete({ where: { id: mediaItem.id } });
+      await db.overlayTemplate.delete({ where: { id: template.id } });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,9 +1,15 @@
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
+import { enqueueChannelJob } from "@/lib/channels/service";
 import { kickWorker, markJobCancelled, requestJobStop, STOPPABLE_JOB_TYPES } from "@/lib/jobs/runner";
 import { writeLog } from "@/lib/logging/service";
 import { getSettings } from "@/lib/settings/service";
 import { enqueueUniqueJob } from "@/lib/sources/service";
+
+// Job types keyed by Channel/MediaItem rather than Source/SourceVideo -- see enqueueChannelJob
+// (lib/channels/service.ts) for why these get their own dedupe-and-create path. retryJob() below
+// needs to know which re-enqueue path applies to a given job's type.
+const CHANNEL_TARGETED_JOB_TYPES = ["channel_publish", "render", "ingest_local_scan"];
 
 export async function enqueueDownloads(items: Array<{ sourceId: string; videoId: string }>) {
   const jobs = [];
@@ -81,8 +87,13 @@ export async function setJobsPaused(paused: boolean) {
   return updated;
 }
 
-// Re-queues a cancelled or failed job as a brand-new Job row (fresh attempts counter) via the same
-// enqueueUniqueJob() every automatic path uses, rather than resurrecting the old row.
+// Re-queues a cancelled or failed job as a brand-new Job row (fresh attempts counter) rather than
+// resurrecting the old row. Source/SourceVideo-targeted jobs go through the same enqueueUniqueJob()
+// every automatic path uses; Channel/MediaItem-targeted jobs (channel_publish, render,
+// ingest_local_scan -- CHANNEL_TARGETED_JOB_TYPES above) have no sourceId/videoId to give it, so they
+// go through enqueueChannelJob() instead. Using enqueueUniqueJob for those would silently create a Job
+// row with sourceId/videoId/channelId/mediaItemId all null, which handleJob() (lib/jobs/runner.ts)
+// then immediately fails as "Invalid <type> job payload." -- i.e. Retry would always fail for them.
 export async function retryJob(id: string) {
   const job = await db.job.findUnique({ where: { id } });
   if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
@@ -93,7 +104,10 @@ export async function retryJob(id: string) {
   if (job.type === "cache" && job.videoId) {
     await db.cacheAsset.updateMany({ where: { videoId: job.videoId, status: { in: ["cancelled", "failed"] } }, data: { status: "not_cached", error: null } });
   }
-  const fresh = await enqueueUniqueJob(job.type, job.sourceId ?? undefined, job.videoId ?? undefined, job.payloadJson ? JSON.parse(job.payloadJson) : undefined);
+  const payload = job.payloadJson ? JSON.parse(job.payloadJson) : undefined;
+  const fresh = CHANNEL_TARGETED_JOB_TYPES.includes(job.type)
+    ? await enqueueChannelJob(job.type, { channelId: job.channelId ?? undefined, mediaItemId: job.mediaItemId ?? undefined }, payload)
+    : await enqueueUniqueJob(job.type, job.sourceId ?? undefined, job.videoId ?? undefined, payload);
   await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job retried by user.` });
   kickWorker();
   return fresh;

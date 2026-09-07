@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { RENDER_CACHE_ROOT } from "@/lib/constants";
+import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { fillTemplate } from "@/lib/overlay/bindings";
 import { renderHtmlToPng } from "@/lib/overlay/puppeteer";
@@ -29,6 +30,32 @@ export async function ensureBuiltInTemplates() {
       }
     });
   }));
+}
+
+export async function deleteTemplate(id: string) {
+  const template = await db.overlayTemplate.findUnique({ where: { id } });
+  if (!template) throw new AppError("TEMPLATE_NOT_FOUND", "Overlay template not found.", 404);
+  if (template.isBuiltIn) throw new AppError("TEMPLATE_BUILT_IN", "Built-in templates can't be deleted.", 422);
+  const channelCount = await db.channel.count({ where: { templateId: id } });
+  if (channelCount > 0) {
+    throw new AppError(
+      "TEMPLATE_IN_USE",
+      `This template is used by ${channelCount} channel${channelCount === 1 ? "" : "s"}. Switch ${channelCount === 1 ? "it" : "them"} to another template first.`,
+      422
+    );
+  }
+  // RenderedAsset.template has no onDelete action (defaults to restrict), so a template that was
+  // ever rendered with -- even if no channel currently uses it -- would otherwise fail the delete
+  // below with a raw, unhandled Prisma foreign-key-constraint error instead of a clean AppError.
+  const renderCount = await db.renderedAsset.count({ where: { templateId: id } });
+  if (renderCount > 0) {
+    throw new AppError(
+      "TEMPLATE_HAS_RENDERS",
+      `This template has ${renderCount} rendered clip${renderCount === 1 ? "" : "s"}. Delete ${renderCount === 1 ? "it" : "them"} first.`,
+      422
+    );
+  }
+  await db.overlayTemplate.delete({ where: { id } });
 }
 
 export function parseBindings(template: { bindingsJson: string }): BindingField[] {

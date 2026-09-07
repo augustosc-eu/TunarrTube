@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState } from "react";
+import type { ChangeEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { VisualElement, VisualLayout } from "@/lib/overlay/visual-types";
 
 const PREVIEW_WIDTH = 640;
+// Images are inlined as data: URIs straight into the template (see lib/overlay/visual-types.ts) --
+// capped well under SQLite's comfort zone for a TEXT column shared across every template row.
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 
 function makeElement(index: number): VisualElement {
   const key = `field${index}`;
@@ -21,12 +24,35 @@ function makeElement(index: number): VisualElement {
   };
 }
 
+function makeImageElement(src: string): VisualElement {
+  return {
+    id: `el-${Date.now().toString(36)}-img`,
+    kind: "image",
+    bindingKey: "",
+    x: 60, y: 60, width: 220, height: 220,
+    fontSize: 16, fontWeight: 400, color: "#ffffff", align: "left",
+    padding: 0, borderRadius: 0,
+    src, opacity: 1
+  };
+}
+
+function readImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the image file."));
+    reader.readAsDataURL(file);
+  });
+}
+
 // Drag-to-move / drag-to-resize implemented with plain pointer events (no new dependency,
 // matching this codebase's zero-extra-deps convention). `onChange` is called with the whole
 // layout on every change; the parent (components/template-editor.tsx) owns persistence and
 // regenerates htmlTemplate/bindingsJson from it via lib/overlay/visual.ts.
 export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayout; onChange: (layout: VisualLayout) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scale = PREVIEW_WIDTH / layout.canvasWidth;
   const previewHeight = Math.round(layout.canvasHeight * scale);
   const selected = layout.elements.find((element) => element.id === selectedId) ?? null;
@@ -45,6 +71,27 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
     if (!selected) return;
     onChange({ ...layout, elements: layout.elements.filter((element) => element.id !== selected.id) });
     setSelectedId(null);
+  }
+
+  async function handleImageFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setImageError(null);
+    if (!file.type.startsWith("image/")) { setImageError("Choose an image file (PNG or GIF)."); return; }
+    if (file.size > MAX_IMAGE_BYTES) { setImageError("That image is too large — keep it under 3 MB."); return; }
+    try {
+      const src = await readImageFile(file);
+      if (selected?.kind === "image") {
+        updateElement(selected.id, { src });
+      } else {
+        const element = makeImageElement(src);
+        onChange({ ...layout, elements: [...layout.elements, element] });
+        setSelectedId(element.id);
+      }
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : "Could not read the image file.");
+    }
   }
 
   function dragElement(event: ReactPointerEvent, element: VisualElement, mode: "move" | "resize") {
@@ -77,7 +124,13 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
       <div>
         <div className="toolbar" style={{ marginBottom: 10 }}>
           <button type="button" className="button secondary" onClick={addElement}>+ Add text element</button>
+          <button type="button" className="button secondary" onClick={() => fileInputRef.current?.click()}>+ Add image (PNG/GIF)</button>
+          <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleImageFile} />
         </div>
+        {imageError ? <p className="error" style={{ marginBottom: 10 }}>{imageError}</p> : null}
+        <p className="muted" style={{ marginBottom: 10, maxWidth: PREVIEW_WIDTH }}>
+          Images render as a static logo bug — an animated GIF is baked in as a single still frame, it won&apos;t play in the render.
+        </p>
         <div
           onPointerDown={() => setSelectedId(null)}
           style={{
@@ -94,14 +147,23 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
               style={{
                 position: "absolute",
                 left: element.x * scale, top: element.y * scale, width: element.width * scale, height: element.height * scale,
-                fontSize: Math.max(8, element.fontSize * scale), fontWeight: element.fontWeight, color: element.color,
-                textAlign: element.align, padding: element.padding * scale, borderRadius: element.borderRadius * scale,
-                background: element.background, boxSizing: "border-box", overflow: "hidden", cursor: "move",
+                borderRadius: element.borderRadius * scale, boxSizing: "border-box", overflow: "hidden", cursor: "move",
                 outline: element.id === selectedId ? "2px solid #7c3aed" : "1px dashed rgba(255,255,255,0.4)",
-                fontFamily: "'Helvetica Neue', Arial, sans-serif", userSelect: "none"
+                userSelect: "none",
+                ...(element.kind === "image"
+                  ? {}
+                  : {
+                      fontSize: Math.max(8, element.fontSize * scale), fontWeight: element.fontWeight, color: element.color,
+                      textAlign: element.align, padding: element.padding * scale, background: element.background,
+                      fontFamily: "'Helvetica Neue', Arial, sans-serif"
+                    })
               }}
             >
-              {element.sampleValue || element.bindingKey}
+              {element.kind === "image" ? (
+                <img src={element.src} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", opacity: element.opacity ?? 1, pointerEvents: "none" }} />
+              ) : (
+                element.sampleValue || element.bindingKey
+              )}
               <div
                 onPointerDown={(event) => dragElement(event, element, "resize")}
                 title="Drag to resize"
@@ -113,7 +175,26 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
       </div>
 
       <div style={{ minWidth: 240, flex: "1 0 240px" }}>
-        {selected ? (
+        {selected?.kind === "image" ? (
+          <div className="form-grid" style={{ gridTemplateColumns: "1fr" }}>
+            <div className="field">
+              <label>Image</label>
+              <img src={selected.src} alt="" style={{ maxWidth: "100%", maxHeight: 120, objectFit: "contain", background: "#14161b", borderRadius: 6 }} />
+              <button type="button" className="button secondary" style={{ marginTop: 8 }} onClick={() => fileInputRef.current?.click()}>Replace image…</button>
+            </div>
+            <div className="form-grid">
+              <div className="field">
+                <label>Opacity</label>
+                <input type="number" className="input" min={0} max={1} step={0.05} value={selected.opacity ?? 1} onChange={(event) => updateElement(selected.id, { opacity: Math.min(1, Math.max(0, Number(event.target.value))) })} />
+              </div>
+              <div className="field">
+                <label>Corner radius</label>
+                <input type="number" className="input" value={selected.borderRadius} onChange={(event) => updateElement(selected.id, { borderRadius: Number(event.target.value) || 0 })} />
+              </div>
+            </div>
+            <button type="button" className="button secondary" onClick={removeSelected}>Delete element</button>
+          </div>
+        ) : selected ? (
           <div className="form-grid" style={{ gridTemplateColumns: "1fr" }}>
             <div className="field">
               <label>Binding key</label>

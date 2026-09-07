@@ -34,7 +34,7 @@ export async function renderVideoWithOverlay(
   sourcePath: string,
   layerPngs: Array<{ pngPath: string; timing: OverlayLayerTiming }>,
   outputPath: string,
-  opts: { videoWidth: number; videoHeight: number; audioCodec: string | null },
+  opts: { videoWidth: number; videoHeight: number; audioCodec: string | null; durationSeconds: number },
   signal?: AbortSignal
 ): Promise<void> {
   const ffmpeg = await requireFfmpeg();
@@ -58,6 +58,14 @@ export async function renderVideoWithOverlay(
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
     ...audioArgs,
     "-movflags", "+faststart",
+    // "-shortest" alone isn't enough to bound the output: each overlay layer is a "-loop 1" PNG
+    // input (infinite duration), and the overlay filter chain only actually terminates once
+    // something finite it's racing against ends. Normally that's the source's audio stream -- but
+    // a source with no audio track at all (silent/local ingests are common) leaves nothing for
+    // "-shortest" to compare against, and the encode runs unbounded until runProcess's timeout
+    // eventually kills it. Pass the real (ffprobe'd) duration explicitly so this is correct
+    // regardless of whether the source has audio.
+    "-t", String(opts.durationSeconds),
     "-shortest",
     tempOutput
   ], { timeoutMs: 60 * 60_000, signal });
