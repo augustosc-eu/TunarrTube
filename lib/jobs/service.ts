@@ -38,20 +38,21 @@ export async function cancelJob(id: string) {
   return { cancelled: true };
 }
 
-// Kills the in-flight yt-dlp/ffmpeg process (or in-flight fetch) behind a "running" job via the
-// AbortController the runner registered for it (see requestJobStop()/work() in lib/jobs/runner.ts). Only
-// STOPPABLE_JOB_TYPES actually check that signal -- "retag" and "thumbnail" jobs run to completion no
-// matter what, so there's nothing productive stopJob() could do for them. The job lands in the same
-// "cancelled" state a queued cancellation does, but asynchronously: this call only requests the abort,
-// it doesn't wait for the runner's catch path to mark the job finished.
+// Persist the stop before signalling the worker, so a restart cannot resurrect it.
+// A missing controller is an orphaned job (or a claim still registering its controller);
+// cancellation must work for that case too.
 export async function stopJob(id: string) {
   const job = await db.job.findUnique({ where: { id } });
   if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
   if (job.status !== "running") throw new AppError("JOB_NOT_STOPPABLE", "Only a running job can be stopped.", 409);
-  if (!STOPPABLE_JOB_TYPES.includes(job.type) || !requestJobStop(job.id)) {
+  if (!STOPPABLE_JOB_TYPES.includes(job.type)) {
     throw new AppError("JOB_NOT_STOPPABLE", "This job can't be interrupted; it has to finish on its own.", 409);
   }
-  await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job stop requested by user.` });
+  if (!await markJobCancelled(job, "Stopped by user.")) {
+    throw new AppError("JOB_NOT_STOPPABLE", "This job has already finished.", 409);
+  }
+  requestJobStop(job.id);
+  await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job stopped by user.` });
   return { stopping: true };
 }
 

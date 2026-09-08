@@ -128,13 +128,13 @@ describe("job cancel/retry", () => {
     await expect(stopJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_STOPPABLE" });
   });
 
-  it("rejects stopping a stoppable-type job the runner has no live controller for", async () => {
-    // Simulates a "running" row left over from a crash, before recoverJobs() requeues it -- there's no
-    // in-process AbortController for it (requestJobStop() returns false), so it must be reported as
-    // not stoppable rather than silently accepted.
-    const job = await db.job.create({ data: { type: "download", status: "running" } });
+  it("cancels an orphaned running publish without a live controller", async () => {
+    const job = await db.job.create({ data: { type: "tunarr_publish", status: "running" } });
     cleanupJobIds.push(job.id);
-    await expect(stopJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_STOPPABLE" });
+    await expect(stopJob(job.id)).resolves.toEqual({ stopping: true });
+    expect(await db.job.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({
+      status: "cancelled", error: "Stopped by user.", finishedAt: expect.any(Date)
+    });
   });
 
   it("stops a running job with a live controller and marks it cancelled the same way cancelJob does", async () => {
@@ -145,6 +145,7 @@ describe("job cancel/retry", () => {
     const result = await stopJob(job.id);
     expect(result).toEqual({ stopping: true });
     expect(stopSpy).toHaveBeenCalledWith(job.id);
+    expect(await db.job.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({ status: "cancelled", finishedAt: expect.any(Date) });
     stopSpy.mockRestore();
   });
 });

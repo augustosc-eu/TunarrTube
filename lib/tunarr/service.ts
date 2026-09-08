@@ -98,7 +98,7 @@ export async function publishSourceToTunarr(sourceId: string, input: PublishTuna
   });
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   if (source.playbackMode !== "download" && input.prefetch !== false) {
-    for (const membership of source.videos) await materializeForTunarr(sourceId, membership.videoId);
+    for (const membership of source.videos) await materializeForTunarr(sourceId, membership.videoId, signal);
     source = await db.source.findUniqueOrThrow({ where: { id: sourceId }, include: { videos: { where: { membershipStatus: "present" }, include: { video: true } } } });
   }
   source.videos = source.videos.filter((membership) => membership.downloadStatus === "complete" && membership.localPath);

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db/client";
 import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo } from "@/lib/downloads/service";
-import { writeLog } from "@/lib/logging/service";
+import { sanitizeLogValue, writeLog } from "@/lib/logging/service";
 import { enrichVideo } from "@/lib/metadata/service";
 import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
 import { getSettings } from "@/lib/settings/service";
@@ -11,6 +11,7 @@ import { isRateLimitedError } from "@/lib/youtube/ytdlp";
 const globalWorker = globalThis as unknown as {
   ytarrWorker?: Promise<void>;
   ytarrRecovered?: boolean;
+  ytarrRecovery?: Promise<void>;
   ytarrWakeTimer?: NodeJS.Timeout;
   ytarrRateLimitHits?: number;
   ytarrControllers?: Map<string, AbortController>;
@@ -32,8 +33,8 @@ const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
 export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh"];
 
 // Called by stopJob() (lib/jobs/service.ts) for a job that's currently claimed as "running". Returns
-// false if no controller is registered for it (already finished, or never supported stopping), in which
-// case the caller should report the job as not stoppable rather than pretending the request landed.
+// false if no controller is registered (an orphaned row or a claim still being registered).
+// stopJob persists cancellation in either case; the worker checks it before dispatching.
 export function requestJobStop(jobId: string) {
   const controller = controllers().get(jobId);
   if (!controller) return false;
@@ -46,14 +47,43 @@ export function requestJobStop(jobId: string) {
 // logs and retries it distinctly from an ordinary job error below.
 export class SourceJobsActiveError extends Error {}
 
-async function recoverJobs() {
+export async function recoverJobs() {
   if (globalWorker.ytarrRecovered) return;
-  globalWorker.ytarrRecovered = true;
-  await db.job.updateMany({
-    where: { status: "running" },
-    data: { status: "queued", error: "Recovered after TunarrTube restarted.", runAfter: new Date() }
-  });
-  await db.sourceVideo.updateMany({ where: { downloadStatus: "downloading" }, data: { downloadStatus: "queued" } });
+  // Concurrent callers must await the same recovery pass before claiming work.
+  globalWorker.ytarrRecovery ??= (async () => {
+    const interrupted = await db.job.findMany({ where: { status: "running" } });
+    for (const job of interrupted) {
+      const exhausted = job.attempts >= job.maxAttempts;
+      const message = exhausted
+        ? "Interrupted by restart; retry limit reached. Retry manually from Queue."
+        : "Recovered after TunarrTube restarted.";
+      const changed = await db.job.updateMany({
+        where: { id: job.id, status: "running" },
+        data: { status: exhausted ? "failed" : "queued", error: message, runAfter: new Date(),
+          startedAt: null, finishedAt: exhausted ? new Date() : null }
+      });
+      if (changed.count && exhausted && job.type === "download" && job.sourceId && job.videoId) {
+        await db.sourceVideo.updateMany({
+          where: { sourceId: job.sourceId, videoId: job.videoId, downloadStatus: "downloading" },
+          data: { downloadStatus: "failed" }
+        });
+      }
+      if (changed.count && exhausted && job.type === "cache" && job.videoId) {
+        await db.cacheAsset.updateMany({ where: { videoId: job.videoId, status: "downloading" }, data: { status: "failed", error: message } });
+      }
+      if (changed.count) await writeLog({ category: job.type, level: "warn", message,
+        sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined,
+        details: { jobId: job.id, attempts: job.attempts, maxAttempts: job.maxAttempts }
+      }).catch(() => undefined);
+    }
+    await db.sourceVideo.updateMany({ where: { downloadStatus: "downloading" }, data: { downloadStatus: "queued" } });
+    globalWorker.ytarrRecovered = true;
+  })();
+  try {
+    await globalWorker.ytarrRecovery;
+  } finally {
+    globalWorker.ytarrRecovery = undefined;
+  }
 }
 
 async function claimJob() {
@@ -96,20 +126,23 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
 // it was working on marked "cancelled" (sticky, so syncSource/materializeForTunarr's automatic
 // re-enqueue paths leave it alone until an explicit retry).
 export async function markJobCancelled(job: { id: string; type: string; sourceId: string | null; videoId: string | null }, message: string) {
-  await db.job.update({ where: { id: job.id }, data: { status: "cancelled", error: message, finishedAt: new Date() } }).catch(() => undefined);
+  const changed = await db.job.updateMany({ where: { id: job.id, status: { in: ["queued", "running"] } }, data: { status: "cancelled", error: message, finishedAt: new Date() } });
+  if (!changed.count) return false;
   if (job.type === "download" && job.sourceId && job.videoId) {
     await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: job.sourceId, videoId: job.videoId } }, data: { downloadStatus: "cancelled" } }).catch(() => undefined);
   }
   if (job.type === "cache" && job.videoId) {
     await db.cacheAsset.updateMany({ where: { videoId: job.videoId }, data: { status: "cancelled", error: null } });
   }
+  return true;
 }
 
 // Exported so tests can exercise the rate-limit-vs-ordinary-failure branching directly, without going
 // through claimJob()/work()'s table-wide scan -- that scan has no per-test scoping, so driving it from a
 // test risks racing a *different* test file's own kickWorker() call over the same shared dev database.
 export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+  if ((await db.job.findUnique({ where: { id: job.id } }))?.status !== "running") return;
   if (job.type === "sync" && job.sourceId) {
     await db.source.update({ where: { id: job.sourceId }, data: { lastSyncStatus: "failed" } }).catch(() => undefined);
   }
@@ -123,8 +156,8 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     globalWorker.ytarrRateLimitHits = hits;
     const cooldownSeconds = Math.min(30 * 60, 120 * 2 ** (hits - 1));
     const cooldownUntil = new Date(Date.now() + cooldownSeconds * 1000);
-    await db.job.update({
-      where: { id: job.id },
+    await db.job.updateMany({
+      where: { id: job.id, status: "running" },
       data: { status: "queued", attempts: { decrement: 1 }, error: message.slice(-2000), runAfter: cooldownUntil, finishedAt: null }
     }).catch(() => undefined);
     await db.job.updateMany({
@@ -139,8 +172,8 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
   }
   const retry = job.attempts < job.maxAttempts;
   const delaySeconds = Math.min(60, 2 ** job.attempts * 2);
-  await db.job.update({
-    where: { id: job.id },
+  await db.job.updateMany({
+    where: { id: job.id, status: "running" },
     data: { status: retry ? "queued" : "failed", error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
   }).catch(() => undefined);
   if (error instanceof SourceJobsActiveError) {
@@ -165,9 +198,13 @@ async function work() {
     const controller = new AbortController();
     controllers().set(job.id, controller);
     try {
+      // Stop can arrive between the claim and controller registration.
+      if ((await db.job.findUnique({ where: { id: job.id } }))?.status !== "running") continue;
       await handleJob(job, controller.signal);
+      controller.signal.throwIfAborted();
       if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.ytarrRateLimitHits = 0;
-      await db.job.update({ where: { id: job.id }, data: { status: "complete", finishedAt: new Date() } }).catch(() => undefined);
+      const completed = await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "complete", finishedAt: new Date() } });
+      if (!completed.count) continue;
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
         const linked = await db.source.findUnique({ where: { id: job.sourceId }, select: { tunarrChannelId: true } });
         if (linked?.tunarrChannelId) {
