@@ -12,8 +12,11 @@ import { writeLog } from "@/lib/logging/service";
 import { getSettings, translatePathForTunarr } from "@/lib/settings/service";
 import { materializeRenderForChannel } from "@/lib/channels/materialize";
 import { TunarrApiClient, type TunarrChannel, type TunarrProgram } from "@/lib/tunarr/client";
+import { ensureProgrammingPlan } from "@/lib/programming/ai-service";
+import { buildTunarrSchedule, buildTunarrRotationSchedule } from "@/lib/programming/schedule-builder";
+import { scheduleStyleToKind, type AiProviderSetting, type ScheduleStyle, type StoredProgrammingPlan } from "@/lib/programming/types";
 
-export type ChannelProgrammingOrder = "manual" | "oldest" | "newest" | "random";
+export type ChannelProgrammingOrder = "manual" | "oldest" | "newest" | "random" | "ai";
 
 function samePath(left: string, right: string) {
   return path.resolve(left) === path.resolve(right);
@@ -47,13 +50,21 @@ export function orderChannelItems<T extends { position: number }>(items: T[], or
   return sorted;
 }
 
-export function mapPrograms(programs: TunarrProgram[], mediaItemIds: string[]) {
+// Keyed by the MediaItem id basename lib/channels/materialize.ts writes files as (<mediaItemId>.mp4) --
+// shared by mapPrograms below and publishChannelToTunarr's "ai" branch, same split as
+// lib/tunarr/service.ts:indexProgramsByYoutubeId/mapPrograms.
+export function indexProgramsByMediaItemId(programs: TunarrProgram[]) {
   const byBasename = new Map<string, TunarrProgram>();
   for (const program of programs) {
     const externalId = program.program?.externalId;
     if (typeof externalId !== "string") continue;
     byBasename.set(path.basename(externalId, path.extname(externalId)), program);
   }
+  return byBasename;
+}
+
+export function mapPrograms(programs: TunarrProgram[], mediaItemIds: string[]) {
+  const byBasename = indexProgramsByMediaItemId(programs);
   return mediaItemIds.flatMap((mediaItemId) => {
     const program = byBasename.get(mediaItemId);
     return program && program.duration > 0 ? [{ type: "content" as const, id: program.id, duration: program.duration }] : [];
@@ -118,7 +129,10 @@ export async function publishChannelToTunarr(channelId: string, signal?: AbortSi
   const settings = await getSettings();
   const client = new TunarrApiClient(settings.tunarrUrl);
   const discovery = await client.discover(signal);
-  const missing = Object.entries(discovery.capabilities).filter(([, supported]) => !supported).map(([name]) => name);
+  const isAi = channel.programmingOrder === "ai";
+  // See the matching comment in lib/tunarr/service.ts:publishSourceToTunarr -- aiScheduling is only
+  // required when this channel is actually AI-scheduled.
+  const missing = Object.entries(discovery.capabilities).filter(([name, supported]) => !supported && (isAi || name !== "aiScheduling")).map(([name]) => name);
   if (missing.length) throw new AppError("TUNARR_UNSUPPORTED_API", `Tunarr ${discovery.openApiVersion ?? "server"} is missing required API capabilities: ${missing.join(", ")}.`, 422);
 
   const local = await ensureLocalMediaSource(client, channel, signal);
@@ -129,8 +143,13 @@ export async function publishChannelToTunarr(channelId: string, signal?: AbortSi
     return mapPrograms(indexedPrograms, mediaItemIds).length === mediaItemIds.length;
   });
   const programs = await client.listLibraryPrograms(local.libraryId, signal);
-  const lineup = mapPrograms(programs, mediaItemIds);
-  if (!lineup.length) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "Tunarr completed its scan but did not find any of this channel's rendered videos.", 422);
+  const programIndex = indexProgramsByMediaItemId(programs);
+
+  let lineup: Array<{ type: "content"; id: string; duration: number }> = [];
+  if (!isAi) {
+    lineup = mapPrograms(programs, mediaItemIds);
+    if (!lineup.length) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "Tunarr completed its scan but did not find any of this channel's rendered videos.", 422);
+  }
 
   const [channels, transcodeConfigId] = await Promise.all([client.listChannels(signal), client.getDefaultTranscodeConfigId(signal)]);
   const existing = channel.tunarrChannelId ? channels.find((candidate) => candidate.id === channel.tunarrChannelId) : undefined;
@@ -139,31 +158,62 @@ export async function publishChannelToTunarr(channelId: string, signal?: AbortSi
   if (occupied.has(number)) throw new AppError("TUNARR_CHANNEL_NUMBER_EXISTS", `Tunarr channel number ${number} is already in use.`, 409);
 
   let channelIdOnTunarr = existing?.id ?? channel.tunarrChannelId ?? randomUUID();
-  const duration = lineup.reduce((total, program) => total + program.duration, 0);
+  const duration = isAi ? [...programIndex.values()].reduce((total, program) => total + program.duration, 0) : lineup.reduce((total, program) => total + program.duration, 0);
   const payload = channelPayload(channel.name, channelIdOnTunarr, number, duration, transcodeConfigId, channel.logoAssetPath, existing);
 
+  // Resolved (created/updated) *before and immediately after* createChannel, and *before* building an
+  // AI schedule -- matching publishSourceToTunarr in lib/tunarr/service.ts. Two independent reasons:
+  // (1) if replaceProgramming (or anything else below) fails after Tunarr has already created the
+  // remote channel, a retry needs to find it via `existing` above and update it, not generate a fresh
+  // randomUUID() and create a second, orphaned duplicate; (2) the schedule-time-slots/schedule-slots
+  // dry-run preview needs a real, already-existing Tunarr channel id -- Tunarr 404s a preview request
+  // for a channel it doesn't know about yet, exactly the case on a channel's very first AI publish.
   if (existing) {
     await client.updateChannel(channelIdOnTunarr, payload, signal);
   } else {
-    // Persisted *before and immediately after* createChannel (matching publishSourceToTunarr in
-    // lib/tunarr/service.ts) rather than only once at the very end -- if replaceProgramming (or
-    // anything else below) fails after Tunarr has already created the remote channel, a retry needs
-    // to find it via `existing` above and update it, not generate a fresh randomUUID() and create a
-    // second, orphaned duplicate.
     await db.channel.update({ where: { id: channel.id }, data: { tunarrChannelId: channelIdOnTunarr, tunarrChannelNumber: number } });
     const created = await client.createChannel(payload, signal);
     channelIdOnTunarr = created.id;
     await db.channel.update({ where: { id: channel.id }, data: { tunarrChannelId: channelIdOnTunarr } });
   }
-  await client.replaceProgramming(channelIdOnTunarr, lineup, signal);
+
+  let programCount = 0;
+  if (isAi) {
+    const candidates = channel.items.flatMap((item) => {
+      const durationMs = programIndex.get(item.mediaItemId)?.duration ?? (item.mediaItem.durationSeconds ?? 0) * 1000;
+      return durationMs > 0
+        ? [{ id: item.mediaItemId, title: item.mediaItem.title, artist: item.mediaItem.artist, album: item.mediaItem.album, genre: item.mediaItem.genre, durationMs, uploadDate: item.mediaItem.releaseDate?.toISOString() ?? null }]
+        : [];
+    });
+    const cached = channel.aiProgrammingPlanJson ? (JSON.parse(channel.aiProgrammingPlanJson) as StoredProgrammingPlan) : null;
+    const style = scheduleStyleToKind((channel.aiScheduleStyle as ScheduleStyle | null) ?? "daily-dayparts");
+    const ensured = await ensureProgrammingPlan({
+      cached, candidates, instructions: channel.aiProgrammingInstructions, kind: style.kind, period: style.period,
+      providerOverride: channel.aiProvider, globalProviderSetting: settings.aiProvider as AiProviderSetting, signal
+    });
+    if (ensured.plan.kind === "rotation") {
+      const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal });
+      await db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
+      await client.replaceProgrammingWithRandomSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
+      programCount = ensured.plan.groups.reduce((total, group) => total + group.itemIds.length, 0);
+    } else {
+      const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal });
+      await db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
+      await client.replaceProgrammingWithSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
+      programCount = ensured.plan.blocks.reduce((total, block) => total + block.itemIds.length, 0);
+    }
+  } else {
+    await client.replaceProgramming(channelIdOnTunarr, lineup, signal);
+    programCount = lineup.length;
+  }
 
   const publishedAt = new Date();
   await db.channel.update({
     where: { id: channel.id },
     data: { tunarrChannelId: channelIdOnTunarr, tunarrChannelNumber: number, tunarrChannelName: channel.name, tunarrLastPublishedAt: publishedAt }
   });
-  await writeLog({ category: "tunarr", channelId: channel.id, message: `${existing ? "Updated" : "Created"} Tunarr channel "${channel.name}" (${number}) with ${lineup.length} program${lineup.length === 1 ? "" : "s"}.` });
-  return { channelId: channelIdOnTunarr, channelNumber: number, programCount: lineup.length, mediaSourceId: local.mediaSourceId, libraryId: local.libraryId, publishedAt };
+  await writeLog({ category: "tunarr", channelId: channel.id, message: `${existing ? "Updated" : "Created"} Tunarr channel "${channel.name}" (${number}) with ${programCount} program${programCount === 1 ? "" : "s"}.` });
+  return { channelId: channelIdOnTunarr, channelNumber: number, programCount, mediaSourceId: local.mediaSourceId, libraryId: local.libraryId, publishedAt };
 }
 
 export async function channelTunarrLinkStatus(channelId: string, signal?: AbortSignal) {

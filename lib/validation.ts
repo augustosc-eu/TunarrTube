@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { VIDEO_QUALITIES } from "@/lib/youtube/quality";
+import { AI_PROVIDERS, SCHEDULE_STYLES } from "@/lib/programming/types";
 
 export const videoQualitySchema = z.enum(VIDEO_QUALITIES);
+// "auto" is only valid for the global AppSettings default -- a per-Source/Channel override must name a
+// concrete provider (or be cleared back to null/"auto" to fall back to the global setting).
+export const aiProviderSettingSchema = z.enum([...AI_PROVIDERS, "auto"]);
+export const aiProviderOverrideSchema = z.enum(AI_PROVIDERS).nullable();
+export const aiProgrammingInstructionsSchema = z.string().trim().max(4_000).nullable();
+export const aiScheduleStyleSchema = z.enum(SCHEDULE_STYLES).nullable();
 
 export const analyzeSourceSchema = z.object({
   url: z.string().url(),
@@ -44,6 +51,7 @@ export const settingsSchema = z.object({
   logRetentionDays: z.number().int().min(1).max(3650).optional(),
   defaultVideoQuality: videoQualitySchema.optional(),
   musicbrainzContactEmail: z.string().trim().email().nullable().optional(),
+  aiProvider: aiProviderSettingSchema.optional(),
   pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional()
 }).refine((input) => Object.values(input).some((value) => value !== undefined), {
   message: "At least one setting is required."
@@ -52,7 +60,13 @@ export const settingsSchema = z.object({
 export const publishTunarrSchema = z.object({
   channelName: z.string().trim().min(1).max(160),
   channelNumber: z.number().int().positive().optional(),
-  programmingOrder: z.enum(["playlist", "oldest", "newest", "random"]).default("playlist")
+  programmingOrder: z.enum(["playlist", "oldest", "newest", "random", "ai"]).default("playlist"),
+  // Only meaningful (and only persisted -- see lib/tunarr/service.ts:publishSourceToTunarr) when
+  // programmingOrder is "ai". aiProvider/aiScheduleStyle omitted/undefined leave the Source's stored
+  // value alone; pass null explicitly to clear either back to its default.
+  aiInstructions: aiProgrammingInstructionsSchema.optional(),
+  aiProvider: aiProviderOverrideSchema.optional(),
+  aiScheduleStyle: aiScheduleStyleSchema.optional()
 });
 
 export const testTunarrSchema = z.object({ tunarrUrl: z.string().trim().url() });
@@ -81,9 +95,14 @@ export const createChannelSchema = z.object({
 export const updateChannelSchema = z.object({
   name: z.string().trim().min(1).max(160).optional(),
   templateId: z.string().min(1).optional(),
-  programmingOrder: z.enum(["manual", "oldest", "newest", "random"]).optional(),
+  programmingOrder: z.enum(["manual", "oldest", "newest", "random", "ai"]).optional(),
   logoAssetPath: z.string().trim().min(1).nullable().optional(),
-  tunarrRequestedChannelNumber: z.number().int().positive().nullable().optional()
+  tunarrRequestedChannelNumber: z.number().int().positive().nullable().optional(),
+  // Only meaningful when programmingOrder is (or is already) "ai" -- see the matching Source fields on
+  // publishTunarrSchema above.
+  aiProgrammingInstructions: aiProgrammingInstructionsSchema.optional(),
+  aiProvider: aiProviderOverrideSchema.optional(),
+  aiScheduleStyle: aiScheduleStyleSchema.optional()
 }).refine((input) => Object.keys(input).length > 0, { message: "At least one channel setting is required." });
 
 export const addLocalFolderSchema = z.object({ type: z.literal("local"), folder: z.string().trim().min(1) });
@@ -122,6 +141,22 @@ export const metadataCandidateSchema = z.object({
 });
 
 export const renderMediaItemSchema = z.object({ templateId: z.string().min(1) });
+
+export const selectChannelContentSchema = z.object({
+  sourceIds: z.array(z.string().min(1)).min(1).max(20),
+  instructions: z.string().trim().min(1).max(4_000),
+  targetCount: z.number().int().min(1).max(200).optional(),
+  aiProvider: aiProviderOverrideSchema.optional()
+});
+
+export const createChannelFromBriefSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  templateId: z.string().min(1),
+  brief: z.string().trim().min(1).max(4_000),
+  sourceIds: z.array(z.string().min(1)).min(1).max(20),
+  scheduleStyle: aiScheduleStyleSchema.optional(),
+  aiProvider: aiProviderOverrideSchema.optional()
+});
 
 export const createTemplateSchema = z.object({
   name: z.string().trim().min(1).max(160),

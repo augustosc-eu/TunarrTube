@@ -73,13 +73,13 @@ export function MediaItemEditor({ channelId: _channelId, mediaItem, template, re
     };
     return Object.fromEntries(bindings.map((field) => {
       const custom = customFields[field.key];
-      if (custom) return [field.key, custom];
       const alias = BUILT_IN_ALIASES[field.key];
       // An aliased key (title/artist/album/genre/year, or a template's alias like "headline")
       // always resolves to real metadata or "" -- never sample placeholder text, matching
-      // resolveBindingValues in lib/overlay/service.ts exactly.
-      if (alias) return [field.key, builtInState[alias] ?? ""];
-      return [field.key, field.sampleValue];
+      // resolveBindingValues in lib/overlay/service.ts exactly. A binding's own `fallback` stands
+      // in for a still-empty result, same as a real render.
+      const value = custom ? custom : alias ? builtInState[alias] ?? "" : field.sampleValue;
+      return [field.key, value === "" && field.fallback ? field.fallback : value];
     }));
   }, [bindings, customFields, title, artist, album, mediaItem.genre, mediaItem.year]);
 

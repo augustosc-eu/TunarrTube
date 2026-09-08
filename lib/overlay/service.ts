@@ -6,17 +6,20 @@ import { db } from "@/lib/db/client";
 import { fillTemplate } from "@/lib/overlay/bindings";
 import { renderHtmlToPng } from "@/lib/overlay/puppeteer";
 import { MUSIC_VIDEO_TEMPLATE } from "@/lib/overlay/templates/music-video";
+import { MUSIC_876_TEMPLATE } from "@/lib/overlay/templates/music-876";
 import { NEWS_TEMPLATE } from "@/lib/overlay/templates/news";
 import type { BindingField, OverlayLayer } from "@/lib/overlay/types";
 
-const BUILT_IN_TEMPLATES = [MUSIC_VIDEO_TEMPLATE, NEWS_TEMPLATE];
+const BUILT_IN_TEMPLATES = [MUSIC_VIDEO_TEMPLATE, MUSIC_876_TEMPLATE, NEWS_TEMPLATE];
 
 // Self-healing seed, same create-on-first-use convention as getSettings() -- works against any
 // fresh DB without a separate seed script/migration data step. Loops so adding another built-in
-// template category is just another entry in BUILT_IN_TEMPLATES, no schema change.
+// template is just another entry in BUILT_IN_TEMPLATES, no schema change. Matched by name, not
+// channelType -- channelType is just a descriptive badge (see app/templates/page.tsx) and more than
+// one built-in can share it (e.g. two music_video templates), so it can't double as identity here.
 export async function ensureBuiltInTemplates() {
   return Promise.all(BUILT_IN_TEMPLATES.map(async (definition) => {
-    const existing = await db.overlayTemplate.findFirst({ where: { isBuiltIn: true, channelType: definition.channelType } });
+    const existing = await db.overlayTemplate.findFirst({ where: { isBuiltIn: true, name: definition.name } });
     if (existing) return existing;
     return db.overlayTemplate.create({
       data: {
@@ -137,14 +140,16 @@ export function parseCustomFields(mediaItem: { customFieldsJson: string | null }
 // The single source of truth for a render's live values, in priority order: an explicit per-item
 // custom field, then a matching built-in MediaItem column (an existing-but-blank column stays ""
 // rather than falling all the way to placeholder copy), then the binding's own sampleValue as a
-// last resort for fields with no MediaItem column at all.
+// last resort for fields with no MediaItem column at all. If that still comes back "", the
+// binding's own `fallback` (e.g. "UNKNOWN ARTIST") stands in for it -- unset `fallback` leaves it
+// blank, same as before this existed.
 export function resolveBindingValues(mediaItem: BindableMediaItem, bindings: BindingField[]): Record<string, string> {
   const customFields = parseCustomFields(mediaItem);
   return Object.fromEntries(bindings.map((field) => {
     const custom = customFields[field.key];
-    if (typeof custom === "string" && custom.length > 0) return [field.key, custom];
-    const builtIn = builtInFieldValue(mediaItem, field.key);
-    if (builtIn !== null) return [field.key, builtIn];
-    return [field.key, BUILT_IN_FIELD_ALIASES[field.key] ? "" : field.sampleValue];
+    const value = typeof custom === "string" && custom.length > 0
+      ? custom
+      : builtInFieldValue(mediaItem, field.key) ?? (BUILT_IN_FIELD_ALIASES[field.key] ? "" : field.sampleValue);
+    return [field.key, value === "" && field.fallback ? field.fallback : value];
   }));
 }

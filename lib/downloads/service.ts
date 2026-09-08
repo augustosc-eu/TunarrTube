@@ -8,7 +8,15 @@ import { writeLog } from "@/lib/logging/service";
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
-import { getYtDlpPath } from "@/lib/youtube/ytdlp";
+import { fetchVideoAvailabilityReason, getYtDlpPath, isUnavailableVideoError, readableUnavailabilityReason } from "@/lib/youtube/ytdlp";
+
+// Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means the
+// video is gone for good (deleted/private/region-blocked/etc.) rather than a transient problem -- by the
+// time this is thrown, the Video/SourceVideo rows are already updated to record that. handleJobFailure()
+// (lib/jobs/runner.ts) recognizes this type and fails the job immediately instead of retrying it, since
+// retrying will never succeed; publishSourceToTunarr()'s prefetch loop (lib/tunarr/service.ts) catches it
+// per-video so one dead video doesn't block prefetching the rest of a source's lineup.
+export class VideoUnavailableError extends Error {}
 
 async function exists(file: string) {
   try {
@@ -146,8 +154,19 @@ export async function downloadVideo(sourceId: string, videoId: string, signal?: 
     // A user-requested stop (see stopJob() in lib/jobs/service.ts) aborts `signal`, which is what makes
     // runProcess() reject here -- record it as "cancelled" rather than "failed" so it reads like the
     // queued-cancellation case instead of a real error, and so automatic re-enqueue paths leave it alone.
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: signal?.aborted ? "cancelled" : "failed" } });
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    const unavailable = !signal?.aborted && isUnavailableVideoError(message);
+    if (unavailable) {
+      // Gone for good, not a transient failure -- record it on the Video so every source sharing it (and
+      // the UI) can see why, and mark this membership distinctly from an ordinary "failed" so syncSource
+      // (lib/sources/service.ts) stops re-queuing a fresh download attempt on every future sync. The user
+      // can still retry it from the Jobs page, or remove it from the source.
+      const reason = await fetchVideoAvailabilityReason(membership.video.youtubeUrl).catch(() => null) ?? readableUnavailabilityReason(message);
+      await db.video.update({ where: { id: membership.video.id }, data: { availability: "unavailable", availabilityReason: reason } });
+      await writeLog({ level: "warn", category: "download", sourceId, videoId, message: `${membership.video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
+    }
+    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: unavailable ? "unavailable" : signal?.aborted ? "cancelled" : "failed" } });
+    throw unavailable ? new VideoUnavailableError(message) : error;
   }
 }
 
@@ -212,11 +231,18 @@ export async function cacheVideo(videoId: string, sourceId?: string, signal?: Ab
   } catch (error) {
     // See the matching comment in downloadVideo() above: a stop request aborts `signal`, and that should
     // read as "cancelled" rather than a real failure.
+    const message = error instanceof Error ? error.message : String(error);
+    const unavailable = !signal?.aborted && isUnavailableVideoError(message);
+    if (unavailable) {
+      const reason = await fetchVideoAvailabilityReason(video.youtubeUrl).catch(() => null) ?? readableUnavailabilityReason(message);
+      await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason } });
+      await writeLog({ level: "warn", category: "cache", videoId, message: `${video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
+    }
     await db.cacheAsset.update({
       where: { id: asset.id },
-      data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: (error instanceof Error ? error.message : String(error)).slice(-2000) }
+      data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: message.slice(-2000) }
     });
-    throw error;
+    throw unavailable ? new VideoUnavailableError(message) : error;
   }
 }
 
@@ -233,6 +259,9 @@ export async function materializeForTunarr(sourceId: string, videoId: string) {
   // A user-cancelled cache job must stay cancelled through automatic Tunarr publish/refresh prefetching --
   // leave this video out of the lineup (same as one that was never cached) until an explicit retry.
   if (membership.video.cacheAsset?.status === "cancelled") return null;
+  // Likewise for a video already recorded as permanently unavailable (see cacheVideo()'s catch above) --
+  // without this, every automatic Tunarr refresh would call cacheVideo() again and immediately re-fail.
+  if (membership.video.availability === "unavailable") return null;
   const asset = await cacheVideo(videoId, sourceId);
   if (!asset.localPath) throw new AppError("CACHE_OUTPUT_MISSING", "The cached file is unavailable.", 500);
   await mkdir(membership.source.mediaDirectory, { recursive: true });

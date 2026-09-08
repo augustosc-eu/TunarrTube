@@ -1,5 +1,5 @@
 import { db } from "@/lib/db/client";
-import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo } from "@/lib/downloads/service";
+import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo, VideoUnavailableError } from "@/lib/downloads/service";
 import { writeLog } from "@/lib/logging/service";
 import { enrichVideo } from "@/lib/metadata/service";
 import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
@@ -7,13 +7,13 @@ import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
 import { isRateLimitedError } from "@/lib/youtube/ytdlp";
-import { enqueueChannelJob } from "@/lib/channels/service";
+import { enqueueChannelJob, runChannelBrief, runContentSelection } from "@/lib/channels/service";
 import { scanLocalFolder } from "@/lib/ingest/local-scan";
 import { renderMediaItem } from "@/lib/renders/service";
 import { publishChannelToTunarr } from "@/lib/tunarr/channel-service";
 
 const globalWorker = globalThis as unknown as {
-  ytarrWorker?: Promise<void>;
+  ytarrLanes?: Map<string, Promise<void>>;
   ytarrRecovered?: boolean;
   ytarrWakeTimer?: NodeJS.Timeout;
   ytarrRateLimitHits?: number;
@@ -24,16 +24,40 @@ function controllers() {
   return (globalWorker.ytarrControllers ??= new Map());
 }
 
+function lanes() {
+  return (globalWorker.ytarrLanes ??= new Map());
+}
+
 // Media-fetching job types that shell out to yt-dlp for the actual video bytes, as opposed to the light
-// metadata/listing calls made by "sync" -- these are the ones worth pausing as a group on a 429.
+// metadata/listing calls made by "sync" -- these are the ones worth pausing as a group on a 429, and the
+// only ones kept to a single worker below (see LANE_IDS) so we never fire concurrent requests at
+// YouTube's video CDN.
 const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
+
+// How many "general" jobs (everything except download/cache -- metadata, thumbnail, sync, retag,
+// tunarr_*, render, channel_*, ingest_local_scan) run at once. These are lighter than a video download
+// (an API call, a quick yt-dlp metadata-only call, or purely local work) and aren't the ones YouTube's
+// 429s are aimed at pausing, so running several concurrently speeds up a large backlog without touching
+// the download/cache rate-limit story at all. Override via env for tuning; default keeps it modest.
+const GENERAL_LANE_COUNT = Number(process.env.TUNARRTUBE_GENERAL_WORKERS) || 3;
+
+// One lane per concurrently-running worker loop: "media" claims only download/cache jobs and runs
+// strictly one at a time (see claimJob() below); "general-0".."general-N" each independently claim and
+// run everything else, so up to GENERAL_LANE_COUNT of those can be in flight together. kickWorker()
+// starts whichever lanes aren't already running; each lane's work() loop exits (and is removed from the
+// map) once the queue it draws from is empty.
+const LANE_IDS = ["media", ...Array.from({ length: GENERAL_LANE_COUNT }, (_, index) => `general-${index}`)];
+
+function laneKind(id: string): "media" | "general" {
+  return id === "media" ? "media" : "general";
+}
 
 // Job types whose underlying work actually listens for the AbortController below (they end up in
 // runProcess()/fetch calls that take a signal) -- "retag" (a near-instant local ffmpeg remux) and
 // "thumbnail" (a couple of quick image fetches) don't check it, so stopping one wouldn't do anything
 // but leave the UI showing a request that never lands. Exported so lib/jobs/service.ts's stopJob() can
 // reject those up front instead of silently no-oping.
-export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh", "render", "channel_publish"];
+export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh", "render", "channel_publish", "content_select", "channel_brief"];
 
 // Called by stopJob() (lib/jobs/service.ts) for a job that's currently claimed as "running". Returns
 // false if no controller is registered for it (already finished, or never supported stopping), in which
@@ -72,16 +96,16 @@ export async function recoverJobs() {
   await db.cacheAsset.updateMany({ where: { activeReaders: { gt: 0 } }, data: { activeReaders: 0 } });
 }
 
-async function claimJob() {
+async function claimJob(lane: "media" | "general") {
   const now = new Date();
-  // Three priority tiers so a large backlog of slow, network-bound jobs can never starve fast ones behind
-  // it in strict creation order: "retag" is a purely local ffmpeg remux (no network, near-instant) so it
-  // always goes first; other non-download jobs (metadata, thumbnail, sync, cache, tunarr_*) are quick
-  // network calls and go next; "download" (slow yt-dlp calls, up to a 12h timeout each) goes last.
-  const candidate =
-    (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "retag" }, orderBy: { createdAt: "asc" } })) ??
-    (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { notIn: ["download", "retag"] } }, orderBy: { createdAt: "asc" } })) ??
-    (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "download" }, orderBy: { createdAt: "asc" } }));
+  // The media lane only ever claims download/cache jobs (kept single-worker by work()/kickWorker() below
+  // running exactly one "media" lane) -- everything else goes to the general lanes, "retag" prioritized
+  // first since it's a purely local ffmpeg remux (no network, near-instant) that shouldn't have to wait
+  // behind slower network-bound work in strict creation order.
+  const candidate = lane === "media"
+    ? await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { in: RATE_LIMITED_JOB_TYPES } }, orderBy: { createdAt: "asc" } })
+    : (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "retag" }, orderBy: { createdAt: "asc" } })) ??
+      (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { notIn: [...RATE_LIMITED_JOB_TYPES, "retag"] } }, orderBy: { createdAt: "asc" } }));
   if (!candidate) return null;
   const claimed = await db.job.updateMany({ where: { id: candidate.id, status: "queued" }, data: { status: "running", startedAt: new Date(), attempts: { increment: 1 }, error: null } });
   return claimed.count === 1 ? db.job.findUnique({ where: { id: candidate.id } }) : null;
@@ -115,6 +139,14 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
   if (job.type === "channel_publish" && job.channelId) {
     return publishChannelToTunarr(job.channelId, signal);
   }
+  if (job.type === "content_select" && job.channelId && job.payloadJson) {
+    const payload = JSON.parse(job.payloadJson) as { sourceIds: string[]; instructions: string; targetCount?: number; providerOverride?: string | null };
+    return runContentSelection(job.channelId, payload, signal);
+  }
+  if (job.type === "channel_brief" && job.channelId && job.payloadJson) {
+    const payload = JSON.parse(job.payloadJson) as { sourceIds: string[] };
+    return runChannelBrief(job.channelId, payload, signal);
+  }
   throw new Error(`Invalid ${job.type} job payload.`);
 }
 
@@ -137,6 +169,11 @@ export async function markJobCancelled(job: { id: string; type: string; sourceId
 // test risks racing a *different* test file's own kickWorker() call over the same shared dev database.
 export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  // Every writeLog() call below is best-effort, like the db.job.update() calls beside them -- a Source or
+  // Video this job referenced can be deleted out from under it while it's mid-failure (deleteSource()
+  // guards against that in the normal app flow, but nothing stops a raw DB delete elsewhere, e.g. a
+  // test's own cleanup), which would otherwise surface as an unhandled rejection over a FK constraint
+  // that has nothing to do with the job's own outcome.
   if (job.type === "sync" && job.sourceId) {
     await db.source.update({ where: { id: job.sourceId }, data: { lastSyncStatus: "failed" } }).catch(() => undefined);
   }
@@ -161,7 +198,17 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     await writeLog({
       level: "warn", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined,
       message: `YouTube rate-limited (429) on ${job.type}; pausing download/cache jobs for ${cooldownSeconds}s.`
-    });
+    }).catch(() => undefined);
+    return;
+  }
+  if (error instanceof VideoUnavailableError) {
+    // downloadVideo()/cacheVideo() (lib/downloads/service.ts) already recorded the Video/SourceVideo as
+    // unavailable before throwing this -- retrying would only waste yt-dlp calls on a video that will
+    // never come back, so fail the job immediately instead of the ordinary retry-with-backoff below. The
+    // Jobs page's Retry action still works if the user wants another attempt (e.g. YouTube later
+    // reinstates it), or they can remove the video from its source instead.
+    await db.job.update({ where: { id: job.id }, data: { status: "failed", error: message.slice(-2000), finishedAt: new Date() } }).catch(() => undefined);
+    await writeLog({ level: "warn", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message} (video unavailable, not retrying)` }).catch(() => undefined);
     return;
   }
   const retry = job.attempts < job.maxAttempts;
@@ -174,20 +221,20 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     // Routine deferral, not a failure: log it quietly so it doesn't read like an incident in the logs
     // while other jobs for the source are still in flight. tunarr_refresh's generous maxAttempts (100,
     // see enqueueUniqueJob) means it keeps retrying well past the point an ordinary job would give up.
-    await writeLog({ level: "info", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job deferred: ${message}` });
+    await writeLog({ level: "info", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job deferred: ${message}` }).catch(() => undefined);
     return;
   }
-  await writeLog({ level: "error", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message}` });
+  await writeLog({ level: "error", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message}` }).catch(() => undefined);
 }
 
-async function work() {
+async function work(lane: "media" | "general") {
   await recoverJobs();
   for (;;) {
     // Checked before every claim (not just once at the top) so a pause requested mid-drain takes effect
     // between jobs -- it never interrupts whichever job is already running, that's what stopJob()/
     // requestJobStop() above are for.
     if ((await getSettings()).jobsPaused) return;
-    const job = await claimJob();
+    const job = await claimJob(lane);
     if (!job) return;
     const controller = new AbortController();
     controllers().set(job.id, controller);
@@ -215,7 +262,7 @@ async function work() {
     } catch (error) {
       if (controller.signal.aborted) {
         await markJobCancelled(job, "Stopped by user.");
-        await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job stopped by user.` });
+        await writeLog({ category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job stopped by user.` }).catch(() => undefined);
       } else {
         await handleJobFailure(job, error);
       }
@@ -225,19 +272,29 @@ async function work() {
   }
 }
 
+// Called from each lane's finally() below once every lane has drained (checked via lanes().size so a lane
+// that just finished doesn't schedule a wake while its siblings are still working through the queue --
+// whichever lane finishes last is the one that actually gets past that check). Guards on ytarrWakeTimer
+// too, since more than one lane can reach this within the same tick.
+async function scheduleWakeIfIdle() {
+  if (lanes().size) return;
+  if (globalWorker.ytarrWakeTimer) return;
+  if ((await getSettings()).jobsPaused) return;
+  const next = await db.job.findFirst({ where: { status: "queued" }, orderBy: { runAfter: "asc" }, select: { runAfter: true } });
+  if (!next) return;
+  const delay = Math.max(25, Math.min(60_000, next.runAfter.getTime() - Date.now()));
+  globalWorker.ytarrWakeTimer = setTimeout(() => kickWorker(), delay);
+  globalWorker.ytarrWakeTimer.unref();
+}
+
 export function kickWorker() {
   if (globalWorker.ytarrWakeTimer) { clearTimeout(globalWorker.ytarrWakeTimer); globalWorker.ytarrWakeTimer = undefined; }
-  if (!globalWorker.ytarrWorker) {
-    globalWorker.ytarrWorker = work().finally(async () => {
-      globalWorker.ytarrWorker = undefined;
-      if ((await getSettings()).jobsPaused) return;
-      const next = await db.job.findFirst({ where: { status: "queued" }, orderBy: { runAfter: "asc" }, select: { runAfter: true } });
-      if (next) {
-        const delay = Math.max(25, Math.min(60_000, next.runAfter.getTime() - Date.now()));
-        globalWorker.ytarrWakeTimer = setTimeout(() => kickWorker(), delay);
-        globalWorker.ytarrWakeTimer.unref();
-      }
+  for (const id of LANE_IDS) {
+    if (lanes().has(id)) continue;
+    const promise = work(laneKind(id)).finally(() => {
+      lanes().delete(id);
+      void scheduleWakeIfIdle();
     });
+    lanes().set(id, promise);
   }
-  return globalWorker.ytarrWorker;
 }

@@ -45,7 +45,8 @@ On a source's detail page ([app/sources/[id]/page.tsx](../app/sources/%5Bid%5D/p
 
 ### 4. Publish to Tunarr
 From a source's **Tunarr integration** panel ([components/tunarr-channel-form.tsx](../components/tunarr-channel-form.tsx)):
-- Choose a channel name, optional channel number (defaults to the next available Tunarr number), and a programming order (playlist order / oldest first / newest first / random).
+- Choose a channel name, optional channel number (defaults to the next available Tunarr number), and a programming order (playlist order / oldest first / newest first / random / **AI Programming**).
+- **AI Programming** hands the schedule to an AI provider instead of a fixed sort: optionally describe how to schedule it (e.g. dayparts, themes), and TunarrTube asks the configured provider (Anthropic or OpenAI — see step 8) for a repeating daily schedule of named blocks, then builds a real Tunarr time-slot schedule from it (one Tunarr Custom Show per block) rather than a flat lineup.
 - **Create/Update Tunarr Channel** (`POST /api/sources/[id]/tunarr`) enqueues a `tunarr_publish` job. That job:
   - Ensures a Tunarr "Local Media" source exists pointing at this source's media directory (translated through configured path mappings if TunarrTube and Tunarr see different absolute paths).
   - Triggers and waits for a Tunarr library scan.
@@ -70,7 +71,7 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 - **Queue** (`/jobs`) — every running, queued, and recently finished background job (download, cache, metadata, thumbnail, sync, retag, Tunarr publish/refresh, plus a Channel's own render/local-scan/Tunarr-publish jobs) with its target and status, self-polling every few seconds.
 - **Cache** (`/cache`) — usage dashboard (used/pinned/protected/evictable bytes), per-asset pin/unpin/evict actions, and manual "enforce limits" / "clear evictable" actions.
 - **Logs** (`/logs`) — sanitized operational history (source, sync, metadata, download, video categories), filterable by category. Signed YouTube URLs and cookie flags are redacted before any log line is persisted.
-- **Settings** (`/settings`) — base media directory, `yt-dlp`/FFmpeg detection ("Test" buttons), Tunarr base URL and connectivity test, cache size/age limits, and ordered Tunarr path mappings with a live preview.
+- **Settings** (`/settings`) — base media directory, `yt-dlp`/FFmpeg detection ("Test" buttons), Tunarr base URL and connectivity test, cache size/age limits, the global AI Programming provider default (Anthropic/OpenAI/auto-detect), and ordered Tunarr path mappings with a live preview.
 
 ### 7. Build a curated, overlay-branded Channel
 `Channels → New channel` ([app/channels/new/page.tsx](../app/channels/new/page.tsx), [components/channel-form.tsx](../components/channel-form.tsx)) then a channel's own detail page ([app/channels/[id]/page.tsx](../app/channels/%5Bid%5D/page.tsx)):
@@ -78,7 +79,7 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 - **Add media** three ways: pick a video already downloaded by any existing Source, paste a YouTube URL, or scan a local folder path. Pasting a URL downloads it through a Source dedicated to this channel (auto-created on first use, named after the channel, visible under **Sources** like any other) — Channels never run a second, independent YouTube downloader.
 - **Render all** burns the channel's overlay template into every not-yet-rendered clip (FFmpeg composites a Puppeteer-screenshotted PNG per timed layer onto the source video). The same rendered file is shared across every channel using that exact clip+template pair.
 - Edit a clip's title/artist/album (or any custom fields the template declares) from its own page, with a live overlay preview and a **Look up** button that queries MusicBrainz/iTunes for real metadata + artwork.
-- **Publish to Tunarr** requires every item to already be rendered with the channel's template; it registers a Tunarr `music_videos` local media source pointed at the channel's own storage directory, scans it, and replaces that Tunarr channel's programming — structurally the same flow as a Source's own Tunarr publish, but a fully separate Tunarr channel.
+- **Publish to Tunarr** requires every item to already be rendered with the channel's template; it registers a Tunarr `music_videos` local media source pointed at the channel's own storage directory, scans it, and replaces that Tunarr channel's programming — structurally the same flow as a Source's own Tunarr publish, but a fully separate Tunarr channel. A Channel's programming order (including **AI Programming**, using each item's artist/album/genre metadata) is set from its own Tunarr panel before publishing, distinct from a Source's programming order.
 
 ## Product terminology
 
@@ -93,7 +94,8 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 | **Retention origin** | Why a downloaded file exists on disk for a given `SourceVideo`: `permanent` (user-requested download), `tunarr` (materialized only to satisfy a Tunarr publish), or `none`. |
 | **Feed type** | For channel sources, which YouTube feed to read: `videos`, `shorts`, `live` (archived live streams), or `all` (merged, deduplicated, newest-first). |
 | **History limit** | For channel sources, how many recent items `yt-dlp` should inspect per sync. `null` means unbounded. |
-| **Programming order** | How a Tunarr channel's videos are ordered when a lineup is published: `playlist`, `oldest`, `newest`, or `random`. |
+| **Programming order** | How a Tunarr channel's videos are ordered when a lineup is published: `playlist`, `oldest`, `newest`, `random`, or `ai` (AI Programming — see below). |
+| **AI Programming** | A programming order that hands scheduling to an AI provider (Anthropic or OpenAI) instead of a fixed sort. Produces a repeating daily schedule of named blocks, each realized as a real Tunarr Custom Show plus a native Tunarr time-slot schedule — not a flat lineup. Cached per Source/Channel (`aiProgrammingPlanJson`) and only regenerated when the candidate clips or instructions change. |
 | **CacheAsset** | The cache-mode counterpart to a downloaded file: a single shared cached copy of a `Video`, independent of any one source, with pin/eviction state. |
 | **Path mapping** | An ordered, longest-prefix translation from a TunarrTube filesystem path to the path Tunarr sees for the same directory (needed when the two run in different containers/mounts). |
 | **Channel** | A curated, ordered lineup of `MediaItem`s behind one overlay template, published as its own Tunarr channel — distinct from a Source's own 1:1 Tunarr channel. Owns a companion "intake" Source for videos added by pasting a YouTube URL directly onto it. |

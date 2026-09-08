@@ -16,7 +16,11 @@ const paths = {
   "/api/channels": { get: {}, post: {} },
   "/api/channels/{id}": { put: {} },
   "/api/channels/{id}/programming": { post: {} },
-  "/api/transcode_configs": { get: {} }
+  "/api/transcode_configs": { get: {} },
+  "/api/custom-shows": { get: {}, post: {} },
+  "/api/custom-shows/{id}": { put: {} },
+  "/api/channels/{channelId}/schedule-time-slots": { post: {} },
+  "/api/channels/{channelId}/schedule-slots": { post: {} }
 };
 
 describe("Tunarr client", () => {
@@ -29,7 +33,7 @@ describe("Tunarr client", () => {
     }));
     const result = await new TunarrApiClient("http://tunarr.test").testConnection();
     expect(result.version.tunarr).toBe("1.3.13");
-    expect(result.capabilities).toEqual({ localMedia: true, channelCreate: true, channelUpdate: true, programming: true });
+    expect(result.capabilities).toEqual({ localMedia: true, channelCreate: true, channelUpdate: true, programming: true, aiScheduling: true });
   });
 
   it("creates local media using the documented payload", async () => {

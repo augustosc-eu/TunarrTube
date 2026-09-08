@@ -7,19 +7,88 @@ export type TunarrLibrary = { id: string; name: string; mediaType: string; exter
 export type TunarrMediaSource = { id: string; name: string; type: string; paths?: string[]; libraries: TunarrLibrary[] };
 export type TunarrChannel = { id: string; name: string; number: number; [key: string]: unknown };
 export type TunarrProgram = { type: "content"; id: string; duration: number; program?: { externalId?: string; [key: string]: unknown } };
+export type TunarrCustomShow = { id: string; name: string; contentCount: number; totalDuration: number };
+
+// A Tunarr "time" schedule slot backed by a Custom Show -- see lib/programming/schedule-builder.ts.
+// Tunarr's slot union also has movie/show/flex/redirect/filler/smart-collection variants (see
+// types/src/api/CommonSlots.ts in the Tunarr source); this app only ever constructs custom-show slots,
+// so the other variants aren't modeled here.
+export type TunarrCustomShowSlot = {
+  id: string; // uuid, stable across republishes so a later publish updates this slot in place
+  type: "custom-show";
+  customShowId: string;
+  order: "next" | "shuffle" | "ordered_shuffle" | "alphanumeric" | "chronological";
+  direction?: "asc" | "desc";
+  startTime: number; // ms offset from the period start (midnight for "day", Monday 00:00 for "week")
+};
+
+export type TunarrTimeSlotSchedule = {
+  type: "time";
+  flexPreference: "distribute" | "end";
+  latenessMs: number;
+  maxDays: number;
+  padMs: number;
+  period: "day" | "week";
+  slots: TunarrCustomShowSlot[];
+  timeZoneOffset: number;
+  startTomorrow?: boolean;
+};
+
+// A Tunarr "random" schedule slot backed by a Custom Show -- the counterpart to TunarrCustomShowSlot
+// for endless, weighted/cooldown-based rotation instead of fixed daily start times. See
+// lib/programming/schedule-builder.ts:buildTunarrRotationSchedule.
+export type TunarrRandomCustomShowSlot = {
+  id: string; // uuid, stable across republishes so a later publish updates this slot in place
+  type: "custom-show";
+  customShowId: string;
+  order: "next" | "shuffle" | "ordered_shuffle" | "alphanumeric" | "chronological";
+  direction?: "asc" | "desc";
+  weight: number;
+  cooldownMs: number;
+  durationSpec: { type: "dynamic"; programCount: number } | { type: "fixed"; durationMs: number };
+};
+
+export type TunarrRandomSlotSchedule = {
+  type: "random";
+  flexPreference: "distribute" | "end";
+  maxDays: number;
+  padMs: number;
+  padStyle: "slot" | "episode";
+  slots: TunarrRandomCustomShowSlot[];
+  timeZoneOffset?: number;
+  randomDistribution: "uniform" | "weighted" | "none";
+  periodMs?: number;
+  lockWeights: boolean;
+};
+
+// One entry from a materialized lineup, returned by both the schedule-time-slots/schedule-slots
+// preview endpoints and (indirectly) what gets persisted -- deliberately loose (only the fields
+// lib/programming/schedule-builder.ts's dry-run validation actually inspects) rather than a full port
+// of Tunarr's CondensedChannelProgram union.
+export type TunarrMaterializedLineupEntry = { type: string; duration: number | null; customShowId?: string };
 
 export type TunarrCapabilities = {
   localMedia: boolean;
   channelCreate: boolean;
   channelUpdate: boolean;
   programming: boolean;
+  aiScheduling: boolean;
 };
 
 const REQUIRED_OPERATIONS = {
   localMedia: [["/api/media-sources", "get"], ["/api/media-sources", "post"], ["/api/media-sources/{id}/libraries/{libraryId}/scan", "post"], ["/api/media-sources/{mediaSourceId}/{libraryId}/status", "get"], ["/api/media-libraries/{libraryId}/programs", "get"]],
   channelCreate: [["/api/channels", "get"], ["/api/channels", "post"], ["/api/transcode_configs", "get"]],
   channelUpdate: [["/api/channels/{id}", "put"]],
-  programming: [["/api/channels/{id}/programming", "post"]]
+  programming: [["/api/channels/{id}/programming", "post"]],
+  // Only required when programmingOrder/aiProvider actually selects AI scheduling (checked separately
+  // in lib/tunarr/service.ts / lib/tunarr/channel-service.ts, not folded into the base "programming"
+  // requirement above, so a Tunarr server without Custom Shows can still publish ordinary lineups). The
+  // schedule-time-slots/schedule-slots preview endpoints are required too -- lib/programming/
+  // schedule-builder.ts dry-runs every AI-generated schedule through them before persisting.
+  aiScheduling: [
+    ["/api/custom-shows", "get"], ["/api/custom-shows", "post"], ["/api/custom-shows/{id}", "put"],
+    ["/api/channels/{channelId}/schedule-time-slots", "post"], ["/api/channels/{channelId}/schedule-slots", "post"]
+  ]
 } as const;
 
 function object(value: unknown): JsonObject | null {
@@ -198,5 +267,89 @@ export class TunarrApiClient {
       method: "POST",
       body: JSON.stringify({ type: "manual", lineup, append: false })
     }, signal);
+  }
+
+  // AI-scheduled programming (lib/programming/schedule-builder.ts) posts a "time" lineup instead of a
+  // flat "manual" one -- Tunarr materializes the actual repeating lineup server-side from the schedule.
+  // `programs` is the pool the schema requires alongside the schedule; every clip this app schedules
+  // lives inside a Custom Show rather than the top-level pool, so this is always sent empty -- kept as
+  // a parameter (not hardcoded) in case a future slot type needs it populated.
+  async replaceProgrammingWithSchedule(channelId: string, programs: string[], schedule: TunarrTimeSlotSchedule, signal?: AbortSignal) {
+    await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
+      method: "POST",
+      body: JSON.stringify({ type: "time", programs, schedule })
+    }, signal);
+  }
+
+  async listCustomShows(signal?: AbortSignal): Promise<TunarrCustomShow[]> {
+    const body = await this.request("/api/custom-shows", undefined, signal);
+    if (!Array.isArray(body)) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned invalid custom show data.", 502);
+    return body.flatMap((item) => {
+      const value = object(item);
+      return value && typeof value.id === "string" && typeof value.name === "string"
+        ? [{ id: value.id, name: value.name, contentCount: Number(value.contentCount ?? 0), totalDuration: Number(value.totalDuration ?? 0) }]
+        : [];
+    });
+  }
+
+  async createCustomShow(name: string, programs: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
+    const body = object(await this.request("/api/custom-shows", {
+      method: "POST",
+      body: JSON.stringify({ name, programs, syncMediaSourceId: null, syncMediaSourceType: null, syncExternalPlaylistId: null })
+    }, signal));
+    if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a custom show but did not return its ID.", 502);
+    return body.id;
+  }
+
+  async updateCustomShow(id: string, name: string, programs: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
+    await this.request(`/api/custom-shows/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, programs, enableSync: false })
+    }, signal);
+  }
+
+  // The "random" counterpart to replaceProgrammingWithSchedule -- see TunarrRandomSlotSchedule.
+  async replaceProgrammingWithRandomSchedule(channelId: string, programs: string[], schedule: TunarrRandomSlotSchedule, signal?: AbortSignal) {
+    await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
+      method: "POST",
+      body: JSON.stringify({ type: "random", programs, schedule })
+    }, signal);
+  }
+
+  private parseMaterializedLineup(body: unknown): TunarrMaterializedLineupEntry[] {
+    const value = object(body);
+    const lineup = Array.isArray(value?.lineup) ? value.lineup : null;
+    if (!lineup) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned an invalid schedule preview.", 502);
+    return lineup.map((item) => {
+      const entry = object(item);
+      const duration = typeof entry?.duration === "number" && Number.isFinite(entry.duration) ? entry.duration : null;
+      return { type: typeof entry?.type === "string" ? entry.type : "unknown", duration, customShowId: typeof entry?.customShowId === "string" ? entry.customShowId : undefined };
+    });
+  }
+
+  // Dry-runs a "time" schedule: materializes what the lineup would actually look like without
+  // persisting anything. lib/programming/schedule-builder.ts uses this to catch a degenerate schedule
+  // (a null/non-finite duration, or a slot the materializer never actually reaches) before publishing
+  // it -- exactly the failure mode a padMs/flexPreference mismatch produced when this was first tested
+  // live against Tunarr 1.3.14.
+  async previewTimeSlotSchedule(channelId: string, schedule: TunarrTimeSlotSchedule, signal?: AbortSignal): Promise<TunarrMaterializedLineupEntry[]> {
+    const body = await this.request(`/api/channels/${encodeURIComponent(channelId)}/schedule-time-slots`, { method: "POST", body: JSON.stringify({ schedule }) }, signal);
+    return this.parseMaterializedLineup(body);
+  }
+
+  // The "random" counterpart to previewTimeSlotSchedule.
+  async previewRandomSlotSchedule(channelId: string, schedule: TunarrRandomSlotSchedule, signal?: AbortSignal): Promise<TunarrMaterializedLineupEntry[]> {
+    const body = await this.request(`/api/channels/${encodeURIComponent(channelId)}/schedule-slots`, { method: "POST", body: JSON.stringify({ schedule }) }, signal);
+    return this.parseMaterializedLineup(body);
+  }
+
+  // Reads back whatever schedule config is currently persisted on a channel (not a materialized
+  // lineup) -- null for a channel with no schedule (e.g. a plain manual lineup, or nothing published
+  // yet). Used for status/reconciliation, not by the publish flow itself.
+  async getMaterializedSchedule(channelId: string, signal?: AbortSignal): Promise<TunarrTimeSlotSchedule | TunarrRandomSlotSchedule | null> {
+    const body = object(await this.request(`/api/channels/${encodeURIComponent(channelId)}/schedule`, undefined, signal));
+    const schedule = object(body?.schedule);
+    if (!schedule || (schedule.type !== "time" && schedule.type !== "random")) return null;
+    return schedule as unknown as TunarrTimeSlotSchedule | TunarrRandomSlotSchedule;
   }
 }

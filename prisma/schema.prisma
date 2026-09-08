@@ -35,6 +35,16 @@ model Source {
   tunarrChannelName            String?
   tunarrRequestedChannelNumber Int?
   tunarrProgrammingOrder       String        @default("playlist")
+  // AI programming (see lib/programming/): null aiProvider falls back to AppSettings.aiProvider.
+  // aiScheduleStyle is a ScheduleStyle key (lib/programming/types.ts) -- null means "daily-dayparts".
+  // aiProgrammingPlanJson caches the last generated schedule (block/group layout + Tunarr Custom
+  // Show/slot IDs) so a republish updates the same Custom Shows/slots in place instead of duplicating
+  // them, and so a plan is only regenerated (an external AI call) when instructions, the schedule
+  // style, or the candidate set change.
+  aiProvider                   String?
+  aiScheduleStyle               String?
+  aiProgrammingInstructions    String?
+  aiProgrammingPlanJson        String?
   createdAt                    DateTime      @default(now())
   updatedAt                    DateTime      @updatedAt
   videos                       SourceVideo[]
@@ -150,6 +160,10 @@ model AppSettings {
   defaultVideoQuality     String   @default("best")
   jobsPaused              Boolean  @default(false)
   musicbrainzContactEmail String?
+  // Global default for lib/programming/'s AI provider selection ("auto" | "anthropic" | "openai");
+  // "auto" picks whichever of ANTHROPIC_API_KEY/OPENAI_API_KEY is set in the environment. A Source or
+  // Channel's own aiProvider column overrides this per-entity.
+  aiProvider              String   @default("auto")
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 }
@@ -221,7 +235,7 @@ model Channel {
   templateId                   String
   storageDirectory             String
   logoAssetPath                String?
-  programmingOrder             String    @default("manual") // manual | oldest | newest | random
+  programmingOrder             String    @default("manual") // manual | oldest | newest | random | ai
   intakeSourceId               String?
   tunarrMediaSourceId          String?
   tunarrLibraryId              String?
@@ -230,6 +244,11 @@ model Channel {
   tunarrChannelName            String?
   tunarrRequestedChannelNumber Int?
   tunarrLastPublishedAt        DateTime?
+  // See the matching fields on Source above -- same AI-programming cache/override convention.
+  aiProvider                   String?
+  aiScheduleStyle               String?
+  aiProgrammingInstructions    String?
+  aiProgrammingPlanJson        String?
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 

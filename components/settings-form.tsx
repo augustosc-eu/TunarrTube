@@ -15,7 +15,7 @@ export const VIDEO_QUALITY_OPTIONS = [
   { value: "720p", label: "720p (HD)" },
   { value: "480p", label: "480p (SD)" }
 ];
-export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialMusicbrainzContactEmail, initialMappings, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialMusicbrainzContactEmail: string | null; initialMappings: Mapping[]; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
+export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialMusicbrainzContactEmail, initialAiProvider, initialMappings, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialMusicbrainzContactEmail: string | null; initialAiProvider: string; initialMappings: Mapping[]; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
   const [directory, setDirectory] = useState(initialDirectory);
   const [tunarrUrl, setTunarrUrl] = useState(initialTunarrUrl);
   const [cacheMegabytes, setCacheMegabytes] = useState(String(initialCacheMegabytes));
@@ -23,6 +23,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   const [logRetentionDays, setLogRetentionDays] = useState(String(initialLogRetentionDays));
   const [videoQuality, setVideoQuality] = useState(initialDefaultVideoQuality);
   const [musicbrainzContactEmail, setMusicbrainzContactEmail] = useState(initialMusicbrainzContactEmail ?? "");
+  const [aiProvider, setAiProvider] = useState(initialAiProvider);
   const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ ytarrPrefix, tunarrPrefix }) => ({ ytarrPrefix, tunarrPrefix })));
   const [preview, setPreview] = useState<string | null>(null);
   const [binaries, setBinaries] = useState({ "yt-dlp": ytDlp, ffmpeg });
@@ -78,7 +79,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   async function save() {
     setBusy("settings"); setMessage(null);
     try {
-      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, musicbrainzContactEmail: musicbrainzContactEmail.trim() || null, pathMappings: mappings }) }));
+      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, musicbrainzContactEmail: musicbrainzContactEmail.trim() || null, aiProvider, pathMappings: mappings }) }));
       setDirectory(data.mediaBaseDirectory); setTunarrUrl(data.tunarrUrl);
       setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`); setMessageTone("success");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); setMessageTone("error"); }
@@ -108,6 +109,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
 
     <h2 className="section-heading">Channels</h2>
     <div className="field"><label htmlFor="musicbrainz-email">MusicBrainz contact email</label><input className="input" id="musicbrainz-email" type="email" value={musicbrainzContactEmail} onChange={(event) => setMusicbrainzContactEmail(event.target.value)} placeholder="you@example.com" /><span className="meta">Sent as MusicBrainz&apos;s required API contact identifier when looking up metadata for a channel&apos;s media items.</span></div>
+    <div className="field"><label htmlFor="ai-provider">AI programming provider</label><select className="input" id="ai-provider" value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option value="auto">Auto-detect from configured API key</option><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option></select><span className="meta">Default for any source or channel using &ldquo;AI Programming&rdquo; order that doesn&apos;t set its own provider. Requires <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code> in the environment — no key is stored here.</span></div>
 
     <h2 className="section-heading">Tunarr</h2>
     <div className="field"><label htmlFor="tunarr-url">Tunarr URL</label><input className="input code" id="tunarr-url" type="url" value={tunarrUrl} onChange={(event) => { setTunarrUrl(event.target.value); setTunarr(null); }} /><span className="meta">TunarrTube discovers the configured server&apos;s OpenAPI contract before creating or updating channels.</span></div>

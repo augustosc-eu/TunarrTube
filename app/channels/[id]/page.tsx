@@ -1,6 +1,7 @@
 import { getChannel } from "@/lib/channels/service";
 import { PageHeader } from "@/components/page-header";
 import { AddChannelItemsForm } from "@/components/add-channel-items-form";
+import { AiContentSelectForm } from "@/components/ai-content-select-form";
 import { ChannelItemTable } from "@/components/channel-item-table";
 import { ChannelTunarrPublishForm } from "@/components/channel-tunarr-publish-form";
 
@@ -13,6 +14,7 @@ export default async function ChannelDetailPage({ params }: { params: Promise<{ 
   return <>
     <PageHeader eyebrow={`${channel.channelType.replace("_", " ")} · ${channel.template.name}`} title={channel.name} />
     <AddChannelItemsForm channelId={channel.id} />
+    <AiContentSelectForm channelId={channel.id} />
     <ChannelItemTable
       channelId={channel.id}
       templateId={channel.templateId}
@@ -32,7 +34,7 @@ export default async function ChannelDetailPage({ params }: { params: Promise<{ 
       }))}
     />
     <div style={{ marginTop: 24 }}>
-      <ChannelTunarrPublishForm channelId={channel.id} />
+      <ChannelTunarrPublishForm channelId={channel.id} initialProgrammingOrder={channel.programmingOrder} initialAiInstructions={channel.aiProgrammingInstructions} initialAiProvider={channel.aiProvider} initialAiScheduleStyle={channel.aiScheduleStyle} />
     </div>
   </>;
 }

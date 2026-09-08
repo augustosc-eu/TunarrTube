@@ -5,6 +5,10 @@ import { db } from "@/lib/db/client";
 import { getSettings } from "@/lib/settings/service";
 import { writeLog } from "@/lib/logging/service";
 import { addVideosToCollection, slugify } from "@/lib/sources/service";
+import { selectContent, type SelectionCandidate } from "@/lib/programming/content-selection";
+import type { AiProviderSetting } from "@/lib/programming/types";
+import { renderMediaItem } from "@/lib/renders/service";
+import { publishChannelToTunarr } from "@/lib/tunarr/channel-service";
 
 async function uniqueSlug(base: string) {
   let candidate = base;
@@ -51,6 +55,25 @@ export async function createChannel(input: { name: string; channelType?: string;
   return channel;
 }
 
+// One-shot channel creation from a brief: create the channel, mark it for AI content selection +
+// AI programming using the brief text for both (see runChannelBrief below), and queue the single job
+// that does the rest. Nothing here is new persistence -- every field it sets already exists from the
+// AI Programming feature (programmingOrder/aiScheduleStyle/aiProgrammingInstructions/aiProvider).
+export async function createChannelFromBrief(input: { name: string; templateId: string; brief: string; sourceIds: string[]; scheduleStyle?: string | null; aiProvider?: string | null }) {
+  const channel = await createChannel({ name: input.name, templateId: input.templateId });
+  await db.channel.update({
+    where: { id: channel.id },
+    data: {
+      programmingOrder: "ai",
+      aiScheduleStyle: input.scheduleStyle ?? null,
+      aiProgrammingInstructions: input.brief,
+      aiProvider: input.aiProvider ?? null
+    }
+  });
+  const job = await enqueueChannelJob("channel_brief", { channelId: channel.id }, { sourceIds: input.sourceIds });
+  return { channel, jobId: job.id };
+}
+
 export async function listChannels() {
   return db.channel.findMany({
     orderBy: { updatedAt: "desc" },
@@ -73,7 +96,7 @@ export async function getChannel(id: string) {
   return channel;
 }
 
-export async function updateChannel(id: string, input: { name?: string; templateId?: string; programmingOrder?: string; logoAssetPath?: string | null; tunarrRequestedChannelNumber?: number | null }) {
+export async function updateChannel(id: string, input: { name?: string; templateId?: string; programmingOrder?: string; logoAssetPath?: string | null; tunarrRequestedChannelNumber?: number | null; aiProgrammingInstructions?: string | null; aiProvider?: string | null; aiScheduleStyle?: string | null }) {
   const channel = await db.channel.findUnique({ where: { id } });
   if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
   if (input.templateId) {
@@ -140,6 +163,74 @@ export async function attachExistingVideo(channelId: string, sourceVideoId: stri
   await addMediaItemToChannel(channelId, mediaItem.id);
   await writeLog({ category: "channel", channelId, mediaItemId: mediaItem.id, message: `Attached "${mediaItem.title}" to ${channel.name}.` });
   return mediaItem;
+}
+
+// AI content selection (lib/programming/content-selection.ts:selectContent) -- gathers the candidate
+// pool from explicitly chosen Sources' already-downloaded videos, excludes anything already on this
+// channel, asks the AI which of them fit the given brief, then attaches the ones it picked via the
+// existing attachExistingVideo above (so a selection is exactly as idempotent as adding videos by
+// hand: attaching the same SourceVideo twice is a no-op, not a duplicate).
+export async function runContentSelection(channelId: string, input: { sourceIds: string[]; instructions: string; targetCount?: number; providerOverride?: string | null }, signal?: AbortSignal) {
+  const channel = await db.channel.findUnique({ where: { id: channelId }, include: { items: { select: { mediaItemId: true } } } });
+  if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
+
+  const sources = await db.source.findMany({ where: { id: { in: input.sourceIds } }, select: { id: true, name: true } });
+  const sourceNameById = new Map(sources.map((source) => [source.id, source.name]));
+
+  const alreadyAttachedMediaItemIds = channel.items.map((item) => item.mediaItemId);
+  const alreadyAttachedSourceVideoIds = new Set(
+    (await db.mediaItem.findMany({ where: { id: { in: alreadyAttachedMediaItemIds } }, select: { sourceVideoId: true } }))
+      .flatMap((item) => (item.sourceVideoId ? [item.sourceVideoId] : []))
+  );
+
+  const memberships = await db.sourceVideo.findMany({
+    where: { sourceId: { in: input.sourceIds }, downloadStatus: "complete", membershipStatus: "present" },
+    include: { video: true }
+  });
+  const candidates: SelectionCandidate[] = memberships.flatMap((membership) => {
+    if (alreadyAttachedSourceVideoIds.has(membership.id)) return [];
+    const durationMs = (membership.video.durationSeconds ?? 0) * 1000;
+    return durationMs > 0
+      ? [{ id: membership.id, title: membership.video.title, durationMs, uploadDate: membership.video.uploadDate?.toISOString() ?? null, sourceName: sourceNameById.get(membership.sourceId) ?? "Unknown source" }]
+      : [];
+  });
+
+  const settings = await getSettings();
+  const result = await selectContent({
+    candidates, instructions: input.instructions, targetCount: input.targetCount,
+    providerOverride: input.providerOverride ?? null, globalProviderSetting: settings.aiProvider as AiProviderSetting, signal
+  });
+
+  // result.selectedIds are SourceVideo ids -- exactly what attachExistingVideo expects, since
+  // candidate.id above was set to membership.id (the SourceVideo id), not the underlying Video id.
+  for (const sourceVideoId of result.selectedIds) {
+    await attachExistingVideo(channelId, sourceVideoId);
+  }
+  await writeLog({ category: "channel", channelId, message: `AI selected ${result.selectedIds.length} of ${candidates.length} candidate clip${candidates.length === 1 ? "" : "s"} for "${channel.name}".` });
+  return { candidateCount: candidates.length, selectedCount: result.selectedIds.length };
+}
+
+// The one job createChannelFromBrief queues: select content -> render every selected clip -> publish
+// with AI programming (programmingOrder/aiScheduleStyle/aiProgrammingInstructions/aiProvider were
+// already set on the Channel row by createChannelFromBrief, so publishChannelToTunarr picks the
+// "ai" branch on its own, same as if a human had set those fields through the regular UI).
+// Deliberately one sequential job, not a chain of separate ones (matching how publishChannelToTunarr
+// itself already loops materializeRenderForChannel inline rather than fanning out): every step here is
+// idempotent (attachExistingVideo dedupes by sourceVideoId, renderMediaItem skips a clip that already
+// has a complete RenderedAsset, publishChannelToTunarr updates the same Tunarr channel/Custom Shows in
+// place), so a retry after a failure partway through just re-does whatever wasn't finished instead of
+// duplicating anything.
+export async function runChannelBrief(channelId: string, input: { sourceIds: string[] }, signal?: AbortSignal) {
+  const before = await getChannel(channelId);
+  if (!before.items.length) {
+    await runContentSelection(channelId, { sourceIds: input.sourceIds, instructions: before.aiProgrammingInstructions ?? "" }, signal);
+  }
+  const channel = await getChannel(channelId);
+  for (const item of channel.items) {
+    await renderMediaItem(item.mediaItemId, channel.templateId, signal);
+  }
+  await publishChannelToTunarr(channelId, signal);
+  await writeLog({ category: "channel", channelId, message: `Finished building "${channel.name}" from its brief: ${channel.items.length} clip${channel.items.length === 1 ? "" : "s"} selected, rendered, and published.` });
 }
 
 // Lazily creates (once) the Channel's own companion collection Source -- a real, ordinary Source

@@ -1,15 +1,16 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db/client";
-import { downloadVideo, retagVideo } from "@/lib/downloads/service";
+import { downloadVideo, retagVideo, VideoUnavailableError } from "@/lib/downloads/service";
 
 const cleanup: string[] = [];
 
 afterEach(async () => {
   delete process.env.YTARR_YTDLP_PATH;
   delete process.env.YTARR_FFMPEG_PATH;
+  vi.unstubAllGlobals();
   await Promise.all(cleanup.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -174,6 +175,46 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
       // mirror job finished after the download did.
       const poster = await readFile(path.join(sourceDirectory, `${video.youtubeId}-poster.jpg`), "utf8");
       expect(poster).toBe("fake-thumbnail-bytes");
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }, 15_000);
+
+  it("records a video yt-dlp reports as permanently gone as unavailable and throws VideoUnavailableError instead of an ordinary failure", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-unavailable-test-"));
+    cleanup.push(root);
+    const sourceDirectory = path.join(root, "source");
+    const fakeYtDlp = path.join(root, "yt-dlp");
+    const fakeFfmpeg = path.join(root, "ffmpeg");
+    // yt-dlp's real exit code/stderr shape for a video that's gone for good -- see runProcess()
+    // (lib/system/process.ts), which folds a nonzero exit's stderr into the rejected Error's message.
+    await writeFile(fakeYtDlp, `#!/bin/sh\necho "ERROR: [youtube] video-unavailable: Video unavailable" 1>&2\nexit 1\n`);
+    await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
+    await chmod(fakeYtDlp, 0o755);
+    await chmod(fakeFfmpeg, 0o755);
+    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    // fetchVideoAvailabilityReason() (lib/youtube/ytdlp.ts) tries a real page fetch for a richer reason
+    // before falling back to yt-dlp's own stderr line -- stub it to fail fast and deterministically.
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network disabled in test"); }));
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: { name: "Unavailable test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `video-${suffix}`, title: "Unavailable test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+
+    try {
+      await expect(downloadVideo(source.id, video.id)).rejects.toBeInstanceOf(VideoUnavailableError);
+      const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } } });
+      expect(membership?.downloadStatus).toBe("unavailable");
+      const refreshedVideo = await db.video.findUniqueOrThrow({ where: { id: video.id } });
+      expect(refreshedVideo.availability).toBe("unavailable");
+      expect(refreshedVideo.availabilityReason).toBeTruthy();
     } finally {
       await db.source.delete({ where: { id: source.id } });
       await db.video.delete({ where: { id: video.id } });

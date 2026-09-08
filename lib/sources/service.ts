@@ -159,9 +159,11 @@ export async function syncSource(sourceId: string, signal?: AbortSignal) {
   for (const videoId of metadataVideoIds) await enqueueUniqueJob("metadata", sourceId, videoId);
   await enqueueUniqueJob("thumbnail", sourceId);
   if (source.playbackMode === "download") {
-    // Excludes "cancelled" as well as "complete" -- a user-cancelled download must stay cancelled through
-    // automatic syncs; only the explicit retry action (lib/jobs/service.ts) brings it back.
-    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled"] } }, select: { videoId: true } });
+    // Excludes "cancelled" and "unavailable" as well as "complete" -- a user-cancelled download must stay
+    // cancelled through automatic syncs, and a video downloadVideo() already recorded as permanently gone
+    // (lib/downloads/service.ts) would otherwise get a fresh download job queued -- and fail again -- on
+    // every single sync forever. Only the explicit retry action (lib/jobs/service.ts) brings either back.
+    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled", "unavailable"] } }, select: { videoId: true } });
     for (const item of fresh) {
       await enqueueUniqueJob("download", sourceId, item.videoId, { target: "permanent" });
       await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId, videoId: item.videoId } }, data: { downloadStatus: "queued" } });
@@ -222,6 +224,42 @@ export async function deleteSource(id: string) {
   }
   if (orphaned.length) await db.video.deleteMany({ where: { id: { in: orphaned.map((video) => video.id) } } });
   return { deleted: true, preservedMediaDirectory: source.mediaDirectory };
+}
+
+// Drops one video from a source -- e.g. after downloadVideo() (lib/downloads/service.ts) records it
+// "unavailable" and the user decides it's not coming back, rather than leaving it queued for a retry
+// they'll never take. Removes the membership only; the Video row (and any file it owns) is cleaned up
+// too, but only once nothing else references it -- the same video can be a member of multiple sources.
+export async function removeVideoFromSource(sourceId: string, videoId: string) {
+  const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { video: true } });
+  if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
+  const activeJob = await db.job.findFirst({ where: { sourceId, videoId, status: { in: ["queued", "running"] } }, select: { id: true } });
+  if (activeJob) throw new AppError("VIDEO_BUSY", "Wait for (or cancel/stop) the video's active job before removing it.", 409);
+  const { rm } = await import("node:fs/promises");
+  if (membership.localPath) {
+    // Mirrors unlinkTunarr()'s cleanup (lib/tunarr/service.ts): the sidecar/NFO/poster files this source
+    // wrote alongside the video (see writeSidecar/writeNfo/writePosterArtwork in lib/downloads/service.ts)
+    // share its basename, so pick them up the same way.
+    await rm(membership.localPath, { force: true });
+    await rm(membership.localPath.replace(/\.mp4$/i, ".json"), { force: true });
+    await rm(membership.localPath.replace(/\.mp4$/i, ".nfo"), { force: true });
+    for (const extension of ["jpg", "png", "webp"]) {
+      await rm(membership.localPath.replace(/\.mp4$/i, `-poster.${extension}`), { force: true });
+    }
+  }
+  await db.sourceVideo.delete({ where: { id: membership.id } });
+  // Logged with videoId while the Video row is still guaranteed to exist -- the orphan cleanup below may
+  // delete it, and LogEntry.videoId is a foreign key, so writing this any later could fail the same way
+  // the removal we're logging just succeeded.
+  await writeLog({ category: "source", sourceId, videoId, message: `Removed ${membership.video.youtubeId} from the source.` });
+  const stillReferenced = await db.sourceVideo.findFirst({ where: { videoId }, select: { id: true } });
+  if (!stillReferenced) {
+    const video = await db.video.findUnique({ where: { id: videoId }, include: { cacheAsset: true } });
+    if (video?.thumbnailPath) await rm(video.thumbnailPath, { force: true });
+    if (video?.cacheAsset?.localPath) await rm(video.cacheAsset.localPath, { force: true });
+    await db.video.delete({ where: { id: videoId } }).catch(() => undefined);
+  }
+  return { removed: true };
 }
 
 export async function addVideosToCollection(sourceId: string, inputs: string[], signal?: AbortSignal) {

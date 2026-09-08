@@ -162,6 +162,24 @@ export function isRateLimitedError(message: string) {
   return RATE_LIMIT_SIGNAL.test(message);
 }
 
+// yt-dlp's message for a video that's gone for good -- deleted, made private, taken down, region/
+// copyright blocked -- as opposed to a transient failure. Retrying this exact video will never succeed,
+// so callers (enrichVideo in lib/metadata/service.ts, downloadVideo/cacheVideo in
+// lib/downloads/service.ts) should record it and stop rather than burn retries on it.
+const UNAVAILABLE_SIGNAL = /private|unavailable|deleted|removed/i;
+
+export function isUnavailableVideoError(message: string) {
+  return UNAVAILABLE_SIGNAL.test(message);
+}
+
+// Pulls yt-dlp's own one-line reason out of its stderr ("ERROR: [youtube] <id>: <reason>") for use when a
+// richer reason isn't available from fetchVideoAvailabilityReason() above (e.g. it also failed, or the
+// caller doesn't want to spend an extra network round-trip on top of the yt-dlp failure it already got).
+export function readableUnavailabilityReason(message: string) {
+  const detail = message.match(/ERROR:\s*\[youtube\]\s+[^:]+:\s*(.+)/i)?.[1]?.trim();
+  return detail && detail.length <= 500 ? detail : "YouTube did not provide a more specific reason.";
+}
+
 export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality = "best", signal?: AbortSignal) {
   const result = await runProcess(await executable(), [
     "--get-url", "--no-playlist", "--no-warnings",

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db/client";
+import { VideoUnavailableError } from "@/lib/downloads/service";
 import { handleJobFailure } from "@/lib/jobs/runner";
 
 // Exercises handleJobFailure() directly rather than through claimJob()/kickWorker(): that drain loop scans
@@ -59,5 +60,21 @@ describe("download queue rate-limit handling", () => {
     expect(refreshed.attempts).toBe(1); // unchanged -- only the rate-limit path undoes claimJob's increment
     const secondsUntil = (refreshed.runAfter.getTime() - before) / 1000;
     expect(secondsUntil).toBeLessThanOrEqual(60);
+  });
+
+  it("fails a VideoUnavailableError immediately instead of retrying", async () => {
+    // downloadVideo()/cacheVideo() (lib/downloads/service.ts) already recorded the video as unavailable
+    // and threw this in place of the raw yt-dlp error before handleJobFailure ever sees it -- retrying
+    // would only waste yt-dlp calls on a video that will never come back.
+    const job = await db.job.create({ data: { type: "download", attempts: 1, maxAttempts: 3, status: "running" } });
+    cleanupJobIds.push(job.id);
+
+    await handleJobFailure(job, new VideoUnavailableError("ERROR: [youtube] abc123: Video unavailable"));
+
+    const refreshed = await db.job.findUniqueOrThrow({ where: { id: job.id } });
+    expect(refreshed.status).toBe("failed");
+    expect(refreshed.finishedAt).not.toBeNull();
+    expect(refreshed.attempts).toBe(1); // never incremented further -- no retry attempt was made
+    expect(refreshed.error).toContain("unavailable");
   });
 });

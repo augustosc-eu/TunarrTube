@@ -53,4 +53,23 @@ describe("resolveBindingValues", () => {
     );
     expect(values.artist).toBe("Real Artist");
   });
+
+  it("uses a binding's fallback when the resolved value is empty", () => {
+    const withFallback: BindingField[] = [
+      { key: "artist", label: "Artist", type: "text", sampleValue: "Sample Artist", fallback: "UNKNOWN ARTIST" }
+    ];
+    const values = resolveBindingValues(
+      { title: "Real Title", artist: null, album: null, genre: null, year: null, customFieldsJson: null },
+      withFallback
+    );
+    expect(values.artist).toBe("UNKNOWN ARTIST");
+  });
+
+  it("leaves a field with no fallback blank, unchanged from before fallback existed", () => {
+    const values = resolveBindingValues(
+      { title: "Real Title", artist: null, album: null, genre: null, year: null, customFieldsJson: null },
+      bindings
+    );
+    expect(values.artist).toBe("");
+  });
 });

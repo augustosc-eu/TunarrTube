@@ -207,6 +207,18 @@ A **Channel** (the entity under the **Channels** tab, distinct from a Source's o
 
 This creates a second, independent Tunarr channel alongside any Source-based ones.
 
+## AI Programming
+
+Instead of a fixed sort order, a Source or Channel can hand its programming to an AI provider (Anthropic or OpenAI): pick **AI Programming** as the programming order, optionally describe how you want it scheduled (e.g. "mornings should be calmer clips, evenings more upbeat"), and publish. TunarrTube asks the provider for a repeating daily schedule of named blocks (e.g. "Morning", "Primetime"), each with an ordered clip list, then creates one real Tunarr **Custom Show** per block and a native Tunarr **time-slot schedule** referencing them — this is Tunarr's own dayparting feature, not something TunarrTube simulates on top of a flat lineup.
+
+- Requires `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in the environment (see Configuration below) — no API key is ever stored in the database or shown in the UI.
+- Choose a provider globally in **Settings**, or override it per Source/Channel; leaving it as "auto" picks whichever single key is configured (having both set requires an explicit choice, so a request never silently runs against the wrong provider and bills the wrong account).
+- Regenerating a schedule is a real, billed call to the configured provider. TunarrTube only calls it again when the candidate clips or your instructions actually changed since the last publish — an unrelated republish (a new video, a renumber) reuses the cached schedule and just updates the same Tunarr Custom Shows in place.
+- Requires a Tunarr server whose Custom Shows API (`/api/custom-shows`) is available — checked the same way every other required capability is, via `/openapi.json` discovery, and only when AI Programming is actually selected.
+- **Schedule style** picks the shape of the schedule: **Daily dayparts** and **Weekly broadcast** are both fixed-time schedules (Tunarr's own "time slots"), the only difference being whether the AI plans one repeating day or a different lineup per weekday. **Endless rotation** has no fixed times at all — the AI groups clips with a relative weight and cooldown, and Tunarr shuffles them forever (its "random slots" engine), good for a channel that should just feel like a themed radio/video rotation.
+- **Concept preset** is a shortcut for the instructions box (Balanced variety, Throwback/retro countdown, Late night chill, High energy/party, or Custom) — it just fills in a starting point you can still edit before publishing.
+- Every AI-generated schedule is dry-run through Tunarr's own schedule preview endpoints before being published, and refused (not silently published) if the preview looks broken (a non-finite duration, or a block Tunarr's scheduler never actually reaches) rather than risk a channel with no real programming.
+
 ## Playback and retention
 
 | Mode | Initial behavior | On browser playback | When publishing to Tunarr |
@@ -246,7 +258,11 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `TUNARRTUBE_MEDIA_DIR` | Initial media root | `storage/media` |
 | `TUNARRTUBE_THUMBNAIL_DIR` | Thumbnail storage root | `storage/thumbnails` |
 | `TUNARRTUBE_TUNARR_URL` | Initial Tunarr base URL | `http://127.0.0.1:8000` native; `http://tunarr:8000` in Compose |
+| `TUNARRTUBE_GENERAL_WORKERS` | How many non-download/cache jobs run concurrently (downloads/cache always run one at a time) | `3` |
 | `YTARR_FFPROBE_PATH` | Absolute `ffprobe` executable path (used by Channels rendering) | Auto-discovered |
+| `ANTHROPIC_API_KEY` | Enables Anthropic (Claude) as an AI Programming provider | None (feature unavailable if unset) |
+| `OPENAI_API_KEY` | Enables OpenAI as an AI Programming provider | None (feature unavailable if unset) |
+| `TUNARRTUBE_OPENAI_MODEL` | OpenAI model used for AI Programming | `gpt-4o` |
 | `YTARR_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium |
 | `TUNARRTUBE_PORT` | Docker host port | `3000` |
 | `TUNARR_PORT` | Optional Tunarr Docker host port | `8000` |
@@ -268,12 +284,12 @@ Back up the SQLite database and media root before upgrades.
 
 ## Operations
 
-- **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled outright or postponed to a later time (15 minutes up to a week) without losing its place; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. A running download, cache, sync, metadata, or Tunarr publish/refresh job can be stopped mid-flight — it's killed and lands in the same cancelled state as a queued cancellation; a metadata-repair or thumbnail job has no interrupt point and finishes on its own instead. Cancelling or stopping a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. The toolbar's Pause queue toggle stops the worker from picking up any new job (existing running work keeps going until it finishes or you stop it) — use it and Resume queue to hold everything for a while.
+- **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled outright or postponed to a later time (15 minutes up to a week) without losing its place; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. A running download, cache, sync, metadata, or Tunarr publish/refresh job can be stopped mid-flight — it's killed and lands in the same cancelled state as a queued cancellation; a metadata-repair or thumbnail job has no interrupt point and finishes on its own instead. Cancelling or stopping a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. The toolbar's Pause queue toggle stops the worker from picking up any new job (existing running work keeps going until it finishes or you stop it) — use it and Resume queue to hold everything for a while. Downloads and cache fills always run one at a time, no matter how many are queued, to avoid tripping YouTube's rate limiting; everything else (metadata, thumbnails, sync, Tunarr publish/refresh, and more) runs several at once (3 by default, `TUNARRTUBE_GENERAL_WORKERS` in `.env` to change it) since that work doesn't hit YouTube's video CDN.
 - **Cache** shows used, pinned, protected, and evictable storage.
 - **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence. Entries older than the configured log retention (30 days by default, set in Settings) are purged automatically every hour; **Purge old entries** runs that same cleanup immediately, and **Clear all** empties the log table outright.
 - **Settings** tests binary discovery and Tunarr connectivity, controls cache limits and log retention, repairs older metadata sidecars, and previews path mappings.
 
-Downloads are written to temporary paths and renamed into place only after `yt-dlp` and FFmpeg succeed. Interrupted jobs are requeued after restart and normally retry up to three times.
+Downloads are written to temporary paths and renamed into place only after `yt-dlp` and FFmpeg succeed. Interrupted jobs are requeued after restart and normally retry up to three times — except one YouTube itself reports as permanently unavailable, which fails immediately without retrying (see "A download failed" below).
 
 ## Troubleshooting
 
@@ -290,6 +306,8 @@ YouTube changes its extraction behavior regularly. In Settings, click **Update**
 ### A download failed
 
 Review **Logs** for the sanitized error. Check available disk space, filesystem permissions, and the installed `yt-dlp`/FFmpeg versions, then queue the video again.
+
+If the error is YouTube reporting the video itself as private, deleted, or otherwise unavailable, TunarrTube records that on the video (visible as an "unavailable" badge on the source's video table) and stops retrying it automatically — including on future syncs — since a retry can never succeed. From there you can either **Retry** it from the Queue page (in case YouTube reinstates it later) or **Remove** it from the source's video table to drop it for good.
 
 ### Tunarr cannot find downloaded videos
 
