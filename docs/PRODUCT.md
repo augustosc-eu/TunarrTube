@@ -25,7 +25,7 @@ These are traced directly from the route handlers, service functions, and page/c
 `Sources → Add Source` ([app/sources/new/page.tsx](../app/sources/new/page.tsx), [components/add-source-form.tsx](../components/add-source-form.tsx)):
 - Paste an HTTPS YouTube playlist or channel URL.
 - **Analyze** (`POST /api/sources/analyze`) runs `yt-dlp --dump-single-json --flat-playlist` and stores the result as a time-limited `ImportDraft` (1 hour TTL, `lib/sources/service.ts:analyzeAndStoreDraft`). The UI shows the detected name, uploader, thumbnail, and video count.
-- For channel URLs, the user also picks a feed type (Videos / Shorts / archived Live / All) and a history limit (how many recent items to consider).
+- For channel URLs, the user also picks a feed type (Videos / Shorts / archived Live / All) and a history limit (how many recent items to consider): presets of 15, 25, 50, 75, 100, 250, or 500; a custom whole number from 1 to 5,000; or Unlimited. Changing the feed or history clears the analysis preview and requires analyzing again before creation.
 - Choose a playback mode (Permanent download / Cache on first play / Stream on demand) and optionally enable automatic sync with an interval.
 - **Create** (`POST /api/sources`) consumes the draft, creates the `Source` and its `Video`/`SourceVideo` rows, and enqueues background `metadata`, `thumbnail`, and (if download mode) `download` jobs for every video — see "Choose a retention strategy per source" below for what each playback mode auto-queues.
 

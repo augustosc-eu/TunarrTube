@@ -181,7 +181,7 @@ Mappings use longest-prefix matching. Leave them empty when both applications se
 
 1. Open **Sources → Add Source**.
 2. Paste a public HTTPS YouTube video, playlist, or channel URL.
-3. Analyze it, choose the feed and playback mode, and create the source.
+3. For a YouTube channel, choose its feed and history before analyzing: Latest 15, 25, 50, 75, 100, 250, or 500; Custom (1–5,000); or Unlimited. Then analyze it, choose the playback mode, and create the source. The history amount also applies to future syncs and does not delete older downloads.
 4. Wait for at least one download to complete. Permanent-download sources queue all discovered videos automatically.
 5. Open the source's **Tunarr integration** panel.
 6. Choose a channel name, optional channel number, and programming order.

@@ -13,6 +13,7 @@ export function AddSourceForm() {
   const router = useRouter();
   const [url, setUrl] = useState(""); const [draft, setDraft] = useState<Draft | null>(null); const [name, setName] = useState("");
   const [feedType, setFeedType] = useState("videos"); const [history, setHistory] = useState("100"); const [mode, setMode] = useState("download");
+  const [customHistory, setCustomHistory] = useState("25");
   const [videoQuality, setVideoQuality] = useState("");
   const [syncEnabled, setSyncEnabled] = useState(false); const [interval, setIntervalValue] = useState("360");
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
@@ -21,7 +22,7 @@ export function AddSourceForm() {
   async function analyze(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(null); setDraft(null);
     try {
-      const body = { url, ...(looksLikeChannel ? { feedType, historyLimit: history === "unlimited" ? null : Number(history) } : {}) };
+      const body = { url, ...(looksLikeChannel ? { feedType, historyLimit: history === "unlimited" ? null : Number(history === "custom" ? customHistory : history) } : {}) };
       const next = await data(await fetch("/api/sources/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
       setDraft(next); setName(next.name);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Analysis failed"); } finally { setBusy(false); }
@@ -34,8 +35,27 @@ export function AddSourceForm() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Source creation failed"); setBusy(false); }
   }
   return <div className="card form-card"><form onSubmit={analyze}>
-    <div className="field"><label htmlFor="youtube-url">YouTube video, playlist, or channel URL</label><input className="input" id="youtube-url" type="url" required placeholder="https://youtu.be/video-id" value={url} onChange={(event) => { setUrl(event.target.value); setDraft(null); }} /></div>
-    {looksLikeChannel ? <div className="form-grid"><div className="field"><label htmlFor="feed-type">Channel feed</label><select className="input" id="feed-type" value={feedType} onChange={(event) => setFeedType(event.target.value)}><option value="videos">Videos</option><option value="shorts">Shorts</option><option value="live">Live archives</option><option value="all">All feeds</option></select></div><div className="field"><label htmlFor="history-limit">History</label><select className="input" id="history-limit" value={history} onChange={(event) => setHistory(event.target.value)}><option value="100">Latest 100</option><option value="250">Latest 250</option><option value="500">Latest 500</option><option value="unlimited">Unlimited</option></select></div></div> : null}
+    <div className="field"><label htmlFor="youtube-url">YouTube video, playlist, or channel URL</label><input className="input" id="youtube-url" type="url" required disabled={busy} placeholder="https://youtu.be/video-id" value={url} onChange={(event) => { setUrl(event.target.value); setDraft(null); }} /></div>
+    {looksLikeChannel ? <div className="form-grid">
+      <div className="field">
+        <label htmlFor="feed-type">Channel feed</label>
+        <select className="input" id="feed-type" value={feedType} disabled={busy} onChange={(event) => { setFeedType(event.target.value); setDraft(null); }}>
+          <option value="videos">Videos</option><option value="shorts">Shorts</option><option value="live">Live archives</option><option value="all">All feeds</option>
+        </select>
+      </div>
+      <div className="field">
+        <label htmlFor="history-limit">History</label>
+        <select className="input" id="history-limit" value={history} disabled={busy} onChange={(event) => { setHistory(event.target.value); setDraft(null); }}>
+          {[15, 25, 50, 75, 100, 250, 500].map((amount) => <option key={amount} value={amount}>Latest {amount}</option>)}
+          <option value="custom">Custom</option><option value="unlimited">Unlimited</option>
+        </select>
+        {history === "custom" ? <>
+          <label htmlFor="custom-history-limit">Number of latest videos</label>
+          <input className="input" id="custom-history-limit" type="number" min={1} max={5000} step={1} required value={customHistory} disabled={busy} aria-describedby="custom-history-help" onChange={(event) => { setCustomHistory(event.target.value); setDraft(null); }} />
+          <small id="custom-history-help">Enter a whole number from 1 to 5,000.</small>
+        </> : null}
+      </div>
+    </div> : null}
     <button className="button" disabled={busy}>{busy ? <LoaderCircle size={16} className="animate-spin" /> : <Search size={16} />} Analyze Source</button>
   </form>{error ? <div className="error" role="alert">{error}</div> : null}{draft ? <section className="preview">{draft.thumbnailUrl ? <Image className="source-thumb" src={draft.thumbnailUrl} width={240} height={180} alt="" /> : <div className="source-thumb placeholder"><ListVideo /></div>}<div>
     <div className="field"><label htmlFor="source-name">Source name</label><input className="input" id="source-name" value={name} onChange={(event) => setName(event.target.value)} /></div>
