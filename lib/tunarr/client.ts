@@ -105,6 +105,7 @@ export class TunarrApiClient {
   constructor(private readonly baseUrl: string, private readonly timeoutMs = 15_000) {}
 
   private async request(path: string, init?: RequestInit, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const timeout = AbortSignal.timeout(this.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: Response;
@@ -116,6 +117,7 @@ export class TunarrApiClient {
         headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers }
       });
     } catch (error) {
+      signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);
       throw new AppError("TUNARR_UNREACHABLE", `Could not reach Tunarr at ${this.baseUrl}: ${message}`, 502);
     }
@@ -213,8 +215,13 @@ export class TunarrApiClient {
         observedScan = true;
       }
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, 1_000);
-        signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+        signal?.throwIfAborted();
+        const onAbort = () => { clearTimeout(timer); reject(signal?.reason); };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(undefined);
+        }, 1_000);
+        signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
     throw new AppError("TUNARR_SCAN_TIMEOUT", "Tunarr did not finish scanning the source directory within two minutes.", 504);

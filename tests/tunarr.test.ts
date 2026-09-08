@@ -36,6 +36,38 @@ describe("Tunarr client", () => {
     expect(result.capabilities).toEqual({ localMedia: true, channelCreate: true, channelUpdate: true, programming: true, aiScheduling: true });
   });
 
+  it("does not send a request after cancellation", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new TunarrApiClient("http://tunarr.test").listChannels(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stops immediately if cancelled between a scan response and its polling delay", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ state: "not_scanning" })));
+    await expect(new TunarrApiClient("http://tunarr.test").waitForLibraryScan("source", "library", controller.signal, async () => {
+      controller.abort();
+      return false;
+    })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("removes polling listeners after each delay and stops during a delay", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ state: "in_progress" })));
+    const wait = new TunarrApiClient("http://tunarr.test").waitForLibraryScan("source", "library", controller.signal);
+    const rejected = expect(wait).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(remove).toHaveBeenCalledTimes(2);
+    controller.abort();
+    await rejected;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("creates local media using the documented payload", async () => {
     let received: unknown;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {

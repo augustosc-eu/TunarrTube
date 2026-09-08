@@ -137,7 +137,7 @@ export async function publishSourceToTunarr(sourceId: string, input: PublishTuna
   if (source.playbackMode !== "download" && input.prefetch !== false) {
     for (const membership of source.videos) {
       try {
-        await materializeForTunarr(sourceId, membership.videoId);
+        await materializeForTunarr(sourceId, membership.videoId, signal);
       } catch (error) {
         // A single permanently-unavailable video shouldn't block prefetching (and so publishing) the rest
         // of the lineup -- materializeForTunarr()/cacheVideo() already recorded it, so just skip it here.

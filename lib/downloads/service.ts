@@ -252,7 +252,8 @@ export async function touchCacheAsset(id: string) {
   await db.cacheAsset.update({ where: { id }, data: { lastAccessedAt: new Date() } });
 }
 
-export async function materializeForTunarr(sourceId: string, videoId: string) {
+export async function materializeForTunarr(sourceId: string, videoId: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { source: true, video: { include: { cacheAsset: true } } } });
   if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
   if (membership.retentionOrigin === "permanent" && membership.localPath && await exists(membership.localPath)) return membership.localPath;
@@ -262,7 +263,8 @@ export async function materializeForTunarr(sourceId: string, videoId: string) {
   // Likewise for a video already recorded as permanently unavailable (see cacheVideo()'s catch above) --
   // without this, every automatic Tunarr refresh would call cacheVideo() again and immediately re-fail.
   if (membership.video.availability === "unavailable") return null;
-  const asset = await cacheVideo(videoId, sourceId);
+  const asset = await cacheVideo(videoId, sourceId, signal);
+  signal?.throwIfAborted();
   if (!asset.localPath) throw new AppError("CACHE_OUTPUT_MISSING", "The cached file is unavailable.", 500);
   await mkdir(membership.source.mediaDirectory, { recursive: true });
   const target = await assertWithinDirectory(membership.source.mediaDirectory, path.join(membership.source.mediaDirectory, `${membership.video.youtubeId}.mp4`));
