@@ -1,6 +1,6 @@
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
-import { fetchVideoAvailabilityReason, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
+import { fetchVideoMetadata, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
 
 export async function enrichVideo(videoId: string, signal?: AbortSignal) {
   const video = await db.video.findUnique({ where: { id: videoId } });
@@ -24,8 +24,8 @@ export async function enrichVideo(videoId: string, signal?: AbortSignal) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/private|unavailable|deleted|removed/i.test(message)) {
-      const reason = await fetchVideoAvailabilityReason(video.youtubeUrl).catch(() => null) ?? readableProcessReason(message);
+    if (isUnavailableVideoError(message) || isSignInRequiredError(message)) {
+      const reason = await unavailabilityReason(video.youtubeUrl, message);
       await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason, metadataStatus: "failed" } });
       await writeLog({ level: "warn", category: "video", videoId, message: `Video ${video.youtubeId} is unavailable: ${reason}` });
       return;
@@ -33,9 +33,4 @@ export async function enrichVideo(videoId: string, signal?: AbortSignal) {
     await db.video.update({ where: { id: videoId }, data: { metadataStatus: "failed" } });
     throw error;
   }
-}
-
-function readableProcessReason(message: string) {
-  const detail = message.match(/ERROR:\s*\[youtube\]\s+[^:]+:\s*(.+)/i)?.[1]?.trim();
-  return detail && detail.length <= 500 ? detail : "YouTube did not provide a more specific reason.";
 }

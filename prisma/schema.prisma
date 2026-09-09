@@ -142,6 +142,13 @@ model AppSettings {
   logRetentionDays    Int      @default(30)
   defaultVideoQuality String   @default("best")
   jobsPaused          Boolean  @default(false)
+  // Absolute path to a Netscape-format cookies.txt file yt-dlp should authenticate with (passed as
+  // `--cookies <path>` -- see lib/youtube/ytdlp.ts's cookiesArgs). Lets age-restricted/bot-checked videos
+  // ("Sign in to confirm your age/you're not a bot") download instead of permanently failing. This is a
+  // path to a file the operator manages and mounts into the container (e.g. a docker-compose bind mount)
+  // -- TunarrTube never uploads, generates, or displays its contents, only ever passes the path through to
+  // yt-dlp. Null means unauthenticated (the default).
+  ytdlpCookiesPath    String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }

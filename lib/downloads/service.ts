@@ -8,7 +8,7 @@ import { writeLog } from "@/lib/logging/service";
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
-import { getYtDlpPath } from "@/lib/youtube/ytdlp";
+import { cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
 
 async function exists(file: string) {
   try {
@@ -77,7 +77,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
       "-f", downloadFormatSelector(quality),
       "--concurrent-fragments", "4",
       "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
-      "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), "--", youtubeUrl
+      "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
     ], { timeoutMs: 12 * 60 * 60_000, signal });
     const files = await readdir(tempDirectory);
     const output = files.find((file) => file === `${youtubeId}.mp4`);
@@ -146,6 +146,15 @@ export async function downloadVideo(sourceId: string, videoId: string, signal?: 
     // A user-requested stop (see stopJob() in lib/jobs/service.ts) aborts `signal`, which is what makes
     // runProcess() reject here -- record it as "cancelled" rather than "failed" so it reads like the
     // queued-cancellation case instead of a real error, and so automatic re-enqueue paths leave it alone.
+    const message = error instanceof Error ? error.message : String(error);
+    // Video is gone for good, or -- see isSignInRequiredError -- gated behind a sign-in TunarrTube isn't
+    // authenticated for. Either way it's not a transient failure, so record it on the Video (every source
+    // sharing it, and the UI, can see why) before letting the ordinary retry/fail path run its course --
+    // once attempts are exhausted the failure sticks until a manual Retry (e.g. after configuring cookies).
+    if (!signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message))) {
+      const reason = await unavailabilityReason(membership.video.youtubeUrl, message);
+      await db.video.update({ where: { id: membership.video.id }, data: { availability: "unavailable", availabilityReason: reason } });
+    }
     await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: signal?.aborted ? "cancelled" : "failed" } });
     throw error;
   }
@@ -210,11 +219,17 @@ export async function cacheVideo(videoId: string, sourceId?: string, signal?: Ab
     await enforceCachePolicy();
     return complete;
   } catch (error) {
-    // See the matching comment in downloadVideo() above: a stop request aborts `signal`, and that should
-    // read as "cancelled" rather than a real failure.
+    // See the matching comments in downloadVideo() above: a stop request aborts `signal`, and that should
+    // read as "cancelled" rather than a real failure; an unavailable/sign-in-required video gets recorded
+    // on the Video row before the ordinary retry/fail path runs its course.
+    const message = error instanceof Error ? error.message : String(error);
+    if (!signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message))) {
+      const reason = await unavailabilityReason(video.youtubeUrl, message);
+      await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason } });
+    }
     await db.cacheAsset.update({
       where: { id: asset.id },
-      data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: (error instanceof Error ? error.message : String(error)).slice(-2000) }
+      data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: message.slice(-2000) }
     });
     throw error;
   }

@@ -160,8 +160,12 @@ export async function syncSource(sourceId: string, signal?: AbortSignal) {
   await enqueueUniqueJob("thumbnail", sourceId);
   if (source.playbackMode === "download") {
     // Excludes "cancelled" as well as "complete" -- a user-cancelled download must stay cancelled through
-    // automatic syncs; only the explicit retry action (lib/jobs/service.ts) brings it back.
-    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled"] } }, select: { videoId: true } });
+    // automatic syncs; only the explicit retry action (lib/jobs/service.ts) brings it back. Also excludes
+    // a Video already recorded `availability: "unavailable"` (permanently gone, or sign-in-required --
+    // see isUnavailableVideoError/isSignInRequiredError in lib/youtube/ytdlp.ts) so a dead video doesn't
+    // get a fresh download job -- and a fresh yt-dlp failure in the logs -- on every future sync; the user
+    // can still retry it explicitly (lib/jobs/service.ts) once fixed (e.g. cookies configured).
+    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled"] }, video: { availability: { not: "unavailable" } } }, select: { videoId: true } });
     for (const item of fresh) {
       await enqueueUniqueJob("download", sourceId, item.videoId, { target: "permanent" });
       await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId, videoId: item.videoId } }, data: { downloadStatus: "queued" } });
