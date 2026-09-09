@@ -94,7 +94,7 @@ function joinTunarrPath(prefix: string, relative: string) {
     : path.posix.join(prefix, relative.replaceAll("\\", "/"));
 }
 
-export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }> }) {
+export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }>; defaultNamingScheme?: string; defaultFilenameTemplate?: string }) {
   const current = await getSettings();
   const valid = input.mediaBaseDirectory
     ? await validateMediaDirectory(input.mediaBaseDirectory)
@@ -125,8 +125,8 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   const settings = await db.$transaction(async (tx) => {
     const saved = await tx.appSettings.upsert({
       where: { id: 1 },
-      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, ytdlpCookiesPath },
-      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, ytdlpCookiesPath: ytdlpCookiesPath ?? null }
+      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, ytdlpCookiesPath, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate },
+      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, ytdlpCookiesPath: ytdlpCookiesPath ?? null, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate }
     });
     for (const source of destinations) {
       await tx.source.update({ where: { id: source.id }, data: { mediaDirectory: source.mediaDirectory } });

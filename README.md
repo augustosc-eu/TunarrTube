@@ -42,7 +42,7 @@ yt-dlp analysis ──► SQLite catalog ──► background job queue
                   Tunarr Local Media ──► Tunarr channel
 ```
 
-TunarrTube does not upload video metadata directly into Tunarr. Tunarr scans the shared media directory and reads the generated `<youtubeId>.nfo` sidecars. It then matches scanned programs back to TunarrTube records using the YouTube ID in each filename.
+TunarrTube does not upload video metadata directly into Tunarr. Tunarr scans the shared media directory and reads the generated `.nfo` sidecars. It then matches scanned programs back to TunarrTube records using the YouTube ID recovered from each filename (the whole filename under the default naming scheme, or a trailing `[videoId]` under a custom one — see "Naming" below).
 
 ## Quick start with Docker
 
@@ -241,9 +241,19 @@ Native defaults:
 - Database: `prisma/ytarr.db`
 - Media: `storage/media/`
 - Thumbnails: `storage/thumbnails/`
-- Source files: `<media-root>/<source-directory>/<youtubeId>.mp4`
+- Source files: `<media-root>/<source-directory>/<youtubeId>.mp4` by default (see "Naming" below for custom filename/folder layouts)
 - Metadata: matching `<youtubeId>.json` and `<youtubeId>.nfo` files
 - Artwork: a matching `<youtubeId>-poster.jpg` (or `.png`/`.webp`) file, mirrored from the video's thumbnail so Tunarr's guide and "now playing" screen have an image for it
+
+### Naming
+
+Settings → Naming controls how downloaded files are named and organized, with a per-source override available on each source's own page:
+
+- **YouTube video ID** (default) — `<mediaDirectory>/<youtubeId>.mp4`, unchanged from every TunarrTube release before this setting existed.
+- **Custom filename template** — a template string using `{title}`, `{channel}`, `{date}` (upload date, `YYYY-MM-DD`), `{year}`, and `{videoId}`, e.g. `{channel} - {title}`. A literal `/` in the template creates a subfolder, e.g. `{channel}/{title}` produces `<mediaDirectory>/<channel>/<title>.mp4`. The YouTube video ID is always appended in brackets (`Title [videoId].mp4`) when the template doesn't already include it, so Tunarr can still match the file and two same-titled videos never collide on disk.
+- **TV show** — an Emby/Plex/Jellyfin- and Tunarr "Shows"-scanner-compatible layout: `<mediaDirectory>/Season <upload year>/<source name> - S<year>E<episode> - <title> [videoId].mp4`, with a matching Kodi `<episodedetails>` NFO (season/episode/plot/aired date, plus a `<uniqueid type="youtube">` carrying the YouTube ID), a `tvshow.nfo` at the source's root, a `<basename>-thumb.<ext>` episode thumbnail, and a `<basename>.info.json` sidecar carrying the same metadata plus the assigned season/episode. Episode numbers are assigned once per video (first-assigned-wins per season) and never renumbered, so they stay stable even if older videos are discovered later. To have Tunarr itself recognize this layout as a TV show (rather than "Other Videos"), configure a Tunarr local media source of type "Shows" pointed at the source's directory — TunarrTube matches the right library automatically but doesn't create it for you.
+
+Changing a naming setting only affects future downloads — already-downloaded files keep their existing names and locations (same rule as changing the media root above).
 
 Back up the SQLite database and media root before upgrades.
 
@@ -252,7 +262,7 @@ Back up the SQLite database and media root before upgrades.
 - **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled outright or postponed to a later time (15 minutes up to a week) without losing its place; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. A running download, cache, sync, metadata, or Tunarr publish/refresh job can be stopped mid-flight — Stop immediately records cancellation (even for a stranded job with no live worker), then interrupts its process or network request. Cancellation survives a restart, and publishing passes Stop through to any media downloads it needs; a metadata-repair or thumbnail job has no interrupt point and finishes on its own instead. Cancelling or stopping a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. The toolbar's Pause queue toggle stops the worker from picking up any new job (existing running work keeps going until it finishes or you stop it) — use it and Resume queue to hold everything for a while.
 - **Cache** shows used, pinned, protected, and evictable storage.
 - **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence. Entries older than the configured log retention (30 days by default, set in Settings) are purged automatically every hour; **Purge old entries** runs that same cleanup immediately, and **Clear all** empties the log table outright.
-- **Settings** tests binary discovery and Tunarr connectivity, controls cache limits and log retention, repairs older metadata sidecars, and previews path mappings.
+- **Settings** tests binary discovery and Tunarr connectivity, controls cache limits and log retention, sets the default downloaded filename/folder naming scheme (with a live preview), repairs older metadata sidecars, and previews path mappings.
 
 Downloads are written to temporary paths and renamed into place only after `yt-dlp` and FFmpeg succeed. Interrupted jobs are requeued after restart only while attempts remain; exhausted jobs fail for manual retry from Queue. Jobs normally retry up to three times.
 
