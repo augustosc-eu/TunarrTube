@@ -227,6 +227,7 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `TUNARRTUBE_FFMPEG_PATH` | Absolute FFmpeg executable path | Auto-discovered |
 | `TUNARRTUBE_MEDIA_DIR` | Initial media root | `storage/media` |
 | `TUNARRTUBE_THUMBNAIL_DIR` | Thumbnail storage root | `storage/thumbnails` |
+| `TUNARRTUBE_YTDLP_COOKIES` | Initial `yt-dlp` cookies file path (see "Age-restricted or sign-in-required videos" below) | None (unauthenticated) |
 | `TUNARRTUBE_TUNARR_URL` | Initial Tunarr base URL | `http://127.0.0.1:8000` native; `http://tunarr:8000` in Compose |
 | `TUNARRTUBE_PORT` | Docker host port | `3000` |
 | `TUNARR_PORT` | Optional Tunarr Docker host port | `8000` |
@@ -263,13 +264,33 @@ Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_
 
 ### A YouTube URL cannot be analyzed
 
-Only public HTTPS URLs on supported YouTube hosts are accepted, including `youtu.be`. Cookie-based access, private/account-only media, and age-restricted authentication are not supported.
+Only public HTTPS URLs on supported YouTube hosts are accepted, including `youtu.be`. Private/unlisted, account-only, and members-only media are not supported — TunarrTube can't browse a signed-in account's library, only analyze a URL you already have. Age-restricted and bot-checked *public* videos are supported if you configure a cookies file (see "Age-restricted or sign-in-required videos" below); without one they're marked unavailable instead of failing repeatedly.
 
 YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), self-update refuses and reports the error; update it with that package manager instead.
 
 ### A download failed
 
 Review **Logs** for the sanitized error. Check available disk space, filesystem permissions, and the installed `yt-dlp`/FFmpeg versions, then queue the video again.
+
+If the error is YouTube reporting the video itself as private, deleted, otherwise unavailable, or requiring sign-in (age-restricted/bot-checked), TunarrTube records that on the video (visible as an "unavailable" badge on the source's video table) once its normal retries are exhausted, and future syncs won't queue a fresh attempt for it. From there you can either **Retry** it from the Queue page (in case YouTube reinstates it, or after configuring cookies) or **Remove** it from the source's video table to drop it for good.
+
+### Age-restricted or sign-in-required videos
+
+`yt-dlp` reports age-restricted and bot-checked videos with messages like `Sign in to confirm your age` or `Sign in to confirm you're not a bot`. TunarrTube recognizes these and marks the video "unavailable" with that explanation, same recovery as above, so it stops being re-queued (and re-failing) on every sync.
+
+To actually download these videos instead of skipping them, configure **yt-dlp cookies file** in Settings → External tools with an absolute path (inside the TunarrTube container/host) to a Netscape-format `cookies.txt`:
+
+1. Export cookies for `youtube.com` from a signed-in browser session, on a machine you control, using a browser extension (e.g. "Get cookies.txt LOCALLY"). Use an account you're comfortable authenticating a background download tool as — not a primary/shared account.
+2. Make the file available inside the container. With Docker Compose, bind-mount it read-only:
+   ```yaml
+   services:
+     tunarrtube:
+       volumes:
+         - ./cookies.txt:/config/cookies.txt:ro
+   ```
+3. In Settings, set the cookies file path to the in-container path (`/config/cookies.txt` for the example above), or set `TUNARRTUBE_YTDLP_COOKIES` before first start. Existing "unavailable" videos need a manual **Retry** — they aren't automatically retried once cookies are added.
+
+TunarrTube never uploads, generates, or displays this file's contents — it only passes the path to `yt-dlp` as `--cookies <path>`, and that path is redacted from Logs the same way other `--cookies[-from-browser]` flags already are (see Security below). Treat the file itself like a password: whoever can read it can act as that YouTube account, cookies expire and need periodic re-export, and tripping YouTube's automation detection on a shared/family account risks that account, not just the download.
 
 ### Tunarr cannot find downloaded videos
 
@@ -299,7 +320,7 @@ No. A sync only marks the corresponding membership `missing`; it never deletes t
 No. The background job worker and scheduler keep their state in-process with no distributed locking, so only a single running instance is supported per SQLite database.
 
 **Does TunarrTube support private, unlisted, or age-restricted videos?**
-No. Only public HTTPS URLs on supported YouTube hosts are accepted. Cookie-based or authenticated extraction is intentionally out of scope.
+Private, unlisted, and account/members-only media: no — TunarrTube can only analyze a public HTTPS URL you already have, never browse a signed-in account's library. Age-restricted or bot-checked *public* videos: optionally, if you configure a `yt-dlp` cookies file (Settings → External tools) — see "Age-restricted or sign-in-required videos" above. Without one, those videos are marked unavailable with an explanation instead of downloading.
 
 **If I change the media directory in Settings, does it move my existing downloads?**
 No. Only future downloads use the new directory; already-completed files keep their recorded paths and are not moved.
@@ -309,7 +330,7 @@ No, for any playback mode. Tunarr's local-media source only scans real files on 
 
 ## Security
 
-TunarrTube's API can start downloads, change writable paths, and mutate the configured Tunarr server. The default native and Compose configurations bind to host loopback only. If remote access is required, use an authenticating reverse proxy or VPN with TLS and access controls.
+TunarrTube's API can start downloads, change writable paths, and mutate the configured Tunarr server. The default native and Compose configurations bind to host loopback only. If remote access is required, use an authenticating reverse proxy or VPN with TLS and access controls. Anyone who can reach the API can also set the yt-dlp cookies file path (see "Age-restricted or sign-in-required videos") to any file readable inside the container, so the same access controls that protect downloads/settings also protect that YouTube account's session.
 
 See [SECURITY.md](SECURITY.md) for the supported-version policy, deployment guidance, and private vulnerability-reporting process.
 

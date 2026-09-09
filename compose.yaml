@@ -9,10 +9,15 @@ services:
       TUNARRTUBE_MEDIA_DIR: /media
       TUNARRTUBE_THUMBNAIL_DIR: /config/thumbnails
       TUNARRTUBE_TUNARR_URL: ${TUNARRTUBE_TUNARR_URL:-${YTARR_TUNARR_URL:-http://tunarr:8000}}
+      # Optional: only takes effect the first time TunarrTube starts (see README's "Age-restricted or
+      # sign-in-required videos"). Set TUNARRTUBE_YTDLP_COOKIES in .env AND uncomment the matching bind
+      # mount below, pointed at your own exported cookies.txt, to enable it.
+      TUNARRTUBE_YTDLP_COOKIES: ${TUNARRTUBE_YTDLP_COOKIES:-}
       TZ: ${TZ:-UTC}
     volumes:
       - ytarr-config:/config
       - ytarr-media:/media
+      # - ./cookies.txt:/config/cookies.txt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     cap_drop:

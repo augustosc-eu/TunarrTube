@@ -15,13 +15,14 @@ export const VIDEO_QUALITY_OPTIONS = [
   { value: "720p", label: "720p (HD)" },
   { value: "480p", label: "480p (SD)" }
 ];
-export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialMappings, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialMappings: Mapping[]; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
+export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialYtdlpCookiesPath, initialMappings, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialYtdlpCookiesPath: string | null; initialMappings: Mapping[]; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
   const [directory, setDirectory] = useState(initialDirectory);
   const [tunarrUrl, setTunarrUrl] = useState(initialTunarrUrl);
   const [cacheMegabytes, setCacheMegabytes] = useState(String(initialCacheMegabytes));
   const [cacheAgeDays, setCacheAgeDays] = useState(String(initialCacheAgeDays));
   const [logRetentionDays, setLogRetentionDays] = useState(String(initialLogRetentionDays));
   const [videoQuality, setVideoQuality] = useState(initialDefaultVideoQuality);
+  const [ytdlpCookiesPath, setYtdlpCookiesPath] = useState(initialYtdlpCookiesPath ?? "");
   const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ ytarrPrefix, tunarrPrefix }) => ({ ytarrPrefix, tunarrPrefix })));
   const [preview, setPreview] = useState<string | null>(null);
   const [binaries, setBinaries] = useState({ "yt-dlp": ytDlp, ffmpeg });
@@ -77,7 +78,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   async function save() {
     setBusy("settings"); setMessage(null);
     try {
-      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, pathMappings: mappings }) }));
+      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, ytdlpCookiesPath: ytdlpCookiesPath.trim() || null, pathMappings: mappings }) }));
       setDirectory(data.mediaBaseDirectory); setTunarrUrl(data.tunarrUrl);
       setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`); setMessageTone("success");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); setMessageTone("error"); }
@@ -99,6 +100,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
         </div>
       </div>;
     })}
+    <div className="field"><label htmlFor="ytdlp-cookies-path">yt-dlp cookies file (optional)</label><input className="input code" id="ytdlp-cookies-path" value={ytdlpCookiesPath} onChange={(event) => setYtdlpCookiesPath(event.target.value)} placeholder="/config/cookies.txt" /><span className="meta">Absolute path, inside this container, to a Netscape-format cookies.txt exported from a YouTube account. Without one, age-restricted and bot-checked videos (&ldquo;Sign in to confirm your age/you&apos;re not a bot&rdquo;) are marked unavailable instead of downloading. Export cookies with a browser extension on a machine you control, mount the file read-only into the container (e.g. a docker-compose bind mount), and point this at the mounted path — TunarrTube never generates, uploads, or displays this file&apos;s contents, only passes the path to yt-dlp. Treat it like a password: whoever holds it can act as that YouTube account, and a shared/family account risks a ban if yt-dlp trips YouTube&apos;s automation detection. Leave blank to stay unauthenticated.</span></div>
 
     <h2 className="section-heading">Media</h2>
     <div className="field"><label htmlFor="media-directory">Base media directory</label><input className="input code" id="media-directory" value={directory} onChange={(event) => setDirectory(event.target.value)} /><span className="meta">Must be an absolute readable and writable path. Existing sources use this base for future downloads; completed files stay at their recorded paths.</span></div>

@@ -43,6 +43,7 @@ export const settingsSchema = z.object({
   cacheMaxAgeDays: z.number().int().min(1).max(3650).optional(),
   logRetentionDays: z.number().int().min(1).max(3650).optional(),
   defaultVideoQuality: videoQualitySchema.optional(),
+  ytdlpCookiesPath: z.string().trim().min(1).nullable().optional(),
   pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional()
 }).refine((input) => Object.values(input).some((value) => value !== undefined), {
   message: "At least one setting is required."
