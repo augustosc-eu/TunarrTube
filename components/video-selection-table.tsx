@@ -20,7 +20,9 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
   const [playing, setPlaying] = useState<Row | null>(null);
   const [preparing, setPreparing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [bulkRemoving, setBulkRemoving] = useState(false);
   const downloadable = rows.filter((row) => row.downloadStatus !== "complete" && row.membershipStatus === "present");
+  const removableSelected = rows.filter((row) => selected.has(row.videoId) && (row.downloadStatus === "unavailable" || row.downloadStatus === "failed"));
   function toggle(id: string) { setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
 
   async function download() {
@@ -73,12 +75,29 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     finally { setRemoving(null); }
   }
 
+  async function bulkRemove() {
+    if (!removableSelected.length) return;
+    if (!window.confirm(`Remove ${removableSelected.length} video${removableSelected.length === 1 ? "" : "s"} from this source? This can't be undone.`)) return;
+    setBulkRemoving(true); setError(null);
+    try {
+      const results = await Promise.allSettled(removableSelected.map((row) => fetch(`/api/sources/${sourceId}/videos/${row.videoId}`, { method: "DELETE" })));
+      const failures = results.filter((result) => result.status === "rejected");
+      setSelected(new Set());
+      if (failures.length) setError(`${failures.length} video${failures.length === 1 ? "" : "s"} could not be removed.`);
+      router.refresh();
+    } finally { setBulkRemoving(false); }
+  }
+
   return <>
     {playing ? <div className="card player"><div className="toolbar"><strong>{playing.title}</strong><span className="spacer"/><button className="button secondary" onClick={() => setPlaying(null)} aria-label="Close player"><X size={15}/></button></div><video controls autoPlay src={`/api/playback/${sourceId}/${playing.videoId}`} /></div> : null}
-    <div className="toolbar"><button className="button" disabled={busy || selected.size === 0} onClick={download}><Download size={15} /> Download selected ({selected.size})</button><span className="muted">{downloadable.length} available to download</span></div>
+    <div className="toolbar">
+      <button className="button" disabled={busy || selected.size === 0} onClick={download}><Download size={15} /> Download selected ({selected.size})</button>
+      {removableSelected.length > 0 ? <button className="button secondary" disabled={bulkRemoving} onClick={bulkRemove}><Trash2 size={15} /> Remove selected ({removableSelected.length})</button> : null}
+      <span className="muted">{downloadable.length} available to download</span>
+    </div>
     {error ? <div className="error">{error}</div> : null}
     <div className="table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="Select all downloadable videos" checked={downloadable.length > 0 && downloadable.every((row) => selected.has(row.videoId))} onChange={(event) => setSelected(event.target.checked ? new Set(downloadable.map((row) => row.videoId)) : new Set())} /></th><th>#</th><th>Video</th><th>Duration</th><th>Metadata</th><th>Download</th><th>Play</th><th></th></tr></thead><tbody>{rows.map((row) => <tr key={row.membershipId}>
-      <td><input type="checkbox" disabled={row.downloadStatus === "complete" || row.membershipStatus !== "present"} checked={selected.has(row.videoId)} onChange={() => toggle(row.videoId)} aria-label={`Select ${row.title}`} /></td>
+      <td><input type="checkbox" disabled={row.downloadStatus === "complete" || (row.membershipStatus !== "present" && row.downloadStatus !== "unavailable" && row.downloadStatus !== "failed")} checked={selected.has(row.videoId)} onChange={() => toggle(row.videoId)} aria-label={`Select ${row.title}`} /></td>
       <td>{row.playlistIndex ?? "—"}</td>
       <td className="title-cell"><strong>{row.title}</strong><span className="meta">{row.uploader ?? row.youtubeId}{row.membershipStatus === "missing" ? " · Missing from source" : ""}</span></td>
       <td>{duration(row.durationSeconds)}</td>

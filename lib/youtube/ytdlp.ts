@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/api";
+import { getSettings } from "@/lib/settings/service";
 import { discoverBinary } from "@/lib/system/binaries";
 import { runProcess } from "@/lib/system/process";
 import { normalizeChannel, normalizeEntry, normalizePlaylist } from "@/lib/youtube/normalize";
@@ -12,9 +13,21 @@ async function executable() {
   return binary;
 }
 
+// Appended to every yt-dlp invocation below (and to downloadMp4 in lib/downloads/service.ts) when the
+// operator has pointed AppSettings.ytdlpCookiesPath at a Netscape-format cookies.txt file. Lets
+// age-restricted/bot-checked videos ("Sign in to confirm your age/you're not a bot", see
+// isSignInRequiredError below) authenticate instead of permanently failing. Unset by default -- see
+// AGENTS.md's stance on cookie-based auth for why this is opt-in and file-path-based rather than
+// accepting credentials directly. safeCommand()/sanitizeLogValue (lib/logging/service.ts, lib/system/
+// process.ts) already redact the path itself out of any logged command line or yt-dlp error text.
+export async function cookiesArgs() {
+  const settings = await getSettings();
+  return settings.ytdlpCookiesPath ? ["--cookies", settings.ytdlpCookiesPath] : [];
+}
+
 export async function analyzePlaylist(input: string, signal?: AbortSignal): Promise<PlaylistAnalysis> {
   const url = validatePlaylistUrl(input);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", "--", url], {
+  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...await cookiesArgs(), "--", url], {
     signal,
     timeoutMs: 10 * 60_000
   });
@@ -34,7 +47,7 @@ async function analyzeChannelFeed(base: string, feed: Exclude<ChannelFeed, "all"
   const url = channelFeedUrl(base, feed);
   const args = ["--dump-single-json", "--flat-playlist", "--no-warnings"];
   if (historyLimit !== null) args.push("--playlist-end", String(historyLimit));
-  args.push("--", url);
+  args.push(...await cookiesArgs(), "--", url);
   const result = await runProcess(await executable(), args, { signal, timeoutMs: 10 * 60_000 });
   try {
     return normalizeChannel(JSON.parse(result.stdout) as Record<string, unknown>, base, feed, historyLimit);
@@ -78,7 +91,7 @@ export async function analyzeSource(input: string, options: AnalyzeSourceOptions
 
 export async function fetchVideoMetadata(youtubeUrl: string, signal?: AbortSignal): Promise<PlaylistEntry> {
   const url = validateVideoUrl(youtubeUrl);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", "--", url], {
+  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", ...await cookiesArgs(), "--", url], {
     signal,
     timeoutMs: 5 * 60_000
   });
@@ -153,9 +166,9 @@ export async function getYtDlpPath() {
 }
 
 // yt-dlp surfaces YouTube's throttling as an HTTP 429 in the extractor error it prints to stderr, which
-// `runProcess` folds into the failure message. Distinct from "Sign in to confirm you're not a bot", which
-// is a bot-check that would need cookies/auth to resolve (see AGENTS.md's stance on that) -- this is purely
-// "you're requesting too fast," which calling code should treat as a signal to pause and back off, not fail.
+// `runProcess` folds into the failure message. Distinct from "Sign in to confirm you're not a bot" (see
+// isSignInRequiredError below), a bot-check that needs cookies/auth to resolve rather than a pause --
+// this is purely "you're requesting too fast," which calling code should treat as a signal to back off.
 const RATE_LIMIT_SIGNAL = /HTTP Error 429|429 Client Error|Too Many Requests/i;
 
 export function isRateLimitedError(message: string) {
@@ -172,6 +185,18 @@ export function isUnavailableVideoError(message: string) {
   return UNAVAILABLE_SIGNAL.test(message);
 }
 
+// yt-dlp's message when YouTube demands authentication before it'll serve the video at all: age-gated
+// content ("Sign in to confirm your age") or a bot-check challenge ("Sign in to confirm you're not a
+// bot"). Unlike UNAVAILABLE_SIGNAL above, the video isn't gone -- it's fixable by configuring
+// AppSettings.ytdlpCookiesPath (see cookiesArgs above) -- but retrying *without* cookies configured will
+// never succeed, so callers should still stop burning automatic retries on it, same as an unavailable
+// video, just with a more actionable reason (see unavailabilityReason below).
+const SIGN_IN_REQUIRED_SIGNAL = /sign in to confirm/i;
+
+export function isSignInRequiredError(message: string) {
+  return SIGN_IN_REQUIRED_SIGNAL.test(message);
+}
+
 // Pulls yt-dlp's own one-line reason out of its stderr ("ERROR: [youtube] <id>: <reason>") for use when a
 // richer reason isn't available from fetchVideoAvailabilityReason() above (e.g. it also failed, or the
 // caller doesn't want to spend an extra network round-trip on top of the yt-dlp failure it already got).
@@ -180,10 +205,23 @@ export function readableUnavailabilityReason(message: string) {
   return detail && detail.length <= 500 ? detail : "YouTube did not provide a more specific reason.";
 }
 
+// Shared by enrichVideo (lib/metadata/service.ts) and downloadVideo/cacheVideo (lib/downloads/service.ts)
+// to build the Video.availabilityReason they show in the UI once a video fails with isUnavailableVideoError
+// or isSignInRequiredError. Sign-in-required gets its own message rather than yt-dlp's raw one -- yt-dlp's
+// text points at --cookies-from-browser, which doesn't apply in a headless container -- pointed at the
+// Settings field instead.
+export async function unavailabilityReason(youtubeUrl: string, message: string) {
+  if (isSignInRequiredError(message)) {
+    return "Requires YouTube sign-in (age-restricted, or blocked by a bot check). Set a yt-dlp cookies file in Settings → External tools to enable this video.";
+  }
+  return await fetchVideoAvailabilityReason(youtubeUrl).catch(() => null) ?? readableUnavailabilityReason(message);
+}
+
 export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality = "best", signal?: AbortSignal) {
   const result = await runProcess(await executable(), [
     "--get-url", "--no-playlist", "--no-warnings",
     "-f", streamFormatSelector(quality),
+    ...await cookiesArgs(),
     "--", youtubeUrl
   ], { signal, timeoutMs: 2 * 60_000 });
   const value = result.stdout.trim().split(/\r?\n/)[0];

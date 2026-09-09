@@ -1,11 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Trash2, Wand2 } from "lucide-react";
+import { FolderOpen, Trash2, Wand2 } from "lucide-react";
 
-type RenderedAsset = { templateId: string; status: string };
+type RenderedAsset = { id: string; templateId: string; status: string; hasThumbnail: boolean };
 type MediaItem = { id: string; title: string; artist: string | null; album: string | null; metadataStatus: string; originType: string; originLocalPath: string | null; downloadStatus: string | null; renders: RenderedAsset[] };
 type ChannelItem = { mediaItemId: string; mediaItem: MediaItem };
 
@@ -13,6 +14,19 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
   const router = useRouter();
   const [rendering, setRendering] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [revealing, setRevealing] = useState<string | null>(null);
+
+  async function reveal(renderId: string) {
+    setRevealing(renderId);
+    try { await fetch(`/api/renders/${renderId}/reveal`, { method: "POST" }); }
+    finally { setRevealing(null); }
+  }
+
+  function toggle(id: string) {
+    setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
 
   async function renderAll() {
     setRendering(true);
@@ -38,6 +52,22 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
     }
   }
 
+  async function bulkRemove() {
+    if (!window.confirm(`Remove ${selected.size} item${selected.size === 1 ? "" : "s"} from this channel?`)) return;
+    setBulkBusy(true);
+    try {
+      await Promise.allSettled([...selected].map((mediaItemId) => fetch(`/api/channels/${channelId}/items`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaItemId })
+      })));
+      setSelected(new Set());
+      router.refresh();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   if (!items.length) {
     return <div className="empty"><h2>No media yet</h2><p>Add a local folder, an already-downloaded video, or a YouTube URL above to start building this channel.</p></div>;
   }
@@ -45,13 +75,16 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
   return (
     <>
       <div className="toolbar">
+        {selected.size > 0
+          ? <button className="button secondary" type="button" onClick={bulkRemove} disabled={bulkBusy}><Trash2 size={15} /> Remove selected ({selected.size})</button>
+          : null}
         <span className="spacer" />
         <button className="button" type="button" onClick={renderAll} disabled={rendering}><Wand2 size={16} /> {rendering ? "Queuing…" : "Render all"}</button>
       </div>
       <div className="table-wrap">
         <table>
           <thead>
-            <tr><th>Title</th><th>Source</th><th>Metadata</th><th>Render</th><th /></tr>
+            <tr><th><input type="checkbox" aria-label="Select all items" checked={items.length > 0 && items.every(({ mediaItem }) => selected.has(mediaItem.id))} onChange={(event) => setSelected(event.target.checked ? new Set(items.map(({ mediaItem }) => mediaItem.id)) : new Set())} /></th><th>Title</th><th>Source</th><th>Metadata</th><th>Render</th><th /></tr>
           </thead>
           <tbody>
             {items.map(({ mediaItem }) => {
@@ -59,13 +92,26 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
               const hasSourceFile = mediaItem.originType === "local" ? Boolean(mediaItem.originLocalPath) : mediaItem.downloadStatus === "complete";
               return (
                 <tr key={mediaItem.id}>
+                  <td><input type="checkbox" checked={selected.has(mediaItem.id)} onChange={() => toggle(mediaItem.id)} aria-label={`Select ${mediaItem.title}`} /></td>
                   <td className="title-cell">
                     <strong><Link href={`/channels/${channelId}/items/${mediaItem.id}`}>{mediaItem.title}</Link></strong>
                     <div className="meta">{mediaItem.artist ?? "—"}{mediaItem.album ? ` · ${mediaItem.album}` : ""}</div>
                   </td>
                   <td><span className="badge">{mediaItem.originType}</span></td>
                   <td><span className={`badge ${mediaItem.metadataStatus}`}>{mediaItem.metadataStatus}</span></td>
-                  <td><span className={`badge ${render?.status ?? "pending"}`}>{render?.status ?? (hasSourceFile ? "not rendered" : "no source yet")}</span></td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {render?.status === "complete" && render.hasThumbnail ? (
+                        <Link href={`/channels/${channelId}/items/${mediaItem.id}`}>
+                          <Image src={`/api/thumbnails/render/${render.id}`} alt="" width={48} height={27} unoptimized style={{ objectFit: "cover", borderRadius: 4, display: "block" }} />
+                        </Link>
+                      ) : null}
+                      <span className={`badge ${render?.status ?? "pending"}`}>{render?.status ?? (hasSourceFile ? "not rendered" : "no source yet")}</span>
+                      {render?.status === "complete" ? (
+                        <button className="button secondary" aria-label="Show in file manager" title="Show in file manager" onClick={() => reveal(render.id)} disabled={revealing === render.id}><FolderOpen size={14} /></button>
+                      ) : null}
+                    </div>
+                  </td>
                   <td><button className="button secondary" aria-label="Remove" onClick={() => remove(mediaItem.id)} disabled={removing === mediaItem.id}><Trash2 size={15} /></button></td>
                 </tr>
               );

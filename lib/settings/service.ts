@@ -18,6 +18,21 @@ export async function validateMediaDirectory(input: string, create = true) {
   }
 }
 
+// Only called from updateSettings() below, when a user explicitly sets/changes the path via Settings --
+// not from getSettings()'s env-seeded initial create, so a not-yet-mounted cookies file at container
+// startup doesn't take the whole app down the way an invalid media directory would. If the file goes
+// missing later (a bind mount unmounts, etc.), yt-dlp's own "could not find cookies file" error surfaces
+// through the normal job-failure path instead.
+export async function validateCookiesPath(input: string) {
+  if (!path.isAbsolute(input)) throw new AppError("INVALID_COOKIES_PATH", "Cookies file path must be absolute.");
+  try {
+    await access(input, constants.R_OK);
+  } catch {
+    throw new AppError("INVALID_COOKIES_PATH", "Cookies file must exist and be readable.");
+  }
+  return input;
+}
+
 export async function getSettings() {
   const existing = await db.appSettings.findUnique({ where: { id: 1 } });
   if (existing) return reconcileMediaDirectory(existing);
@@ -25,8 +40,10 @@ export async function getSettings() {
   const configured = process.env.TUNARRTUBE_MEDIA_DIR ?? process.env.YTARR_MEDIA_DIR ?? DEFAULT_MEDIA_ROOT;
   const mediaBaseDirectory = await validateMediaDirectory(configured);
   const tunarrUrl = normalizeTunarrUrl(process.env.TUNARRTUBE_TUNARR_URL ?? process.env.YTARR_TUNARR_URL ?? "http://127.0.0.1:8000");
+  // Not validated here (unlike mediaBaseDirectory/tunarrUrl above) -- see validateCookiesPath's comment.
+  const ytdlpCookiesPath = process.env.TUNARRTUBE_YTDLP_COOKIES ?? process.env.YTARR_YTDLP_COOKIES ?? null;
   try {
-    return await db.appSettings.create({ data: { id: 1, mediaBaseDirectory, tunarrUrl } });
+    return await db.appSettings.create({ data: { id: 1, mediaBaseDirectory, tunarrUrl, ytdlpCookiesPath } });
   } catch (error) {
     // Another process/worker can win the create race between our findUnique and create (tests run
     // several files concurrently against the same SQLite file, and multiple app instances could too).
@@ -77,12 +94,18 @@ function joinTunarrPath(prefix: string, relative: string) {
     : path.posix.join(prefix, relative.replaceAll("\\", "/"));
 }
 
-export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; musicbrainzContactEmail?: string | null; aiProvider?: string; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }> }) {
+export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; musicbrainzContactEmail?: string | null; metadataMusicbrainzEnabled?: boolean; metadataItunesEnabled?: boolean; metadataAutoApplyThreshold?: number; aiProvider?: string; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }>; defaultNamingScheme?: string; defaultFilenameTemplate?: string }) {
   const current = await getSettings();
   const valid = input.mediaBaseDirectory
     ? await validateMediaDirectory(input.mediaBaseDirectory)
     : current.mediaBaseDirectory;
   const tunarrUrl = input.tunarrUrl ? normalizeTunarrUrl(input.tunarrUrl) : current.tunarrUrl;
+  // undefined = leave the stored path alone, null = explicitly clear it back to unauthenticated, a string
+  // = validate and replace it (see validateCookiesPath's comment on why this validates, unlike getSettings'
+  // env-seeded default).
+  const ytdlpCookiesPath = input.ytdlpCookiesPath === undefined
+    ? undefined
+    : input.ytdlpCookiesPath === null ? null : await validateCookiesPath(input.ytdlpCookiesPath);
   const mappings = input.pathMappings ? input.pathMappings.map((mapping, position) => {
     if (!path.isAbsolute(mapping.ytarrPrefix) || !isAbsoluteTunarrPath(mapping.tunarrPrefix)) {
       throw new AppError("INVALID_PATH_MAPPING", "The TunarrTube prefix must be absolute on this host, and the Tunarr prefix must be an absolute Unix or Windows path.");
@@ -102,8 +125,8 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   const settings = await db.$transaction(async (tx) => {
     const saved = await tx.appSettings.upsert({
       where: { id: 1 },
-      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, aiProvider: input.aiProvider },
-      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, aiProvider: input.aiProvider }
+      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, metadataMusicbrainzEnabled: input.metadataMusicbrainzEnabled, metadataItunesEnabled: input.metadataItunesEnabled, metadataAutoApplyThreshold: input.metadataAutoApplyThreshold, aiProvider: input.aiProvider, ytdlpCookiesPath, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate },
+      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, metadataMusicbrainzEnabled: input.metadataMusicbrainzEnabled, metadataItunesEnabled: input.metadataItunesEnabled, metadataAutoApplyThreshold: input.metadataAutoApplyThreshold, aiProvider: input.aiProvider, ytdlpCookiesPath: ytdlpCookiesPath ?? null, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate }
     });
     for (const source of destinations) {
       await tx.source.update({ where: { id: source.id }, data: { mediaDirectory: source.mediaDirectory } });

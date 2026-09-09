@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Search, Wand2 } from "lucide-react";
+import { Copy, FolderOpen, Search, Wand2 } from "lucide-react";
 import { TemplatePreviewFrame } from "@/components/template-preview-frame";
 import type { MetadataCandidate } from "@/lib/metadata-lookup/types";
 import type { BindingField } from "@/lib/overlay/types";
@@ -18,7 +18,30 @@ type MediaItem = {
 };
 
 type Template = { id: string; name: string; htmlTemplate: string; bindingsJson: string };
-type RenderInfo = { status: string; error: string | null } | null;
+type RenderInfo = {
+  id: string;
+  status: string;
+  error: string | null;
+  outputPath: string | null;
+  outputFileSize: number | null;
+  outputDurationSeconds: number | null;
+  hasThumbnail: boolean;
+} | null;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) { value /= 1024; unitIndex += 1; }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
 
 // Bindings the built-in title/artist/album inputs already cover -- everything else the template
 // declares gets its own free-text input in the "Custom overlay fields" section.
@@ -59,6 +82,8 @@ export function MediaItemEditor({ channelId: _channelId, mediaItem, template, re
   const [rendering, setRendering] = useState(false);
   const [candidates, setCandidates] = useState<MetadataCandidate[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const bindings = useMemo<BindingField[]>(() => {
     try { return JSON.parse(template.bindingsJson); } catch { return []; }
@@ -141,6 +166,30 @@ export function MediaItemEditor({ channelId: _channelId, mediaItem, template, re
     }
   }
 
+  async function reveal(renderId: string) {
+    setRevealing(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/renders/${renderId}/reveal`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? "Could not open the file manager.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRevealing(false);
+    }
+  }
+
+  async function copyPath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* Clipboard access can be denied by the browser; the path is still shown for manual copy. */
+    }
+  }
+
   async function renderNow() {
     setRendering(true);
     setError(null);
@@ -190,7 +239,38 @@ export function MediaItemEditor({ channelId: _channelId, mediaItem, template, re
           <span className="spacer" />
           <button className="button" type="button" onClick={renderNow} disabled={rendering}><Wand2 size={15} /> {rendering ? "Queuing…" : "Render overlay"}</button>
         </div>
-        {render ? <p className="muted">Render status: <span className={`badge ${render.status}`}>{render.status}</span>{render.error ? ` — ${render.error}` : ""}</p> : null}
+        {render ? (
+          <div style={{ marginTop: 12 }}>
+            <p className="muted">Render status: <span className={`badge ${render.status}`}>{render.status}</span>{render.error ? ` — ${render.error}` : ""}</p>
+            {render.status === "complete" ? (
+              <div className="card" style={{ marginTop: 10, padding: 12 }}>
+                <video
+                  controls
+                  preload="metadata"
+                  style={{ width: "100%", maxWidth: 480, borderRadius: 6, background: "#000" }}
+                  poster={render.hasThumbnail ? `/api/thumbnails/render/${render.id}` : undefined}
+                  src={`/api/renders/${render.id}/video`}
+                />
+                <div className="toolbar" style={{ marginTop: 10 }}>
+                  <span className="meta">
+                    {render.outputDurationSeconds != null ? formatDuration(render.outputDurationSeconds) : "—"}
+                    {render.outputFileSize != null ? ` · ${formatBytes(render.outputFileSize)}` : ""}
+                  </span>
+                  <span className="spacer" />
+                  {render.outputPath ? (
+                    <button className="button secondary" type="button" onClick={() => copyPath(render.outputPath!)}>
+                      <Copy size={14} /> {copied ? "Copied!" : "Copy path"}
+                    </button>
+                  ) : null}
+                  <button className="button secondary" type="button" onClick={() => reveal(render.id)} disabled={revealing}>
+                    <FolderOpen size={14} /> {revealing ? "Opening…" : "Show in file manager"}
+                  </button>
+                </div>
+                {render.outputPath ? <p className="code" style={{ marginTop: 8 }}>{render.outputPath}</p> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {candidates.length ? (
           <div className="choices" style={{ marginTop: 12 }}>

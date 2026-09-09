@@ -44,10 +44,12 @@ export async function persistSourceThumbnails(sourceId: string) {
   }
 }
 
-export async function thumbnailResponse(kind: "source" | "video", id: string, request: Request) {
+export async function thumbnailResponse(kind: "source" | "video" | "render", id: string, request: Request) {
   const record = kind === "source"
     ? await db.source.findUnique({ where: { id }, select: { thumbnailPath: true } })
-    : await db.video.findUnique({ where: { id }, select: { thumbnailPath: true } });
+    : kind === "video"
+    ? await db.video.findUnique({ where: { id }, select: { thumbnailPath: true } })
+    : await db.renderedAsset.findUnique({ where: { id }, select: { thumbnailPath: true } });
   if (!record?.thumbnailPath) throw new AppError("THUMBNAIL_NOT_FOUND", "Thumbnail not found.", 404);
   const details = await stat(record.thumbnailPath).catch(() => { throw new AppError("THUMBNAIL_NOT_FOUND", "Thumbnail file is missing.", 404); });
   const etag = `W/\"${details.size}-${details.mtimeMs}\"`;

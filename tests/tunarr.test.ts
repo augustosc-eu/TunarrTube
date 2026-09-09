@@ -118,4 +118,11 @@ describe("Tunarr publishing helpers", () => {
       { type: "content", id: "program-second", duration: 2000 }
     ]);
   });
+
+  it("recovers a scanned filename's YouTube ID from a '[videoId]' suffix (template/tvshow naming schemes)", () => {
+    const memberships = [{ playlistIndex: 1, video: { youtubeId: "abc123XYZ_-", uploadDate: new Date("2024-01-01") } }];
+    expect(mapPrograms([
+      { type: "content", id: "program-1", duration: 1000, program: { externalId: "/media/Season 2024/My Channel - S2024E001 - My Video [abc123XYZ_-].mp4" } }
+    ], memberships)).toEqual([{ type: "content", id: "program-1", duration: 1000 }]);
+  });
 });

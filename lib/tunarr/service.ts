@@ -6,6 +6,7 @@ import { writeLog } from "@/lib/logging/service";
 import { getSettings, normalizeTunarrUrl, translatePathForTunarr } from "@/lib/settings/service";
 import { enqueueUniqueJob } from "@/lib/sources/service";
 import { materializeForTunarr, VideoUnavailableError } from "@/lib/downloads/service";
+import { extractVideoId, sidecarPathsFor } from "@/lib/naming/service";
 import { rm } from "node:fs/promises";
 import { TunarrApiClient, type TunarrChannel, type TunarrProgram } from "@/lib/tunarr/client";
 import { ensureProgrammingPlan } from "@/lib/programming/ai-service";
@@ -38,7 +39,7 @@ function samePath(left: string, right: string) {
   return path.resolve(left) === path.resolve(right);
 }
 
-async function ensureLocalMediaSource(client: TunarrApiClient, source: { id: string; name: string; mediaDirectory: string; tunarrMediaSourceId: string | null }, signal?: AbortSignal) {
+async function ensureLocalMediaSource(client: TunarrApiClient, source: { id: string; name: string; mediaDirectory: string; tunarrMediaSourceId: string | null; namingScheme?: string | null }, signal?: AbortSignal) {
   const tunarrDirectory = await translatePathForTunarr(source.mediaDirectory);
   let mediaSources = await client.listMediaSources(signal);
   let mediaSource = mediaSources.find((candidate) => candidate.type === "local" && candidate.paths?.some((candidatePath) => samePath(candidatePath, tunarrDirectory)));
@@ -48,7 +49,13 @@ async function ensureLocalMediaSource(client: TunarrApiClient, source: { id: str
     mediaSource = mediaSources.find((candidate) => candidate.id === id);
   }
   if (!mediaSource) throw new AppError("TUNARR_MEDIA_SOURCE_MISSING", "Tunarr did not return the newly created local media source.", 502);
-  const library = mediaSource.libraries.find((candidate) => candidate.enabled && (samePath(candidate.externalKey, tunarrDirectory) || candidate.mediaType === "other_videos")) ?? mediaSource.libraries[0];
+  // A "tvshow"-scheme Source lays its files out as Tunarr's "Shows" scanner expects (Season <year>/
+  // folders, SxxEnn filenames, Kodi episodedetails NFOs -- see lib/naming/service.ts and
+  // lib/downloads/service.ts:buildEpisodeNfo) -- match a "shows" library for it instead of "other_videos".
+  // TunarrTube still never creates the library itself: the user must configure a Tunarr local media
+  // source of the right type pointed at this directory first (see README.md).
+  const expectedMediaType = source.namingScheme === "tvshow" ? "shows" : "other_videos";
+  const library = mediaSource.libraries.find((candidate) => candidate.enabled && (samePath(candidate.externalKey, tunarrDirectory) || candidate.mediaType === expectedMediaType)) ?? mediaSource.libraries[0];
   if (!library) throw new AppError("TUNARR_LIBRARY_MISSING", "The Tunarr local media source has no library to scan.", 502);
   await db.source.update({ where: { id: source.id }, data: { tunarrMediaSourceId: mediaSource.id, tunarrLibraryId: library.id } });
   return { mediaSourceId: mediaSource.id, libraryId: library.id };
@@ -68,15 +75,20 @@ export function orderMemberships<T extends { playlistIndex: number | null; video
   return sorted;
 }
 
-// Keyed by the YouTube ID basename Tunarr's scanner read off disk -- shared by mapPrograms below (the
-// manual-lineup path) and publishSourceToTunarr's "ai" branch (which needs the same lookup keyed by our
-// own candidate ids, not filtered/ordered into a flat lineup).
+// Keyed by the YouTube ID recovered from the filename Tunarr's scanner read off disk -- shared by
+// mapPrograms below (the manual-lineup path) and publishSourceToTunarr's "ai" branch (which needs the
+// same lookup keyed by our own candidate ids, not filtered/ordered into a flat lineup). Filenames aren't
+// guaranteed to be the bare id anymore now that naming schemes are configurable (see
+// lib/naming/service.ts) -- extractVideoId() handles both the back-compat bare-id case and the
+// "...[videoId]" suffix every other scheme appends.
 export function indexProgramsByYoutubeId(programs: TunarrProgram[]) {
   const byYoutubeId = new Map<string, TunarrProgram>();
   for (const program of programs) {
     const externalId = program.program?.externalId;
     if (typeof externalId !== "string") continue;
-    byYoutubeId.set(path.basename(externalId, path.extname(externalId)), program);
+    const basename = path.basename(externalId, path.extname(externalId));
+    const youtubeId = extractVideoId(basename);
+    if (youtubeId) byYoutubeId.set(youtubeId, program);
   }
   return byYoutubeId;
 }
@@ -253,7 +265,9 @@ export async function reconcileTunarrLink(sourceId: string, channelId?: string, 
   const selected = channelId ? channels.find((item) => item.id === channelId) : channels.find((item) => item.id === source.tunarrChannelId)
     ?? channels.filter((item) => item.name === source.tunarrChannelName && item.number === source.tunarrChannelNumber)[0];
   if (channelId && !selected) throw new AppError("TUNARR_CHANNEL_NOT_FOUND", "The selected Tunarr channel no longer exists.", 404);
-  const library = media?.libraries.find((item) => item.enabled && (samePath(item.externalKey, mapped) || item.mediaType === "other_videos")) ?? media?.libraries[0];
+  // See ensureLocalMediaSource's matching comment -- a "tvshow"-scheme Source matches a "shows" library.
+  const expectedMediaType = source.namingScheme === "tvshow" ? "shows" : "other_videos";
+  const library = media?.libraries.find((item) => item.enabled && (samePath(item.externalKey, mapped) || item.mediaType === expectedMediaType)) ?? media?.libraries[0];
   await db.source.update({ where: { id: sourceId }, data: { tunarrMediaSourceId: media?.id ?? source.tunarrMediaSourceId, tunarrLibraryId: library?.id ?? source.tunarrLibraryId, tunarrChannelId: selected?.id ?? source.tunarrChannelId, tunarrChannelNumber: selected?.number ?? source.tunarrChannelNumber, tunarrChannelName: selected?.name ?? source.tunarrChannelName } });
   return tunarrLinkStatus(sourceId, signal);
 }
@@ -264,11 +278,7 @@ export async function unlinkTunarr(sourceId: string) {
   for (const membership of source.videos.filter((item) => item.retentionOrigin === "tunarr")) {
     if (membership.localPath) {
       await rm(membership.localPath, { force: true });
-      await rm(membership.localPath.replace(/\.mp4$/i, ".json"), { force: true });
-      await rm(membership.localPath.replace(/\.mp4$/i, ".nfo"), { force: true });
-      for (const extension of ["jpg", "png", "webp"]) {
-        await rm(membership.localPath.replace(/\.mp4$/i, `-poster.${extension}`), { force: true });
-      }
+      for (const sidecar of sidecarPathsFor(membership.localPath)) await rm(sidecar, { force: true });
     }
     await db.sourceVideo.update({ where: { id: membership.id }, data: { localPath: null, fileSize: null, downloadStatus: "not_downloaded", retentionOrigin: "none" } });
   }

@@ -1,8 +1,13 @@
 import { z } from "zod";
 import { VIDEO_QUALITIES } from "@/lib/youtube/quality";
 import { AI_PROVIDERS, SCHEDULE_STYLES } from "@/lib/programming/types";
+import { NAMING_SCHEMES } from "@/lib/naming/service";
 
 export const videoQualitySchema = z.enum(VIDEO_QUALITIES);
+// A per-Source filenameTemplate is only meaningful for namingScheme "template" -- "id"/"tvshow" ignore
+// it -- but it's still validated/stored regardless of scheme so switching schemes doesn't lose it.
+export const namingSchemeSchema = z.enum(NAMING_SCHEMES);
+export const filenameTemplateSchema = z.string().trim().min(1).max(300);
 // "auto" is only valid for the global AppSettings default -- a per-Source/Channel override must name a
 // concrete provider (or be cleared back to null/"auto" to fall back to the global setting).
 export const aiProviderSettingSchema = z.enum([...AI_PROVIDERS, "auto"]);
@@ -22,7 +27,11 @@ export const createSourceSchema = z.object({
   playbackMode: z.enum(["download", "cache", "stream"]).default("download"),
   videoQuality: videoQualitySchema.nullable().optional(),
   syncEnabled: z.boolean().default(false),
-  syncIntervalMinutes: z.number().int().min(15).max(43_200).default(360)
+  syncIntervalMinutes: z.number().int().min(15).max(43_200).default(360),
+  // null on either means "inherit AppSettings.defaultNamingScheme/defaultFilenameTemplate" -- see
+  // lib/naming/service.ts.
+  namingScheme: namingSchemeSchema.nullable().optional(),
+  filenameTemplate: filenameTemplateSchema.nullable().optional()
 });
 
 export const addCollectionVideosSchema = z.object({
@@ -34,7 +43,9 @@ export const patchSourceSchema = z.object({
   playbackMode: z.enum(["download", "cache", "stream"]).optional(),
   videoQuality: videoQualitySchema.nullable().optional(),
   syncEnabled: z.boolean().optional(),
-  syncIntervalMinutes: z.number().int().min(15).max(43_200).optional()
+  syncIntervalMinutes: z.number().int().min(15).max(43_200).optional(),
+  namingScheme: namingSchemeSchema.nullable().optional(),
+  filenameTemplate: filenameTemplateSchema.nullable().optional()
 }).refine((input) => Object.keys(input).length > 0, { message: "At least one source setting is required." });
 
 export const downloadSchema = z.object({
@@ -51,8 +62,14 @@ export const settingsSchema = z.object({
   logRetentionDays: z.number().int().min(1).max(3650).optional(),
   defaultVideoQuality: videoQualitySchema.optional(),
   musicbrainzContactEmail: z.string().trim().email().nullable().optional(),
+  metadataMusicbrainzEnabled: z.boolean().optional(),
+  metadataItunesEnabled: z.boolean().optional(),
+  metadataAutoApplyThreshold: z.number().int().min(0).max(100).optional(),
   aiProvider: aiProviderSettingSchema.optional(),
-  pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional()
+  ytdlpCookiesPath: z.string().trim().min(1).nullable().optional(),
+  pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional(),
+  defaultNamingScheme: namingSchemeSchema.optional(),
+  defaultFilenameTemplate: filenameTemplateSchema.optional()
 }).refine((input) => Object.values(input).some((value) => value !== undefined), {
   message: "At least one setting is required."
 });

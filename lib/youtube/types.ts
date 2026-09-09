@@ -9,6 +9,11 @@ export type PlaylistEntry = {
   youtubeUrl: string;
   playlistIndex: number | null;
   availability: "available" | "unavailable" | "unknown";
+  // Only ever populated from a full (non-flat-playlist) yt-dlp fetch -- see normalizeEntry in
+  // normalize.ts. YouTube supplies these for videos it has tagged as official music content; most
+  // videos leave them null, and flat-playlist sync entries never carry them at all.
+  artist: string | null;
+  album: string | null;
 };
 
 export type PlaylistAnalysis = {

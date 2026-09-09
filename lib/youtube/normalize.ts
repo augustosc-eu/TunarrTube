@@ -44,7 +44,13 @@ export function normalizeEntry(raw: Raw, fallbackIndex?: number): PlaylistEntry 
     uploader: text(raw.uploader) ?? text(raw.channel),
     youtubeUrl: text(raw.webpage_url) ?? `https://www.youtube.com/watch?v=${encodeURIComponent(youtubeId)}`,
     playlistIndex: number(raw.playlist_index) ?? fallbackIndex ?? null,
-    availability: unavailable ? "unavailable" : rawAvailability ? "available" : "unknown"
+    availability: unavailable ? "unavailable" : rawAvailability ? "available" : "unknown",
+    // yt-dlp's YouTube extractor only fills these from a video's "Music in this video" attachment data,
+    // which is only present on a full per-video fetch (fetchVideoMetadata below), never under
+    // --flat-playlist. "creator" is yt-dlp's fallback name for the same byline on some watch pages that
+    // don't expose a dedicated "artist" field.
+    artist: text(raw.artist) ?? text(raw.creator),
+    album: text(raw.album)
   };
 }
 

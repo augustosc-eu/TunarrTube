@@ -29,7 +29,12 @@ export default async function ChannelDetailPage({ params }: { params: Promise<{ 
           originType: item.mediaItem.originType,
           originLocalPath: item.mediaItem.originLocalPath,
           downloadStatus: item.mediaItem.sourceVideo?.downloadStatus ?? null,
-          renders: item.mediaItem.renders.map((render) => ({ templateId: render.templateId, status: render.status }))
+          renders: item.mediaItem.renders.map((render) => ({
+            id: render.id,
+            templateId: render.templateId,
+            status: render.status,
+            hasThumbnail: Boolean(render.thumbnailPath)
+          }))
         }
       }))}
     />

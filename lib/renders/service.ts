@@ -1,13 +1,17 @@
-import { constants } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import { access, mkdir, stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { RENDERS_ROOT } from "@/lib/constants";
 import { db } from "@/lib/db/client";
 import { ffprobeMediaInfo } from "@/lib/ffmpeg/probe";
 import { renderVideoWithOverlay } from "@/lib/ffmpeg/compose";
+import { extractVideoFrame } from "@/lib/ffmpeg/thumbnail";
 import { writeLog } from "@/lib/logging/service";
 import { parseBindings, renderOverlayLayers, resolveBindingValues } from "@/lib/overlay/service";
+import { parseRange } from "@/lib/playback/service";
+import { revealInFileManager } from "@/lib/system/reveal";
 
 async function exists(file: string) {
   try {
@@ -79,6 +83,18 @@ export async function renderMediaItem(mediaItemId: string, templateId: string, s
     );
 
     const details = await stat(outputPath);
+
+    // Best-effort preview frame -- a failed extraction must not fail the render itself, since the
+    // render's own output is already good on disk at this point.
+    const thumbnailPath = path.join(RENDERS_ROOT, `${mediaItemId}__${templateId}.jpg`);
+    let thumbnailOk = false;
+    try {
+      await extractVideoFrame(outputPath, thumbnailPath, Math.min(1, info.durationSeconds / 2), signal);
+      thumbnailOk = true;
+    } catch (thumbError) {
+      await writeLog({ category: "render", mediaItemId, message: `Rendered "${mediaItem.title}" but could not generate a preview thumbnail: ${thumbError instanceof Error ? thumbError.message : String(thumbError)}` });
+    }
+
     const complete = await db.renderedAsset.update({
       where: { id: asset.id },
       data: {
@@ -86,6 +102,7 @@ export async function renderMediaItem(mediaItemId: string, templateId: string, s
         outputPath,
         outputDurationSeconds: Math.round(info.durationSeconds),
         outputFileSize: BigInt(details.size),
+        thumbnailPath: thumbnailOk ? thumbnailPath : null,
         overlayPngPaths: JSON.stringify(layerPngs.map((entry) => entry.pngPath)),
         renderedAt: new Date(),
         error: null
@@ -100,4 +117,31 @@ export async function renderMediaItem(mediaItemId: string, templateId: string, s
     });
     throw error;
   }
+}
+
+// Streams a completed render's output file, with Range support -- mirrors the local-file branch
+// of lib/playback/service.ts's playbackResponse, minus the cache/stream-fallback machinery that
+// doesn't apply here (a rendered asset always lives at a single local path once complete).
+export async function renderStreamResponse(assetId: string, request: Request, head = false) {
+  const asset = await db.renderedAsset.findUnique({ where: { id: assetId } });
+  if (!asset) throw new AppError("RENDER_NOT_FOUND", "Rendered asset not found.", 404);
+  if (asset.status !== "complete" || !asset.outputPath) throw new AppError("RENDER_NOT_READY", "This render is not complete yet.", 409);
+  const details = await stat(asset.outputPath).catch(() => { throw new AppError("RENDER_FILE_MISSING", "The rendered file is missing on disk.", 404); });
+  const range = parseRange(request.headers.get("range"), details.size);
+  const headers = new Headers({ "Accept-Ranges": "bytes", "Cache-Control": "private, no-store", "Content-Type": "video/mp4" });
+  if (range) headers.set("Content-Range", `bytes ${range.start}-${range.end}/${details.size}`);
+  headers.set("Content-Length", String(range ? range.end - range.start + 1 : details.size));
+  if (head) return new Response(null, { status: range ? 206 : 200, headers });
+  const stream = createReadStream(asset.outputPath, range ? { start: range.start, end: range.end } : undefined);
+  return new Response(Readable.toWeb(stream) as ReadableStream, { status: range ? 206 : 200, headers });
+}
+
+// Opens the host OS's file manager with the rendered file selected, so the operator can find it
+// on disk without hunting through storage/media/_renders by hand.
+export async function revealRenderedAsset(assetId: string) {
+  const asset = await db.renderedAsset.findUnique({ where: { id: assetId } });
+  if (!asset) throw new AppError("RENDER_NOT_FOUND", "Rendered asset not found.", 404);
+  if (!asset.outputPath) throw new AppError("RENDER_NOT_READY", "This render has no output file yet.", 409);
+  if (!(await exists(asset.outputPath))) throw new AppError("RENDER_FILE_MISSING", "The rendered file is missing on disk.", 404);
+  await revealInFileManager(asset.outputPath);
 }

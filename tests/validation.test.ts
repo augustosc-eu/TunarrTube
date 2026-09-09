@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCollectionVideosSchema, analyzeSourceSchema, createSourceSchema, createTemplateSchema, logsPurgeSchema, settingsSchema } from "@/lib/validation";
+import { addCollectionVideosSchema, analyzeSourceSchema, createSourceSchema, createTemplateSchema, logsPurgeSchema, patchSourceSchema, settingsSchema } from "@/lib/validation";
 
 describe("Phase 2 validation", () => {
   it("accepts channel analysis and all playback modes", () => {
@@ -20,6 +20,13 @@ describe("Phase 2 validation", () => {
   it("validates batches of individual video URLs", () => {
     expect(addCollectionVideosSchema.parse({ urls: ["https://youtu.be/rtX9Fof1muY"] }).urls).toHaveLength(1);
     expect(() => addCollectionVideosSchema.parse({ urls: [] })).toThrow();
+  });
+  it("accepts a valid naming scheme override and rejects an unknown one", () => {
+    expect(settingsSchema.parse({ defaultNamingScheme: "tvshow" }).defaultNamingScheme).toBe("tvshow");
+    expect(() => settingsSchema.parse({ defaultNamingScheme: "bogus" })).toThrow();
+    expect(patchSourceSchema.parse({ namingScheme: "template", filenameTemplate: "{channel} - {title}" }).filenameTemplate).toBe("{channel} - {title}");
+    expect(patchSourceSchema.parse({ namingScheme: null }).namingScheme).toBeNull();
+    expect(() => patchSourceSchema.parse({ filenameTemplate: "" })).toThrow();
   });
   it("bounds template field sizes -- a direct API call bypasses the visual editor's client-side image-size check", () => {
     const base = { name: "Test", htmlTemplate: "<div></div>", bindingsJson: "[]", layersJson: "[]" };

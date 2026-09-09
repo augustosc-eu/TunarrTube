@@ -1,5 +1,6 @@
 import { AppError } from "@/lib/api";
 import { getSettings } from "@/lib/settings/service";
+import { fetchJsonWithRetry, withProviderCache } from "@/lib/metadata-lookup/http";
 import type { MetadataCandidate, MetadataProvider } from "@/lib/metadata-lookup/types";
 
 const MIN_INTERVAL_MS = 1100; // MusicBrainz's usage policy asks for ~1 request/second per client.
@@ -30,19 +31,19 @@ export const musicBrainzProvider: MetadataProvider = {
     const clauses = [`recording:"${luceneEscape(title)}"`];
     if (artist) clauses.push(`artist:"${luceneEscape(artist)}"`);
     const query = new URLSearchParams({ query: clauses.join(" AND "), fmt: "json", limit: "10" });
+    const url = `https://musicbrainz.org/ws/2/recording/?${query.toString()}`;
 
-    await throttle();
-    let response: Response;
-    try {
-      response = await fetch(`https://musicbrainz.org/ws/2/recording/?${query.toString()}`, {
-        signal,
-        headers: { "User-Agent": `tunarrtube/0.1 ( ${contact} )`, Accept: "application/json" }
-      });
-    } catch (error) {
-      throw new AppError("MUSICBRAINZ_UNREACHABLE", `Could not reach MusicBrainz: ${error instanceof Error ? error.message : String(error)}`, 502);
-    }
-    if (!response.ok) throw new AppError("MUSICBRAINZ_API_ERROR", `MusicBrainz returned ${response.status}.`, 502);
-    const body = (await response.json()) as { recordings?: MbRecording[] };
+    const body = await withProviderCache(`musicbrainz:${url}`, async () => {
+      await throttle();
+      let response: Response;
+      try {
+        response = await fetchJsonWithRetry(url, { headers: { "User-Agent": `tunarrtube/0.1 ( ${contact} )`, Accept: "application/json" } }, signal);
+      } catch (error) {
+        throw new AppError("MUSICBRAINZ_UNREACHABLE", `Could not reach MusicBrainz: ${error instanceof Error ? error.message : String(error)}`, 502);
+      }
+      if (!response.ok) throw new AppError("MUSICBRAINZ_API_ERROR", `MusicBrainz returned ${response.status}.`, 502);
+      return (await response.json()) as { recordings?: MbRecording[] };
+    });
 
     return (body.recordings ?? []).map((recording): MetadataCandidate => {
       const release = recording.releases?.[0];

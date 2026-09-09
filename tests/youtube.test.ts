@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { normalizePlaylist, parseUploadDate } from "@/lib/youtube/normalize";
+import { normalizeEntry, normalizePlaylist, parseUploadDate } from "@/lib/youtube/normalize";
 import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
-import { extractAvailabilityReason } from "@/lib/youtube/ytdlp";
+import { extractAvailabilityReason, isSignInRequiredError, isUnavailableVideoError } from "@/lib/youtube/ytdlp";
 
 describe("YouTube input validation", () => {
   it("accepts HTTPS playlist URLs", () => {
@@ -64,6 +64,21 @@ describe("yt-dlp normalization", () => {
       .toThrow(/detected 21 playlist items/);
   });
   it("parses yt-dlp upload dates in UTC", () => expect(parseUploadDate("20250131")?.toISOString()).toBe("2025-01-31T00:00:00.000Z"));
+
+  it("captures artist/album from a full yt-dlp fetch when present", () => {
+    const entry = normalizeEntry({ id: "abc12345678", title: "Song (Official Video)", artist: "Some Artist", album: "Some Album" });
+    expect(entry).toMatchObject({ artist: "Some Artist", album: "Some Album" });
+  });
+
+  it("falls back to creator when yt-dlp has no dedicated artist field", () => {
+    const entry = normalizeEntry({ id: "abc12345678", title: "Song", creator: "Some Creator" });
+    expect(entry?.artist).toBe("Some Creator");
+  });
+
+  it("leaves artist/album null for an ordinary (non-music) video, e.g. under --flat-playlist", () => {
+    const entry = normalizeEntry({ id: "abc12345678", title: "Just a video" });
+    expect(entry).toMatchObject({ artist: null, album: null });
+  });
 });
 
 describe("YouTube availability reasons", () => {
@@ -79,4 +94,21 @@ describe("YouTube availability reasons", () => {
   });
 
   it("returns null when no player response is present", () => expect(extractAvailabilityReason("<html></html>")).toBeNull());
+});
+
+describe("sign-in-required classification", () => {
+  it.each([
+    "ERROR: [youtube] SrFc0Be8b6o: Sign in to confirm your age. This video may be inappropriate for some users.",
+    "ERROR: [youtube] abcdefghijk: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication."
+  ])("classifies %s as needing sign-in, not gone for good", (message) => {
+    expect(isSignInRequiredError(message)).toBe(true);
+    // Distinct from isUnavailableVideoError: the video isn't gone, just unauthenticated -- callers should
+    // still stop retrying (see unavailabilityReason), but with an actionable "configure cookies" reason
+    // rather than treating it like a deleted/private video.
+    expect(isUnavailableVideoError(message)).toBe(false);
+  });
+
+  it("does not misclassify an ordinary error as sign-in-required", () => {
+    expect(isSignInRequiredError("ERROR: [youtube] abc: Video unavailable")).toBe(false);
+  });
 });

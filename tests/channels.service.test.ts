@@ -54,13 +54,13 @@ async function makeChannel() {
   return channel;
 }
 
-async function makeDownloadedSourceVideo() {
+async function makeDownloadedSourceVideo(videoData: { artist?: string | null; album?: string | null } = {}) {
   const suffix = `${Date.now()}-${Math.random()}`;
   const source = await db.source.create({
     data: { name: "Attach test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `attach-test-${suffix}`, mediaDirectory: `/tmp/ytarr-attach-test-${suffix}` }
   });
   const video = await db.video.create({
-    data: { youtubeId: `video-${suffix}`, title: "Attach test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`, durationSeconds: 180 }
+    data: { youtubeId: `video-${suffix}`, title: "Attach test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`, durationSeconds: 180, ...videoData }
   });
   const sourceVideo = await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, downloadStatus: "complete", localPath: `/tmp/ytarr-attach-test-${suffix}/${video.youtubeId}.mp4` } });
   cleanupSourceIds.push(source.id);
@@ -90,6 +90,29 @@ describe("attachExistingVideo", () => {
 
     const items = await db.channelItem.findMany({ where: { channelId: channel.id } });
     expect(items).toHaveLength(1);
+  });
+
+  it("seeds artist/album from the Video row when yt-dlp already supplied them, and skips the automatic lookup job", async () => {
+    const channel = await makeChannel();
+    const sourceVideo = await makeDownloadedSourceVideo({ artist: "Some Artist", album: "Some Album" });
+
+    const mediaItem = await attachExistingVideo(channel.id, sourceVideo.id);
+    expect(mediaItem).toMatchObject({ artist: "Some Artist", album: "Some Album" });
+
+    const lookupJobs = await db.job.findMany({ where: { mediaItemId: mediaItem.id, type: "metadata_lookup" } });
+    expect(lookupJobs).toHaveLength(0);
+  });
+
+  it("queues an automatic metadata_lookup job when the Video has no artist", async () => {
+    const channel = await makeChannel();
+    const sourceVideo = await makeDownloadedSourceVideo();
+
+    const mediaItem = await attachExistingVideo(channel.id, sourceVideo.id);
+    expect(mediaItem.artist).toBeNull();
+
+    const lookupJobs = await db.job.findMany({ where: { mediaItemId: mediaItem.id, type: "metadata_lookup" } });
+    expect(lookupJobs).toHaveLength(1);
+    cleanupJobIds.push(...lookupJobs.map((job) => job.id));
   });
 
   it("lets the same clip be shared across two different channels via separate ChannelItem rows", async () => {

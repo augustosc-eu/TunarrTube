@@ -22,6 +22,10 @@ model Source {
   historyLimit                 Int?
   directoryName                String
   mediaDirectory               String
+  // Per-Source override of AppSettings.defaultNamingScheme/defaultFilenameTemplate -- null on either
+  // means "inherit the global default", same convention as videoQuality above. See lib/naming/service.ts.
+  namingScheme                 String?
+  filenameTemplate             String?
   syncEnabled                  Boolean       @default(false)
   syncIntervalMinutes          Int           @default(360)
   nextSyncAt                   DateTime?
@@ -62,6 +66,13 @@ model Video {
   title              String
   description        String?
   uploader           String?
+  // Populated only when yt-dlp's full (non-flat-playlist) metadata fetch reports them -- YouTube
+  // exposes these for videos it has tagged as official music content. Flat-playlist sync entries never
+  // carry them; they're filled in once the "metadata" job (lib/metadata/service.ts:enrichVideo) runs its
+  // full per-video fetch. See lib/channels/service.ts:attachExistingVideo, the first place that reads
+  // them onto a MediaItem.
+  artist             String?
+  album              String?
   durationSeconds    Int?
   uploadDate         DateTime?
   thumbnailUrl       String?
@@ -91,6 +102,12 @@ model SourceVideo {
   downloadStatus   String     @default("not_downloaded")
   fileSize         BigInt?
   retentionOrigin  String     @default("none")
+  // Assigned once, lazily, the first time this membership is resolved under the "tvshow" naming
+  // scheme (see lib/naming/service.ts:assignEpisodeNumber) -- season is the upload year, episode is a
+  // per-(source, season) monotonic counter. Never recomputed afterward, so switching naming schemes or
+  // discovering older videos later never renumbers/renames anything already on disk.
+  seasonNumber     Int?
+  episodeNumber    Int?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   source           Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
@@ -160,10 +177,32 @@ model AppSettings {
   defaultVideoQuality     String   @default("best")
   jobsPaused              Boolean  @default(false)
   musicbrainzContactEmail String?
+  // Absolute path to a Netscape-format cookies.txt file yt-dlp should authenticate with (passed as
+  // `--cookies <path>` -- see lib/youtube/ytdlp.ts's cookiesArgs). Lets age-restricted/bot-checked videos
+  // ("Sign in to confirm your age/you're not a bot") download instead of permanently failing. This is a
+  // path to a file the operator manages and mounts into the container (e.g. a docker-compose bind mount)
+  // -- TunarrTube never uploads, generates, or displays its contents, only ever passes the path through to
+  // yt-dlp. Null means unauthenticated (the MVP default; see AGENTS.md's stance on cookie-based auth).
+  ytdlpCookiesPath        String?
+  // Per-provider on/off switches for lib/metadata-lookup/'s MusicBrainz/iTunes search, plus the score
+  // (0-100, same scale both providers now return -- see lib/metadata-lookup/itunes.ts's similarity
+  // scorer) a candidate needs to be applied automatically by lib/metadata-lookup/service.ts:autoApplyMetadata,
+  // the "metadata_lookup" job queued by attachExistingVideo/scanLocalFolder when a new MediaItem has no
+  // artist. Below the threshold, the item is left for the user's manual Search in the media item editor.
+  metadataMusicbrainzEnabled  Boolean @default(true)
+  metadataItunesEnabled       Boolean @default(true)
+  metadataAutoApplyThreshold  Int     @default(80)
   // Global default for lib/programming/'s AI provider selection ("auto" | "anthropic" | "openai");
   // "auto" picks whichever of ANTHROPIC_API_KEY/OPENAI_API_KEY is set in the environment. A Source or
   // Channel's own aiProvider column overrides this per-entity.
   aiProvider              String   @default("auto")
+  // Global default for a downloaded video's on-disk filename/folder layout -- "id" (today's
+  // <youtubeId>.mp4, flat, unchanged default), "template" (defaultFilenameTemplate applied flat), or
+  // "tvshow" (Emby/Plex/Jellyfin- and Tunarr-Shows-compatible Show/Season <year>/S<year>E<nnn> layout).
+  // A Source's own namingScheme/filenameTemplate columns override this per-Source. See
+  // lib/naming/service.ts.
+  defaultNamingScheme     String   @default("id")
+  defaultFilenameTemplate String   @default("{title}")
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 }
@@ -347,6 +386,7 @@ model RenderedAsset {
   outputPath            String?
   outputDurationSeconds Int?
   outputFileSize        BigInt?
+  thumbnailPath         String?
   overlayPngPaths       String? // JSON string[]
   ffmpegLog             String?
   error                 String?

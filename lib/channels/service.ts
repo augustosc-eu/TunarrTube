@@ -156,10 +156,17 @@ export async function attachExistingVideo(channelId: string, sourceVideoId: stri
       originType: "sourceVideo",
       sourceVideoId,
       title: sourceVideo.video.title,
+      // Free when present: yt-dlp's own artist/album tags for a video YouTube marked as official
+      // music content (lib/youtube/normalize.ts, captured onto Video by enrichVideo). Queuing a
+      // metadata_lookup job below only when this doesn't already supply an artist avoids a redundant
+      // MusicBrainz/iTunes round-trip for videos that didn't need one.
+      artist: sourceVideo.video.artist,
+      album: sourceVideo.video.album,
       durationSeconds: sourceVideo.video.durationSeconds,
       sourceThumbnailUrl: sourceVideo.video.thumbnailUrl
     }
   });
+  if (!mediaItem.artist && mediaItem.metadataStatus === "pending") await enqueueChannelJob("metadata_lookup", { mediaItemId: mediaItem.id });
   await addMediaItemToChannel(channelId, mediaItem.id);
   await writeLog({ category: "channel", channelId, mediaItemId: mediaItem.id, message: `Attached "${mediaItem.title}" to ${channel.name}.` });
   return mediaItem;

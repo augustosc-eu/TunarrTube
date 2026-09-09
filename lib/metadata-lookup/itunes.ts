@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/api";
+import { fetchJsonWithRetry, similarityScore, withProviderCache } from "@/lib/metadata-lookup/http";
 import type { MetadataCandidate, MetadataProvider } from "@/lib/metadata-lookup/types";
 
 type ItunesResult = {
@@ -16,16 +17,23 @@ export const itunesProvider: MetadataProvider = {
   async search({ title, artist }, signal) {
     const term = artist ? `${artist} ${title}` : title;
     const query = new URLSearchParams({ term, media: "musicVideo", entity: "musicVideo", limit: "10" });
+    const url = `https://itunes.apple.com/search?${query.toString()}`;
 
-    let response: Response;
-    try {
-      response = await fetch(`https://itunes.apple.com/search?${query.toString()}`, { signal });
-    } catch (error) {
-      throw new AppError("ITUNES_UNREACHABLE", `Could not reach the iTunes Search API: ${error instanceof Error ? error.message : String(error)}`, 502);
-    }
-    if (!response.ok) throw new AppError("ITUNES_API_ERROR", `iTunes Search API returned ${response.status}.`, 502);
-    const body = (await response.json()) as { results?: ItunesResult[] };
+    const body = await withProviderCache(`itunes:${url}`, async () => {
+      let response: Response;
+      try {
+        response = await fetchJsonWithRetry(url, {}, signal);
+      } catch (error) {
+        throw new AppError("ITUNES_UNREACHABLE", `Could not reach the iTunes Search API: ${error instanceof Error ? error.message : String(error)}`, 502);
+      }
+      if (!response.ok) throw new AppError("ITUNES_API_ERROR", `iTunes Search API returned ${response.status}.`, 502);
+      return (await response.json()) as { results?: ItunesResult[] };
+    });
 
+    // The API itself returns results in relevance order but no comparable score, so approximate one
+    // by comparing the query term against each result's own "artist title" text -- this is what puts
+    // iTunes candidates on the same 0-100 scale as MusicBrainz's native score for
+    // lib/metadata-lookup/service.ts:autoApplyMetadata's auto-apply threshold.
     return (body.results ?? []).map((result): MetadataCandidate => ({
       provider: "itunes",
       externalId: String(result.trackId),
@@ -35,7 +43,7 @@ export const itunesProvider: MetadataProvider = {
       year: result.releaseDate ? Number(result.releaseDate.slice(0, 4)) : undefined,
       releaseDate: result.releaseDate?.slice(0, 10),
       artUrl: result.artworkUrl100 ? result.artworkUrl100.replace("100x100", "600x600") : null,
-      score: 0
+      score: similarityScore(term, `${result.artistName ?? ""} ${result.trackName}`)
     }));
   }
 };

@@ -5,7 +5,7 @@ import { VIDEO_EXTENSIONS } from "@/lib/constants";
 import { db } from "@/lib/db/client";
 import { ffprobeMediaInfo } from "@/lib/ffmpeg/probe";
 import { writeLog } from "@/lib/logging/service";
-import { addMediaItemToChannel } from "@/lib/channels/service";
+import { addMediaItemToChannel, enqueueChannelJob } from "@/lib/channels/service";
 
 function titleFromFilename(filePath: string) {
   return path.basename(filePath, path.extname(filePath)).replace(/[._]+/g, " ").trim();
@@ -50,6 +50,10 @@ export async function scanLocalFolder(channelId: string, folderPath: string) {
         metadataStatus: "pending"
       }
     });
+    // A local file has no yt-dlp tags to seed from, so this is the only way it ever gets an artist --
+    // same auto-apply threshold as attachExistingVideo (lib/channels/service.ts), so a bad filename-
+    // derived title is more likely to score too low to apply than to overwrite a good title with junk.
+    await enqueueChannelJob("metadata_lookup", { mediaItemId: mediaItem.id });
     await addMediaItemToChannel(channelId, mediaItem.id);
     added++;
   }

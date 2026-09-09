@@ -43,7 +43,7 @@ yt-dlp analysis ──► SQLite catalog ──► background job queue
                   Tunarr Local Media ──► Tunarr channel
 ```
 
-TunarrTube does not upload video metadata directly into Tunarr. Tunarr scans the shared media directory and reads the generated `<youtubeId>.nfo` sidecars. It then matches scanned programs back to TunarrTube records using the YouTube ID in each filename.
+TunarrTube does not upload video metadata directly into Tunarr. Tunarr scans the shared media directory and reads the generated `.nfo` sidecars. It then matches scanned programs back to TunarrTube records using the YouTube ID recovered from each filename (the whole filename under the default naming scheme, or a trailing `[videoId]` under a custom one — see "Naming" below).
 
 ## Quick start with Docker
 
@@ -201,8 +201,8 @@ A **Channel** (the entity under the **Channels** tab, distinct from a Source's o
 1. Open **Templates** once to confirm the built-in "Music Video Lower Third" template exists (it seeds itself automatically), or design your own with the visual drag-and-drop editor. The editor places text elements bound to clip metadata, and static PNG/GIF images (a logo bug, for example) — an animated GIF is baked in as a single still frame, it doesn't play in the render. Templates you create can be deleted from their editor page; built-in templates and ones still assigned to a channel can't be.
 2. Open **Channels → New channel**, name it, and pick a template.
 3. On the channel's page, add media: pick an already-downloaded video, paste a YouTube URL (downloaded through a Source created automatically for this channel — visible under **Sources**), or scan a local folder.
-4. Edit each clip's title/artist/album (or use **Look up** for MusicBrainz/iTunes metadata + artwork).
-5. Select **Render all**, then wait for rendering to finish (check **Queue**).
+4. Each clip gets an artist automatically where possible: first from YouTube's own tags (when yt-dlp reports a video as official music content), otherwise from a background MusicBrainz/iTunes search applied only when it's confident enough (tune this in Settings). Edit any clip's title/artist/album directly, or use **Look up** to search and apply a match yourself — including when the automatic search wasn't confident enough to apply one.
+5. Select **Render all**, then wait for rendering to finish (check **Queue**). Open a rendered clip's page to preview it inline, see its file size/duration, copy its on-disk path, or **Show in file manager** to reveal the rendered `.mp4` where it lives on disk.
 6. Open the channel's **Tunarr** panel and select **Publish to Tunarr**.
 
 This creates a second, independent Tunarr channel alongside any Source-based ones.
@@ -248,7 +248,7 @@ curl -X POST http://localhost:3000/api/sources/analyze \
 
 ## Configuration
 
-Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature.
+Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature — plus toggles to enable/disable the MusicBrainz and iTunes lookups individually and an **auto-apply confidence threshold** (0-100) controlling how sure the automatic artist lookup (see above) needs to be before it applies a match on its own; anything scoring below the threshold is left for you to resolve manually via **Look up**.
 
 | Variable | Purpose | Default |
 |---|---|---|
@@ -257,6 +257,7 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `TUNARRTUBE_FFMPEG_PATH` | Absolute FFmpeg executable path | Auto-discovered |
 | `TUNARRTUBE_MEDIA_DIR` | Initial media root | `storage/media` |
 | `TUNARRTUBE_THUMBNAIL_DIR` | Thumbnail storage root | `storage/thumbnails` |
+| `TUNARRTUBE_YTDLP_COOKIES` | Initial `yt-dlp` cookies file path (see "Age-restricted or sign-in-required videos" below) | None (unauthenticated) |
 | `TUNARRTUBE_TUNARR_URL` | Initial Tunarr base URL | `http://127.0.0.1:8000` native; `http://tunarr:8000` in Compose |
 | `TUNARRTUBE_GENERAL_WORKERS` | How many non-download/cache jobs run concurrently (downloads/cache always run one at a time) | `3` |
 | `YTARR_FFPROBE_PATH` | Absolute `ffprobe` executable path (used by Channels rendering) | Auto-discovered |
@@ -276,9 +277,19 @@ Native defaults:
 - Database: `prisma/ytarr.db`
 - Media: `storage/media/`
 - Thumbnails: `storage/thumbnails/`
-- Source files: `<media-root>/<source-directory>/<youtubeId>.mp4`
+- Source files: `<media-root>/<source-directory>/<youtubeId>.mp4` by default (see "Naming" below for custom filename/folder layouts)
 - Metadata: matching `<youtubeId>.json` and `<youtubeId>.nfo` files
 - Artwork: a matching `<youtubeId>-poster.jpg` (or `.png`/`.webp`) file, mirrored from the video's thumbnail so Tunarr's guide and "now playing" screen have an image for it
+
+### Naming
+
+Settings → Naming controls how downloaded files are named and organized, with a per-source override available on each source's own page:
+
+- **YouTube video ID** (default) — `<mediaDirectory>/<youtubeId>.mp4`, unchanged from every TunarrTube release before this setting existed.
+- **Custom filename template** — a template string using `{title}`, `{channel}`, `{date}` (upload date, `YYYY-MM-DD`), `{year}`, and `{videoId}`, e.g. `{channel} - {title}`. A literal `/` in the template creates a subfolder, e.g. `{channel}/{title}` produces `<mediaDirectory>/<channel>/<title>.mp4`. The YouTube video ID is always appended in brackets (`Title [videoId].mp4`) when the template doesn't already include it, so Tunarr can still match the file and two same-titled videos never collide on disk.
+- **TV show** — an Emby/Plex/Jellyfin- and Tunarr "Shows"-scanner-compatible layout: `<mediaDirectory>/Season <upload year>/<source name> - S<year>E<episode> - <title> [videoId].mp4`, with a matching Kodi `<episodedetails>` NFO (season/episode/plot/aired date, plus a `<uniqueid type="youtube">` carrying the YouTube ID), a `tvshow.nfo` at the source's root, a `<basename>-thumb.<ext>` episode thumbnail, and a `<basename>.info.json` sidecar carrying the same metadata plus the assigned season/episode. Episode numbers are assigned once per video (first-assigned-wins per season) and never renumbered, so they stay stable even if older videos are discovered later. To have Tunarr itself recognize this layout as a TV show (rather than "Other Videos"), configure a Tunarr local media source of type "Shows" pointed at the source's directory — TunarrTube matches the right library automatically but doesn't create it for you.
+
+Changing a naming setting only affects future downloads — already-downloaded files keep their existing names and locations (same rule as changing the media root above).
 
 Back up the SQLite database and media root before upgrades.
 
@@ -287,7 +298,7 @@ Back up the SQLite database and media root before upgrades.
 - **Queue** shows running, queued, retrying, and recently completed background work. A queued job (including one waiting to retry) can be cancelled outright or postponed to a later time (15 minutes up to a week) without losing its place; a failed or cancelled one can be retried, which requeues it fresh rather than resuming the old attempt. A running download, cache, sync, metadata, or Tunarr publish/refresh job can be stopped mid-flight — Stop immediately records cancellation (even for a stranded job with no live worker), then interrupts its process or network request; cancellation survives a restart. Publishing also passes Stop through to any media downloads it needs; a metadata-repair or thumbnail job has no interrupt point and finishes on its own instead. Cancelling or stopping a download or cache job is sticky — it stays cancelled through automatic syncs and Tunarr refreshes until you retry it (or play the video again, for Cache/Stream sources) or switch the source's playback mode to Permanent, which re-downloads everything not yet complete. The toolbar's Pause queue toggle stops the worker from picking up any new job (existing running work keeps going until it finishes or you stop it) — use it and Resume queue to hold everything for a while. Downloads and cache fills always run one at a time, no matter how many are queued, to avoid tripping YouTube's rate limiting; everything else (metadata, thumbnails, sync, Tunarr publish/refresh, and more) runs several at once (3 by default, `TUNARRTUBE_GENERAL_WORKERS` in `.env` to change it) since that work doesn't hit YouTube's video CDN.
 - **Cache** shows used, pinned, protected, and evictable storage.
 - **Logs** contains sanitized operational events. Signed YouTube/Googlevideo URLs and cookie flags are redacted before persistence. Entries older than the configured log retention (30 days by default, set in Settings) are purged automatically every hour; **Purge old entries** runs that same cleanup immediately, and **Clear all** empties the log table outright.
-- **Settings** tests binary discovery and Tunarr connectivity, controls cache limits and log retention, repairs older metadata sidecars, and previews path mappings.
+- **Settings** tests binary discovery and Tunarr connectivity, controls cache limits and log retention, sets the default downloaded filename/folder naming scheme (with a live preview), repairs older metadata sidecars, and previews path mappings.
 
 Downloads are written to temporary paths and renamed into place only after `yt-dlp` and FFmpeg succeed. Interrupted jobs are requeued after restart only while attempts remain; jobs at their retry limit are marked failed and can be retried manually from Queue. Jobs normally retry up to three times — except one YouTube itself reports as permanently unavailable, which fails immediately without retrying (see "A download failed" below).
 
@@ -299,7 +310,7 @@ Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_
 
 ### A YouTube URL cannot be analyzed
 
-Only public HTTPS URLs on supported YouTube hosts are accepted, including `youtu.be`. Cookie-based access, private/account-only media, and age-restricted authentication are not supported.
+Only public HTTPS URLs on supported YouTube hosts are accepted, including `youtu.be`. Private/unlisted, account-only, and members-only media are not supported — TunarrTube can't browse a signed-in account's library, only analyze a URL you already have. Age-restricted and bot-checked *public* videos are supported if you configure a cookies file (see "Age-restricted or sign-in-required videos" below); without one they're marked unavailable instead of failing repeatedly.
 
 YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), self-update refuses and reports the error; update it with that package manager instead.
 
@@ -308,6 +319,24 @@ YouTube changes its extraction behavior regularly. In Settings, click **Update**
 Review **Logs** for the sanitized error. Check available disk space, filesystem permissions, and the installed `yt-dlp`/FFmpeg versions, then queue the video again.
 
 If the error is YouTube reporting the video itself as private, deleted, or otherwise unavailable, TunarrTube records that on the video (visible as an "unavailable" badge on the source's video table) and stops retrying it automatically — including on future syncs — since a retry can never succeed. From there you can either **Retry** it from the Queue page (in case YouTube reinstates it later) or **Remove** it from the source's video table to drop it for good.
+
+### Age-restricted or sign-in-required videos
+
+`yt-dlp` reports age-restricted and bot-checked videos with messages like `Sign in to confirm your age` or `Sign in to confirm you're not a bot`. TunarrTube recognizes these, marks the video "unavailable" with that explanation instead of retrying it forever (same recovery as above — **Retry** it from Queue once fixed, or **Remove** it), and won't spam Logs with the same failure on every sync.
+
+To actually download these videos instead of skipping them, configure **yt-dlp cookies file** in Settings → External tools with an absolute path (inside the TunarrTube container/host) to a Netscape-format `cookies.txt`:
+
+1. Export cookies for `youtube.com` from a signed-in browser session, on a machine you control, using a browser extension (e.g. "Get cookies.txt LOCALLY"). Use an account you're comfortable authenticating a background download tool as — not a primary/shared account.
+2. Make the file available inside the container. With Docker Compose, bind-mount it read-only:
+   ```yaml
+   services:
+     tunarrtube:
+       volumes:
+         - ./cookies.txt:/config/cookies.txt:ro
+   ```
+3. In Settings, set the cookies file path to the in-container path (`/config/cookies.txt` for the example above), or set `TUNARRTUBE_YTDLP_COOKIES` before first start. Existing "unavailable" videos need a manual **Retry** — they aren't automatically retried once cookies are added.
+
+TunarrTube never uploads, generates, or displays this file's contents — it only passes the path to `yt-dlp` as `--cookies <path>`, and that path is redacted from Logs the same way other `--cookies[-from-browser]` flags already are (see Security below). Treat the file itself like a password: whoever can read it can act as that YouTube account, cookies expire and need periodic re-export, and tripping YouTube's automation detection on a shared/family account risks that account, not just the download.
 
 ### Tunarr cannot find downloaded videos
 
@@ -337,7 +366,7 @@ No. A sync only marks the corresponding membership `missing`; it never deletes t
 No. The background job worker and scheduler keep their state in-process with no distributed locking, so only a single running instance is supported per SQLite database.
 
 **Does TunarrTube support private, unlisted, or age-restricted videos?**
-No. Only public HTTPS URLs on supported YouTube hosts are accepted. Cookie-based or authenticated extraction is intentionally out of scope.
+Private, unlisted, and account/members-only media: no — TunarrTube can only analyze a public HTTPS URL you already have, never browse a signed-in account's library. Age-restricted or bot-checked *public* videos: optionally, if you configure a `yt-dlp` cookies file (Settings → External tools) — see "Age-restricted or sign-in-required videos" above. Without one, those videos are marked unavailable with an explanation instead of downloading.
 
 **If I change the media directory in Settings, does it move my existing downloads?**
 No. Only future downloads use the new directory; already-completed files keep their recorded paths and are not moved.
@@ -347,7 +376,7 @@ No, for any playback mode. Tunarr's local-media source only scans real files on 
 
 ## Security
 
-TunarrTube's API can start downloads, change writable paths, and mutate the configured Tunarr server. The default native and Compose configurations bind to host loopback only. If remote access is required, use an authenticating reverse proxy or VPN with TLS and access controls.
+TunarrTube's API can start downloads, change writable paths, and mutate the configured Tunarr server. The default native and Compose configurations bind to host loopback only. If remote access is required, use an authenticating reverse proxy or VPN with TLS and access controls. Anyone who can reach the API can also set the yt-dlp cookies file path (see "Age-restricted or sign-in-required videos") to any file readable inside the container, so the same access controls that protect downloads/settings also protect that YouTube account's session.
 
 See [SECURITY.md](SECURITY.md) for the supported-version policy, deployment guidance, and private vulnerability-reporting process.
 

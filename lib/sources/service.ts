@@ -3,6 +3,7 @@ import path from "node:path";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
+import { sidecarPathsFor } from "@/lib/naming/service";
 import { getSettings } from "@/lib/settings/service";
 import { analyzeSource, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
 import { validateVideoUrl } from "@/lib/youtube/url";
@@ -62,7 +63,7 @@ async function uniqueDirectoryName(name: string) {
   return candidate;
 }
 
-export async function createSourceFromDraft(draftId: string, requestedName?: string, playbackMode = "download", syncEnabled = false, syncIntervalMinutes = 360, videoQuality: string | null = null) {
+export async function createSourceFromDraft(draftId: string, requestedName?: string, playbackMode = "download", syncEnabled = false, syncIntervalMinutes = 360, videoQuality: string | null = null, namingScheme: string | null = null, filenameTemplate: string | null = null) {
   const draft = await db.importDraft.findUnique({ where: { id: draftId } });
   if (!draft || draft.expiresAt < new Date() || draft.consumedAt) throw new AppError("INVALID_IMPORT_DRAFT", "This analysis expired or was already used. Analyze the playlist again.", 410);
   if (draft.sourceType !== "collection") {
@@ -77,12 +78,12 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
   const entries = restoreEntries(draft.entriesJson);
   const source = await db.$transaction(async (tx) => {
     const canSync = draft.sourceType !== "collection" && syncEnabled;
-    const created = await tx.source.create({ data: { name, url: draft.url, sourceType: draft.sourceType, youtubeId: draft.sourceType === "collection" ? `collection:${draft.id}` : draft.youtubeId, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, playbackMode, videoQuality, feedType: draft.feedType, historyLimit: draft.historyLimit, directoryName, mediaDirectory, syncEnabled: canSync, syncIntervalMinutes, nextSyncAt: canSync ? new Date(Date.now() + syncIntervalMinutes * 60_000) : null } });
+    const created = await tx.source.create({ data: { name, url: draft.url, sourceType: draft.sourceType, youtubeId: draft.sourceType === "collection" ? `collection:${draft.id}` : draft.youtubeId, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, playbackMode, videoQuality, feedType: draft.feedType, historyLimit: draft.historyLimit, directoryName, mediaDirectory, syncEnabled: canSync, syncIntervalMinutes, nextSyncAt: canSync ? new Date(Date.now() + syncIntervalMinutes * 60_000) : null, namingScheme, filenameTemplate } });
     for (const entry of entries) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
         update: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined, availability: entry.availability },
-        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability }
+        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability, artist: entry.artist, album: entry.album }
       });
       await tx.sourceVideo.upsert({
         where: { sourceId_videoId: { sourceId: created.id, videoId: video.id } },
@@ -141,7 +142,7 @@ export async function syncSource(sourceId: string, signal?: AbortSignal) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
         update: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined },
-        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability }
+        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability, artist: entry.artist, album: entry.album }
       });
       const existingMembership = existing
         ? await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: existing.id } }, select: { id: true } })
@@ -238,14 +239,10 @@ export async function removeVideoFromSource(sourceId: string, videoId: string) {
   const { rm } = await import("node:fs/promises");
   if (membership.localPath) {
     // Mirrors unlinkTunarr()'s cleanup (lib/tunarr/service.ts): the sidecar/NFO/poster files this source
-    // wrote alongside the video (see writeSidecar/writeNfo/writePosterArtwork in lib/downloads/service.ts)
-    // share its basename, so pick them up the same way.
+    // wrote alongside the video (see lib/downloads/service.ts) share its basename, so pick them up the
+    // same way regardless of which naming scheme wrote them.
     await rm(membership.localPath, { force: true });
-    await rm(membership.localPath.replace(/\.mp4$/i, ".json"), { force: true });
-    await rm(membership.localPath.replace(/\.mp4$/i, ".nfo"), { force: true });
-    for (const extension of ["jpg", "png", "webp"]) {
-      await rm(membership.localPath.replace(/\.mp4$/i, `-poster.${extension}`), { force: true });
-    }
+    for (const sidecar of sidecarPathsFor(membership.localPath)) await rm(sidecar, { force: true });
   }
   await db.sourceVideo.delete({ where: { id: membership.id } });
   // Logged with videoId while the Video row is still guaranteed to exist -- the orphan cleanup below may
@@ -277,8 +274,8 @@ export async function addVideosToCollection(sourceId: string, inputs: string[], 
     for (const entry of entries) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
-        update: { title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, availabilityReason: null, metadataStatus: "complete" },
-        create: { youtubeId: entry.youtubeId, title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" }
+        update: { title: entry.title, description: entry.description, uploader: entry.uploader, artist: entry.artist, album: entry.album, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, availabilityReason: null, metadataStatus: "complete" },
+        create: { youtubeId: entry.youtubeId, title: entry.title, description: entry.description, uploader: entry.uploader, artist: entry.artist, album: entry.album, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" }
       });
       const membership = await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: video.id } } });
       if (membership?.membershipStatus === "present") { duplicateCount += 1; continue; }

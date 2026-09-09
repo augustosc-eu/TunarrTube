@@ -2,6 +2,7 @@ import { db } from "@/lib/db/client";
 import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo, VideoUnavailableError } from "@/lib/downloads/service";
 import { sanitizeLogValue, writeLog } from "@/lib/logging/service";
 import { enrichVideo } from "@/lib/metadata/service";
+import { autoApplyMetadata } from "@/lib/metadata-lookup/service";
 import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
 import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
@@ -35,8 +36,8 @@ function lanes() {
 // YouTube's video CDN.
 const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
 
-// How many "general" jobs (everything except download/cache -- metadata, thumbnail, sync, retag,
-// tunarr_*, render, channel_*, ingest_local_scan) run at once. These are lighter than a video download
+// How many "general" jobs (everything except download/cache -- metadata, metadata_lookup, thumbnail,
+// sync, retag, tunarr_*, render, channel_*, ingest_local_scan) run at once. These are lighter than a video download
 // (an API call, a quick yt-dlp metadata-only call, or purely local work) and aren't the ones YouTube's
 // 429s are aimed at pausing, so running several concurrently speeds up a large backlog without touching
 // the download/cache rate-limit story at all. Override via env for tuning; default keeps it modest.
@@ -58,7 +59,7 @@ function laneKind(id: string): "media" | "general" {
 // "thumbnail" (a couple of quick image fetches) don't check it, so stopping one wouldn't do anything
 // but leave the UI showing a request that never lands. Exported so lib/jobs/service.ts's stopJob() can
 // reject those up front instead of silently no-oping.
-export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "tunarr_publish", "tunarr_refresh", "render", "channel_publish", "content_select", "channel_brief"];
+export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "metadata_lookup", "tunarr_publish", "tunarr_refresh", "render", "channel_publish", "content_select", "channel_brief"];
 
 // Called by stopJob() (lib/jobs/service.ts) for a job that's currently claimed as "running". Returns
 // false if no controller is registered (an orphaned row or a claim still being registered).
@@ -143,6 +144,7 @@ async function claimJob(lane: "media" | "general") {
 
 async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>, signal: AbortSignal) {
   if (job.type === "metadata" && job.videoId) return enrichVideo(job.videoId, signal);
+  if (job.type === "metadata_lookup" && job.mediaItemId) return autoApplyMetadata(job.mediaItemId, signal);
   if (job.type === "thumbnail" && job.sourceId) return persistSourceThumbnails(job.sourceId);
   if (job.type === "sync" && job.sourceId) return syncSource(job.sourceId, signal);
   if (job.type === "download" && job.sourceId && job.videoId) return downloadVideo(job.sourceId, job.videoId, signal);
