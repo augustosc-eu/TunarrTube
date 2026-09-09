@@ -35,6 +35,10 @@ model Source {
   tunarrChannelName            String?
   tunarrRequestedChannelNumber Int?
   tunarrProgrammingOrder       String        @default("playlist")
+  // Per-Source override of AppSettings.defaultNamingScheme/defaultFilenameTemplate -- null on either
+  // means "inherit the global default", same convention as videoQuality above. See lib/naming/service.ts.
+  namingScheme                 String?
+  filenameTemplate             String?
   createdAt                    DateTime      @default(now())
   updatedAt                    DateTime      @updatedAt
   videos                       SourceVideo[]
@@ -81,6 +85,12 @@ model SourceVideo {
   downloadStatus   String   @default("not_downloaded")
   fileSize         BigInt?
   retentionOrigin  String   @default("none")
+  // Assigned once, lazily, the first time this membership is resolved under the "tvshow" naming
+  // scheme (see lib/naming/service.ts:assignEpisodeNumber) -- season is the upload year, episode is a
+  // per-(source, season) monotonic counter. Never recomputed afterward, so switching naming schemes or
+  // discovering older videos later never renumbers/renames anything already on disk.
+  seasonNumber     Int?
+  episodeNumber    Int?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   source           Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
@@ -149,6 +159,13 @@ model AppSettings {
   // -- TunarrTube never uploads, generates, or displays its contents, only ever passes the path through to
   // yt-dlp. Null means unauthenticated (the default).
   ytdlpCookiesPath    String?
+  // Global default for a downloaded video's on-disk filename/folder layout -- "id" (today's
+  // <youtubeId>.mp4, flat, unchanged default), "template" (defaultFilenameTemplate applied flat), or
+  // "tvshow" (Emby/Plex/Jellyfin- and Tunarr-Shows-compatible Show/Season <year>/S<year>E<nnn> layout).
+  // A Source's own namingScheme/filenameTemplate columns override this per-Source. See
+  // lib/naming/service.ts.
+  defaultNamingScheme     String   @default("id")
+  defaultFilenameTemplate String   @default("{title}")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }

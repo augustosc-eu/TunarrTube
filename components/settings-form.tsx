@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
 
 type BinaryStatus = { name: string; found: boolean; path: string | null; version: string | null; error?: string };
@@ -15,7 +15,13 @@ export const VIDEO_QUALITY_OPTIONS = [
   { value: "720p", label: "720p (HD)" },
   { value: "480p", label: "480p (SD)" }
 ];
-export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialYtdlpCookiesPath, initialMappings, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialYtdlpCookiesPath: string | null; initialMappings: Mapping[]; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
+export const NAMING_SCHEME_OPTIONS = [
+  { value: "id", label: "YouTube video ID (current default)" },
+  { value: "template", label: "Custom filename template" },
+  { value: "tvshow", label: "TV show (Emby/Plex/Jellyfin/Tunarr Shows)" }
+];
+
+export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialYtdlpCookiesPath, initialMappings, initialDefaultNamingScheme, initialDefaultFilenameTemplate, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialYtdlpCookiesPath: string | null; initialMappings: Mapping[]; initialDefaultNamingScheme: string; initialDefaultFilenameTemplate: string; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
   const [directory, setDirectory] = useState(initialDirectory);
   const [tunarrUrl, setTunarrUrl] = useState(initialTunarrUrl);
   const [cacheMegabytes, setCacheMegabytes] = useState(String(initialCacheMegabytes));
@@ -24,6 +30,9 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   const [videoQuality, setVideoQuality] = useState(initialDefaultVideoQuality);
   const [ytdlpCookiesPath, setYtdlpCookiesPath] = useState(initialYtdlpCookiesPath ?? "");
   const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ ytarrPrefix, tunarrPrefix }) => ({ ytarrPrefix, tunarrPrefix })));
+  const [namingScheme, setNamingScheme] = useState(initialDefaultNamingScheme);
+  const [filenameTemplate, setFilenameTemplate] = useState(initialDefaultFilenameTemplate);
+  const [namingPreview, setNamingPreview] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [binaries, setBinaries] = useState({ "yt-dlp": ytDlp, ffmpeg });
   const [tunarr, setTunarr] = useState<TunarrStatus | null>(null);
@@ -78,7 +87,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   async function save() {
     setBusy("settings"); setMessage(null);
     try {
-      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, ytdlpCookiesPath: ytdlpCookiesPath.trim() || null, pathMappings: mappings }) }));
+      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, ytdlpCookiesPath: ytdlpCookiesPath.trim() || null, pathMappings: mappings, defaultNamingScheme: namingScheme, defaultFilenameTemplate: filenameTemplate }) }));
       setDirectory(data.mediaBaseDirectory); setTunarrUrl(data.tunarrUrl);
       setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`); setMessageTone("success");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); setMessageTone("error"); }
@@ -86,6 +95,10 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   }
 
   async function previewMapping() { setMessage(null); setPreview(null); try { const value = await responseData(await fetch("/api/settings/path-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: directory, mappings }) })); setPreview(value.output); } catch (error) { setMessage(error instanceof Error ? error.message : "Path preview failed"); setMessageTone("error"); } }
+
+  async function previewNaming(scheme: string, template: string) { try { const value = await responseData(await fetch("/api/settings/naming-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scheme, template }) })); setNamingPreview(value.path); } catch { setNamingPreview(null); } }
+
+  useEffect(() => { previewNaming(namingScheme, filenameTemplate); }, [namingScheme, filenameTemplate]);
 
   return <div className="card form-card">
     <h2>External tools</h2>
@@ -106,6 +119,11 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     <div className="field"><label htmlFor="media-directory">Base media directory</label><input className="input code" id="media-directory" value={directory} onChange={(event) => setDirectory(event.target.value)} /><span className="meta">Must be an absolute readable and writable path. Existing sources use this base for future downloads; completed files stay at their recorded paths.</span></div>
     <div className="form-grid"><div className="field"><label htmlFor="cache-size">Cache size (MB)</label><input className="input" id="cache-size" type="number" min="128" value={cacheMegabytes} onChange={(event) => setCacheMegabytes(event.target.value)} /></div><div className="field"><label htmlFor="cache-age">Maximum idle age (days)</label><input className="input" id="cache-age" type="number" min="1" value={cacheAgeDays} onChange={(event) => setCacheAgeDays(event.target.value)} /></div><div className="field"><label htmlFor="log-retention">Log retention (days)</label><input className="input" id="log-retention" type="number" min="1" value={logRetentionDays} onChange={(event) => setLogRetentionDays(event.target.value)} /></div></div>
     <div className="field"><label htmlFor="default-video-quality">Default video quality</label><select className="input" id="default-video-quality" value={videoQuality} onChange={(event) => setVideoQuality(event.target.value)}>{VIDEO_QUALITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><span className="meta">Applied to every source that doesn&apos;t set its own quality override.</span></div>
+
+    <h2 className="section-heading">Naming</h2>
+    <div className="field"><label htmlFor="naming-scheme">Downloaded filename/folder layout</label><select className="input" id="naming-scheme" value={namingScheme} onChange={(event) => setNamingScheme(event.target.value)}>{NAMING_SCHEME_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><span className="meta">Applied to every source that doesn&apos;t set its own naming override. &ldquo;TV show&rdquo; organizes each source as Season &lt;upload year&gt;/, writes Emby/Plex/Jellyfin-compatible episode NFOs, and matches a Tunarr &ldquo;Shows&rdquo; local media library instead of &ldquo;Other Videos&rdquo; if one is configured. Changing this only affects future downloads — already-downloaded files keep their current names and location.</span></div>
+    {namingScheme === "template" && <div className="field"><label htmlFor="filename-template">Filename template</label><input className="input code" id="filename-template" value={filenameTemplate} onChange={(event) => setFilenameTemplate(event.target.value)} placeholder="{channel} - {title}" /><span className="meta">Variables: <code>{"{title}"}</code>, <code>{"{channel}"}</code>, <code>{"{date}"}</code> (YYYY-MM-DD), <code>{"{year}"}</code>, <code>{"{videoId}"}</code>. A literal &ldquo;/&rdquo; creates a subfolder, e.g. <code>{"{channel}/{title}"}</code>. The YouTube video ID is always appended in brackets if the template doesn&apos;t already include it, so Tunarr can still match the file.</span></div>}
+    {namingPreview && <p className="code muted">{namingPreview}</p>}
 
     <h2 className="section-heading">Tunarr</h2>
     <div className="field"><label htmlFor="tunarr-url">Tunarr URL</label><input className="input code" id="tunarr-url" type="url" value={tunarrUrl} onChange={(event) => { setTunarrUrl(event.target.value); setTunarr(null); }} /><span className="meta">TunarrTube discovers the configured server&apos;s OpenAPI contract before creating or updating channels.</span></div>

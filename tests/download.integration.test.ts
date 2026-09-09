@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -273,6 +273,116 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
       });
       const passedArgs = (await readFile(argsCapture, "utf8")).split("\n");
       expect(passedArgs).toEqual(expect.arrayContaining(["--cookies", cookiesFile]));
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }, 15_000);
+
+  it("downloads under a Source's 'template' naming scheme override, producing a nested folder and a bracketed-id filename", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "ytarr-template-naming-test-")));
+    cleanup.push(root);
+    const sourceDirectory = path.join(root, "source");
+    const fakeYtDlp = path.join(root, "yt-dlp");
+    const fakeFfmpeg = path.join(root, "ffmpeg");
+    await writeFile(fakeYtDlp, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const template = args[args.indexOf("-o") + 1];
+fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
+`);
+    await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
+    await chmod(fakeYtDlp, 0o755);
+    await chmod(fakeFfmpeg, 0o755);
+    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: {
+        name: "My Channel", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory,
+        namingScheme: "template", filenameTemplate: "{channel}/{title}"
+      }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `videoIdABC1${suffix.slice(0, 1)}`, title: "My Video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+
+    try {
+      const result = await downloadVideo(source.id, video.id);
+      const expectedDirectory = path.join(sourceDirectory, "My Channel");
+      const expectedBasename = `My Video [${video.youtubeId}]`;
+      expect(result.localPath).toBe(path.join(expectedDirectory, `${expectedBasename}.mp4`));
+      expect((await stat(result.localPath)).isFile()).toBe(true);
+      const sidecar = JSON.parse(await readFile(path.join(expectedDirectory, `${expectedBasename}.json`), "utf8"));
+      expect(sidecar).toMatchObject({ youtubeId: video.youtubeId, title: "My Video" });
+      const nfo = await readFile(path.join(expectedDirectory, `${expectedBasename}.nfo`), "utf8");
+      expect(nfo).toContain("<movie>");
+      expect(nfo).toContain("<title>My Video</title>");
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }, 15_000);
+
+  it("downloads under the 'tvshow' naming scheme, producing an Emby/Plex/Tunarr-Shows-compatible layout", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "ytarr-tvshow-naming-test-")));
+    cleanup.push(root);
+    const sourceDirectory = path.join(root, "source");
+    const fakeYtDlp = path.join(root, "yt-dlp");
+    const fakeFfmpeg = path.join(root, "ffmpeg");
+    await writeFile(fakeYtDlp, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const template = args[args.indexOf("-o") + 1];
+fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
+`);
+    await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
+    await chmod(fakeYtDlp, 0o755);
+    await chmod(fakeFfmpeg, 0o755);
+    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+
+    const thumbnailPath = path.join(root, "mirrored-thumb.jpg");
+    await writeFile(thumbnailPath, "fake-thumbnail-bytes");
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: { name: "TV Show Channel", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory, namingScheme: "tvshow" }
+    });
+    const video = await db.video.create({
+      data: {
+        youtubeId: `videoIdABC2${suffix.slice(0, 1)}`, title: "Episode One", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`,
+        uploadDate: new Date("2026-03-15T00:00:00Z"), description: "A description.", thumbnailPath
+      }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+
+    try {
+      const result = await downloadVideo(source.id, video.id);
+      const seasonDirectory = path.join(sourceDirectory, "Season 2026");
+      const basename = `TV Show Channel - S2026E001 - Episode One [${video.youtubeId}]`;
+      expect(result.localPath).toBe(path.join(seasonDirectory, `${basename}.mp4`));
+
+      const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } } });
+      expect(membership).toMatchObject({ seasonNumber: 2026, episodeNumber: 1 });
+
+      const nfo = await readFile(path.join(seasonDirectory, `${basename}.nfo`), "utf8");
+      expect(nfo).toContain("<episodedetails>");
+      expect(nfo).toContain("<season>2026</season>");
+      expect(nfo).toContain("<episode>1</episode>");
+      expect(nfo).toContain(`<uniqueid type="youtube" default="true">${video.youtubeId}</uniqueid>`);
+
+      const showNfo = await readFile(path.join(sourceDirectory, "tvshow.nfo"), "utf8");
+      expect(showNfo).toContain("<tvshow>");
+      expect(showNfo).toContain("<title>TV Show Channel</title>");
+
+      const sidecar = JSON.parse(await readFile(path.join(seasonDirectory, `${basename}.info.json`), "utf8"));
+      expect(sidecar).toMatchObject({ youtubeId: video.youtubeId, title: "Episode One", season: 2026, episode: 1 });
+
+      const thumb = await readFile(path.join(seasonDirectory, `${basename}-thumb.jpg`), "utf8");
+      expect(thumb).toBe("fake-thumbnail-bytes");
     } finally {
       await db.source.delete({ where: { id: source.id } });
       await db.video.delete({ where: { id: video.id } });

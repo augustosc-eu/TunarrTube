@@ -13,7 +13,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const input = createSourceSchema.parse(await request.json());
-    return ok(serialize(await createSourceFromDraft(input.draftId, input.name, input.playbackMode, input.syncEnabled, input.syncIntervalMinutes, input.videoQuality ?? null)), { status: 201 });
+    return ok(serialize(await createSourceFromDraft(input.draftId, input.name, input.playbackMode, input.syncEnabled, input.syncIntervalMinutes, input.videoQuality ?? null, input.namingScheme ?? null, input.filenameTemplate ?? null)), { status: 201 });
   } catch (error) {
     return toErrorResponse(error);
   }
