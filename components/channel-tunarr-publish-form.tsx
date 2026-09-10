@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Radio } from "lucide-react";
-import { CONCEPT_PRESETS, DEFAULT_SCHEDULE_STYLE, SCHEDULE_STYLE_OPTIONS } from "@/components/ai-programming-presets";
+import { DEFAULT_SCHEDULE_STYLE, SCHEDULE_STYLE_OPTIONS, type ConceptPreset } from "@/components/ai-programming-presets";
+import { ConceptPresetPicker } from "@/components/concept-preset-picker";
 
 type LinkStatus = {
   linked: boolean;
@@ -43,6 +44,12 @@ export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, i
   const [aiScheduleStyle, setAiScheduleStyle] = useState(initialAiScheduleStyle ?? DEFAULT_SCHEDULE_STYLE);
   const [conceptPreset, setConceptPreset] = useState(0);
   const isAi = order === "ai";
+
+  function selectPreset(index: number, preset: ConceptPreset) {
+    setConceptPreset(index);
+    setAiInstructions(preset.instructions);
+    if (preset.recommendedScheduleStyle) setAiScheduleStyle(preset.recommendedScheduleStyle);
+  }
 
   async function refreshStatus() {
     try {
@@ -102,12 +109,14 @@ export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, i
       <div className="form-grid">
         <div className="field"><label htmlFor="channel-programming-order">Programming order</label><select className="input" id="channel-programming-order" value={order} onChange={(event) => setOrder(event.target.value)}><option value="manual">Manual order</option><option value="random">Random</option><option value="ai">AI Programming</option></select></div>
       </div>
-      {isAi ? <div className="form-grid">
-        <div className="field"><label htmlFor="channel-schedule-style">Schedule style</label><select className="input" id="channel-schedule-style" value={aiScheduleStyle} onChange={(event) => setAiScheduleStyle(event.target.value)}>{SCHEDULE_STYLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><span className="meta">{SCHEDULE_STYLE_OPTIONS.find((option) => option.value === aiScheduleStyle)?.description}</span></div>
-        <div className="field"><label htmlFor="channel-concept-preset">Concept preset</label><select className="input" id="channel-concept-preset" value={conceptPreset} onChange={(event) => { const index = Number(event.target.value); setConceptPreset(index); setAiInstructions(CONCEPT_PRESETS[index].instructions); }}>{CONCEPT_PRESETS.map((preset, index) => <option key={preset.label} value={index}>{preset.label}</option>)}</select><span className="meta">Fills the instructions below -- edit freely after picking one.</span></div>
+      {isAi ? <>
+        <div className="form-grid">
+          <div className="field"><label htmlFor="channel-schedule-style">Schedule style</label><select className="input" id="channel-schedule-style" value={aiScheduleStyle} onChange={(event) => setAiScheduleStyle(event.target.value)}>{SCHEDULE_STYLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><span className="meta">{SCHEDULE_STYLE_OPTIONS.find((option) => option.value === aiScheduleStyle)?.description}</span></div>
+          <div className="field"><label htmlFor="channel-ai-provider">AI provider</label><select className="input" id="channel-ai-provider" value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option value="">Use global default (Settings)</option><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option></select></div>
+        </div>
+        <div className="field"><label htmlFor="channel-concept-preset">Channel style template</label><ConceptPresetPicker idPrefix="channel" selectedIndex={conceptPreset} onSelect={selectPreset} /></div>
         <div className="field"><label htmlFor="channel-ai-instructions">Instructions for the AI (optional)</label><textarea className="input" id="channel-ai-instructions" rows={3} maxLength={4000} placeholder="e.g. group by artist, keep a mellow block in the evening" value={aiInstructions} onChange={(event) => setAiInstructions(event.target.value)} /></div>
-        <div className="field"><label htmlFor="channel-ai-provider">AI provider</label><select className="input" id="channel-ai-provider" value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option value="">Use global default (Settings)</option><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option></select></div>
-      </div> : null}
+      </> : null}
       {error ? <p className="error">{error}</p> : null}
       <div className="toolbar">
         <button className="button" type="button" onClick={publish} disabled={busy}>{busy ? "Publishing…" : status?.linked ? "Republish" : "Publish to Tunarr"}</button>
