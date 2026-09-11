@@ -8,7 +8,7 @@ import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
 import { isRateLimitedError } from "@/lib/youtube/ytdlp";
-import { enqueueChannelJob, runChannelBrief, runContentSelection } from "@/lib/channels/service";
+import { enqueueChannelJob, runChannelBrief, runContentSelection, runHeuristicSelection } from "@/lib/channels/service";
 import { scanLocalFolder } from "@/lib/ingest/local-scan";
 import { renderMediaItem } from "@/lib/renders/service";
 import { publishChannelToTunarr } from "@/lib/tunarr/channel-service";
@@ -172,8 +172,14 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
     return publishChannelToTunarr(job.channelId, signal);
   }
   if (job.type === "content_select" && job.channelId && job.payloadJson) {
-    const payload = JSON.parse(job.payloadJson) as { sourceIds: string[]; instructions: string; targetCount?: number; providerOverride?: string | null };
-    return runContentSelection(job.channelId, payload, signal);
+    const payload = JSON.parse(job.payloadJson) as {
+      method?: "ai" | "heuristic"; sourceIds: string[]; instructions?: string; targetCount?: number;
+      providerOverride?: string | null; mode?: "balanced" | "grouped"; targetDurationSeconds?: number;
+    };
+    if (payload.method === "heuristic") {
+      return runHeuristicSelection(job.channelId, { sourceIds: payload.sourceIds, targetCount: payload.targetCount, mode: payload.mode, targetDurationSeconds: payload.targetDurationSeconds });
+    }
+    return runContentSelection(job.channelId, { sourceIds: payload.sourceIds, instructions: payload.instructions ?? "", targetCount: payload.targetCount, providerOverride: payload.providerOverride }, signal);
   }
   if (job.type === "channel_brief" && job.channelId && job.payloadJson) {
     const payload = JSON.parse(job.payloadJson) as { sourceIds: string[] };

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, LoaderCircle, Play, Trash2, X } from "lucide-react";
 
 type Row = { membershipId: string; videoId: string; youtubeId: string; title: string; uploader: string | null; durationSeconds: number | null; playlistIndex: number | null; metadataStatus: string; availability: string; availabilityReason: string | null; membershipStatus: string; downloadStatus: string };
@@ -13,7 +14,7 @@ function duration(seconds: number | null) {
 }
 
 type SortKey = "index" | "title" | "duration" | "status";
-// Order matches the actual <td> column order below (# / Video / Duration / ... / Download).
+// Order matches the actual cell order below (# / Video / Duration / ... / Download).
 const SORT_COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "index", label: "#" }, { key: "title", label: "Video" }, { key: "duration", label: "Duration" }
 ];
@@ -28,10 +29,11 @@ function sortValue(row: Row, key: SortKey): string | number {
   }
 }
 
-// A Source can hold hundreds of videos with no built-in pagination -- client-side search/sort (rather
-// than a server round-trip) keeps this responsive since `rows` is already the full, already-fetched
-// list, and lets filtering/sorting react instantly as the operator types instead of waiting on a
-// request each keystroke.
+// A Source can hold thousands of videos with no built-in pagination (Source.historyLimit allows up to
+// 5000, and a plain playlist/channel with no limit set pulls its full history) -- client-side
+// search/sort (rather than a server round-trip) keeps filtering/sorting instant since `rows` is already
+// the full, already-fetched list. Row *rendering* below is virtualized on top of that (only the rows
+// scrolled into view are ever mounted) so a huge list doesn't mean a huge DOM.
 export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows: Row[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -61,11 +63,11 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     setSort((current) => current?.key === key ? (current.dir === "asc" ? { key, dir: "desc" } : null) : { key, dir: "asc" });
   }
   function sortHeader(column: { key: SortKey; label: string }) {
-    return <th key={column.key}>
+    return <div className="video-grid-cell" key={column.key} role="columnheader">
       <button type="button" className="sort-header" onClick={() => toggleSort(column.key)} aria-label={`Sort by ${column.label}`}>
         {column.label} {sort?.key === column.key ? (sort.dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="muted" />}
       </button>
-    </th>;
+    </div>;
   }
 
   // "Select all" scopes to what's currently visible (filtered/sorted), not the full source -- searching
@@ -138,6 +140,27 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     } finally { setBulkRemoving(false); }
   }
 
+  function row(item: Row) {
+    return <>
+      <div className="video-grid-cell" data-label="Select"><input type="checkbox" disabled={item.downloadStatus === "complete" || (item.membershipStatus !== "present" && item.downloadStatus !== "unavailable" && item.downloadStatus !== "failed")} checked={selected.has(item.videoId)} onChange={() => toggle(item.videoId)} aria-label={`Select ${item.title}`} /></div>
+      <div className="video-grid-cell" data-label="#">{item.playlistIndex ?? "—"}</div>
+      <div className="video-grid-cell title-cell" data-label="Video"><strong>{item.title}</strong><span className="meta">{item.uploader ?? item.youtubeId}{item.membershipStatus === "missing" ? " · Missing from source" : ""}</span></div>
+      <div className="video-grid-cell" data-label="Duration">{duration(item.durationSeconds)}</div>
+      <div className="video-grid-cell" data-label="Metadata"><span className={`badge ${item.availability === "unavailable" ? "unavailable" : item.metadataStatus}`}>{item.availability === "unavailable" ? "unavailable" : item.metadataStatus}</span>{item.availabilityReason ? <span className="availability-reason">{item.availabilityReason}</span> : null}</div>
+      <div className="video-grid-cell" data-label="Download"><span className={`badge ${item.downloadStatus}`}>{item.downloadStatus.replaceAll("_", " ")}</span></div>
+      <div className="video-grid-cell" data-label="Play"><button className="button secondary" aria-label={`Play ${item.title}`} disabled={preparing === item.videoId || item.membershipStatus !== "present"} onClick={() => play(item)}>{preparing === item.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Play size={14}/>}</button></div>
+      <div className="video-grid-cell" data-label="Remove">{item.downloadStatus === "unavailable" || item.downloadStatus === "failed"
+        ? <button className="button secondary" aria-label={`Remove ${item.title}`} disabled={removing === item.videoId} onClick={() => remove(item)}>{removing === item.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Trash2 size={14}/>}</button>
+        : null}</div>
+    </>;
+  }
+
+  const selectAllHeader = <div className="video-grid-cell" role="columnheader"><input type="checkbox" aria-label="Select all visible downloadable videos" checked={visibleDownloadable.length > 0 && visibleDownloadable.every((item) => selected.has(item.videoId))} onChange={(event) => setSelected((current) => {
+    const next = new Set(current);
+    for (const item of visibleDownloadable) event.target.checked ? next.add(item.videoId) : next.delete(item.videoId);
+    return next;
+  })} /></div>;
+
   return <>
     {playing ? <div className="card player"><div className="toolbar"><strong>{playing.title}</strong><span className="spacer"/><button className="button secondary" onClick={() => setPlaying(null)} aria-label="Close player"><X size={15}/></button></div><video controls autoPlay src={`/api/playback/${sourceId}/${playing.videoId}`} /></div> : null}
     <div className="toolbar">
@@ -147,27 +170,78 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
       <span className="muted">{search ? `${visible.length} of ${rows.length} videos` : `${rows.length} video${rows.length === 1 ? "" : "s"}`} · {downloadable.length} available to download</span>
     </div>
     {error ? <div className="error">{error}</div> : null}
-    <div className="table-wrap responsive-table"><table><thead><tr>
-      <th><input type="checkbox" aria-label="Select all visible downloadable videos" checked={visibleDownloadable.length > 0 && visibleDownloadable.every((row) => selected.has(row.videoId))} onChange={(event) => setSelected((current) => {
-        const next = new Set(current);
-        for (const row of visibleDownloadable) event.target.checked ? next.add(row.videoId) : next.delete(row.videoId);
-        return next;
-      })} /></th>
-      {SORT_COLUMNS.map((column) => sortHeader(column))}
-      <th>Metadata</th>
-      {sortHeader(STATUS_SORT_COLUMN)}
-      <th>Play</th><th></th>
-    </tr></thead><tbody>{visible.map((row) => <tr key={row.membershipId}>
-      <td data-label="Select"><input type="checkbox" disabled={row.downloadStatus === "complete" || (row.membershipStatus !== "present" && row.downloadStatus !== "unavailable" && row.downloadStatus !== "failed")} checked={selected.has(row.videoId)} onChange={() => toggle(row.videoId)} aria-label={`Select ${row.title}`} /></td>
-      <td data-label="#">{row.playlistIndex ?? "—"}</td>
-      <td className="title-cell" data-label="Video"><strong>{row.title}</strong><span className="meta">{row.uploader ?? row.youtubeId}{row.membershipStatus === "missing" ? " · Missing from source" : ""}</span></td>
-      <td data-label="Duration">{duration(row.durationSeconds)}</td>
-      <td data-label="Metadata"><span className={`badge ${row.availability === "unavailable" ? "unavailable" : row.metadataStatus}`}>{row.availability === "unavailable" ? "unavailable" : row.metadataStatus}</span>{row.availabilityReason ? <span className="availability-reason">{row.availabilityReason}</span> : null}</td>
-      <td data-label="Download"><span className={`badge ${row.downloadStatus}`}>{row.downloadStatus.replaceAll("_", " ")}</span></td>
-      <td data-label="Play"><button className="button secondary" aria-label={`Play ${row.title}`} disabled={preparing === row.videoId || row.membershipStatus !== "present"} onClick={() => play(row)}>{preparing === row.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Play size={14}/>}</button></td>
-      <td data-label="Remove">{row.downloadStatus === "unavailable" || row.downloadStatus === "failed"
-        ? <button className="button secondary" aria-label={`Remove ${row.title}`} disabled={removing === row.videoId} onClick={() => remove(row)}>{removing === row.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Trash2 size={14}/>}</button>
-        : null}</td>
-    </tr>)}</tbody></table></div>
+    <VirtualizedRows visible={visible} selectAllHeader={selectAllHeader} sortHeader={sortHeader} row={row} />
   </>;
+}
+
+// Split out so the virtualizer (a browser-only concern -- it measures real DOM elements) only ever runs
+// once mounted on the client, and so the desktop grid/mobile-card branch below stays readable next to
+// the row-rendering logic it wraps.
+function VirtualizedRows({ visible, selectAllHeader, sortHeader, row }: {
+  visible: Row[];
+  selectAllHeader: React.ReactNode;
+  sortHeader: (column: { key: SortKey; label: string }) => React.ReactNode;
+  row: (item: Row) => React.ReactNode;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  // Below 640px this same table becomes a stack of label/value cards (see .video-grid-row's mobile
+  // rules in app/globals.css) -- variable, often multi-line height per card, on a surface people rarely
+  // scrub thousands of rows on. Virtualizing there would need a real scroll container height fight with
+  // the page's own scroll, for little benefit, so it's simplest and safest to keep that layout exactly
+  // as it always rendered (every row mounted) and only virtualize the dense desktop table.
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 641px)");
+    setIsDesktop(query.matches);
+    const listener = (event: MediaQueryListEvent) => setIsDesktop(event.matches);
+    query.addEventListener("change", listener);
+    return () => query.removeEventListener("change", listener);
+  }, []);
+
+  const virtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 49,
+    overscan: 12,
+    enabled: isDesktop
+  });
+
+  const header = <div className="video-grid-row video-grid-header" role="row">
+    {selectAllHeader}
+    {SORT_COLUMNS.map((column) => sortHeader(column))}
+    <div className="video-grid-cell" role="columnheader">Metadata</div>
+    {sortHeader(STATUS_SORT_COLUMN)}
+    <div className="video-grid-cell" role="columnheader">Play</div>
+    <div className="video-grid-cell" role="columnheader" />
+  </div>;
+
+  if (!isDesktop) {
+    return <div className="table-wrap responsive-table video-grid" role="table" aria-label="Videos">
+      {header}
+      <div role="rowgroup">
+        {visible.map((item) => <div className="video-grid-row" role="row" key={item.membershipId}>{row(item)}</div>)}
+      </div>
+    </div>;
+  }
+
+  return <div className="table-wrap video-grid" role="table" aria-label="Videos">
+    {header}
+    <div className="video-grid-body" ref={parentRef} role="rowgroup">
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const item = visible[virtualRow.index];
+          return <div
+            key={item.membershipId}
+            ref={virtualizer.measureElement}
+            data-index={virtualRow.index}
+            role="row"
+            className="video-grid-row"
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
+          >
+            {row(item)}
+          </div>;
+        })}
+      </div>
+    </div>
+  </div>;
 }

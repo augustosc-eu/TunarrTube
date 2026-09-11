@@ -5,7 +5,8 @@ import { db } from "@/lib/db/client";
 import { getSettings } from "@/lib/settings/service";
 import { writeLog } from "@/lib/logging/service";
 import { addVideosToCollection, slugify } from "@/lib/sources/service";
-import { selectContent, type SelectionCandidate } from "@/lib/programming/content-selection";
+import { selectContent } from "@/lib/programming/content-selection";
+import { selectContentHeuristically, type HeuristicCandidate, type HeuristicSelectionMode } from "@/lib/programming/heuristic-selection";
 import type { AiProviderSetting } from "@/lib/programming/types";
 import { renderMediaItem } from "@/lib/renders/service";
 import { publishChannelToTunarr } from "@/lib/tunarr/channel-service";
@@ -167,21 +168,24 @@ export async function attachExistingVideo(channelId: string, sourceVideoId: stri
     }
   });
   if (!mediaItem.artist && mediaItem.metadataStatus === "pending") await enqueueChannelJob("metadata_lookup", { mediaItemId: mediaItem.id });
+  // Every attach path funnels through here (manual add, AI content selection, Smart/heuristic
+  // selection), so this single stamp keeps lastSelectedAt current everywhere -- the proxy Smart
+  // selection's novelty scoring reads back (lib/programming/heuristic-selection.ts).
+  await db.sourceVideo.update({ where: { id: sourceVideoId }, data: { lastSelectedAt: new Date() } });
   await addMediaItemToChannel(channelId, mediaItem.id);
   await writeLog({ category: "channel", channelId, mediaItemId: mediaItem.id, message: `Attached "${mediaItem.title}" to ${channel.name}.` });
   return mediaItem;
 }
 
-// AI content selection (lib/programming/content-selection.ts:selectContent) -- gathers the candidate
-// pool from explicitly chosen Sources' already-downloaded videos, excludes anything already on this
-// channel, asks the AI which of them fit the given brief, then attaches the ones it picked via the
-// existing attachExistingVideo above (so a selection is exactly as idempotent as adding videos by
-// hand: attaching the same SourceVideo twice is a no-op, not a duplicate).
-export async function runContentSelection(channelId: string, input: { sourceIds: string[]; instructions: string; targetCount?: number; providerOverride?: string | null }, signal?: AbortSignal) {
+// Shared by both selection paths below (AI and heuristic/Smart): gathers the candidate pool from
+// explicitly chosen Sources' already-downloaded videos, excluding anything already on this channel.
+// Returns HeuristicCandidate (a superset of SelectionCandidate -- sourceId/lastSelectedAt are extra
+// fields the AI path simply doesn't read) so one query serves both callers.
+async function gatherSelectionCandidates(channelId: string, sourceIds: string[]): Promise<{ channel: { id: string; name: string }; candidates: HeuristicCandidate[] }> {
   const channel = await db.channel.findUnique({ where: { id: channelId }, include: { items: { select: { mediaItemId: true } } } });
   if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
 
-  const sources = await db.source.findMany({ where: { id: { in: input.sourceIds } }, select: { id: true, name: true } });
+  const sources = await db.source.findMany({ where: { id: { in: sourceIds } }, select: { id: true, name: true } });
   const sourceNameById = new Map(sources.map((source) => [source.id, source.name]));
 
   const alreadyAttachedMediaItemIds = channel.items.map((item) => item.mediaItemId);
@@ -191,16 +195,31 @@ export async function runContentSelection(channelId: string, input: { sourceIds:
   );
 
   const memberships = await db.sourceVideo.findMany({
-    where: { sourceId: { in: input.sourceIds }, downloadStatus: "complete", membershipStatus: "present" },
+    where: { sourceId: { in: sourceIds }, downloadStatus: "complete", membershipStatus: "present" },
     include: { video: true }
   });
-  const candidates: SelectionCandidate[] = memberships.flatMap((membership) => {
+  const candidates: HeuristicCandidate[] = memberships.flatMap((membership) => {
     if (alreadyAttachedSourceVideoIds.has(membership.id)) return [];
     const durationMs = (membership.video.durationSeconds ?? 0) * 1000;
     return durationMs > 0
-      ? [{ id: membership.id, title: membership.video.title, durationMs, uploadDate: membership.video.uploadDate?.toISOString() ?? null, sourceName: sourceNameById.get(membership.sourceId) ?? "Unknown source" }]
+      ? [{
+          id: membership.id, title: membership.video.title, durationMs,
+          uploadDate: membership.video.uploadDate?.toISOString() ?? null,
+          sourceName: sourceNameById.get(membership.sourceId) ?? "Unknown source",
+          sourceId: membership.sourceId, artist: membership.video.artist,
+          lastSelectedAt: membership.lastSelectedAt?.toISOString() ?? null
+        }]
       : [];
   });
+  return { channel, candidates };
+}
+
+// AI content selection (lib/programming/content-selection.ts:selectContent) -- asks the AI which of the
+// gathered candidates fit the given brief, then attaches the ones it picked via the existing
+// attachExistingVideo above (so a selection is exactly as idempotent as adding videos by hand:
+// attaching the same SourceVideo twice is a no-op, not a duplicate).
+export async function runContentSelection(channelId: string, input: { sourceIds: string[]; instructions: string; targetCount?: number; providerOverride?: string | null }, signal?: AbortSignal) {
+  const { channel, candidates } = await gatherSelectionCandidates(channelId, input.sourceIds);
 
   const settings = await getSettings();
   const result = await selectContent({
@@ -214,6 +233,25 @@ export async function runContentSelection(channelId: string, input: { sourceIds:
     await attachExistingVideo(channelId, sourceVideoId);
   }
   await writeLog({ category: "channel", channelId, message: `AI selected ${result.selectedIds.length} of ${candidates.length} candidate clip${candidates.length === 1 ? "" : "s"} for "${channel.name}".` });
+  return { candidateCount: candidates.length, selectedCount: result.selectedIds.length };
+}
+
+// Non-AI "Smart" content selection (lib/programming/heuristic-selection.ts:selectContentHeuristically)
+// -- same candidate pool and attach path as runContentSelection above, but scores/orders candidates with
+// a deterministic algorithm (novelty via lastSelectedAt, freshness via uploadDate, optional duration
+// fit, plus source/artist grouping) instead of an LLM call. A sibling, not a replacement: both remain
+// available side by side from the same UI card (components/ai-content-select-form.tsx).
+export async function runHeuristicSelection(channelId: string, input: { sourceIds: string[]; targetCount?: number; mode?: HeuristicSelectionMode; targetDurationSeconds?: number }) {
+  const { channel, candidates } = await gatherSelectionCandidates(channelId, input.sourceIds);
+
+  const result = selectContentHeuristically({
+    candidates, targetCount: input.targetCount, mode: input.mode ?? "balanced", targetDurationSeconds: input.targetDurationSeconds
+  });
+
+  for (const sourceVideoId of result.selectedIds) {
+    await attachExistingVideo(channelId, sourceVideoId);
+  }
+  await writeLog({ category: "channel", channelId, message: `Smart selection picked ${result.selectedIds.length} of ${candidates.length} candidate clip${candidates.length === 1 ? "" : "s"} for "${channel.name}".` });
   return { candidateCount: candidates.length, selectedCount: result.selectedIds.length };
 }
 

@@ -169,11 +169,19 @@ export const metadataCandidateSchema = z.object({
 
 export const renderMediaItemSchema = z.object({ templateId: z.string().min(1) });
 
+// method "ai" (default) asks an AI provider (instructions required); "heuristic" runs the deterministic
+// Smart selector (lib/programming/heuristic-selection.ts) instead -- no instructions needed, but it
+// takes its own mode/targetDurationSeconds knobs.
 export const selectChannelContentSchema = z.object({
   sourceIds: z.array(z.string().min(1)).min(1).max(20),
-  instructions: z.string().trim().min(1).max(4_000),
+  method: z.enum(["ai", "heuristic"]).default("ai"),
+  instructions: z.string().trim().max(4_000).optional(),
   targetCount: z.number().int().min(1).max(200).optional(),
-  aiProvider: aiProviderOverrideSchema.optional()
+  aiProvider: aiProviderOverrideSchema.optional(),
+  mode: z.enum(["balanced", "grouped"]).optional(),
+  targetDurationSeconds: z.number().int().min(1).optional()
+}).refine((value) => value.method !== "ai" || !!value.instructions?.trim(), {
+  message: "A brief is required for AI content selection.", path: ["instructions"]
 });
 
 // AI Programming Director preview request (lib/programming/director.ts) -- deliberately its own schema

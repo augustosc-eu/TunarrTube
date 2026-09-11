@@ -9,7 +9,8 @@ export async function POST(request: Request, { params }: Context) {
     const { id } = await params;
     const input = selectChannelContentSchema.parse(await request.json());
     const job = await enqueueChannelJob("content_select", { channelId: id }, {
-      sourceIds: input.sourceIds, instructions: input.instructions, targetCount: input.targetCount, providerOverride: input.aiProvider
+      method: input.method, sourceIds: input.sourceIds, instructions: input.instructions, targetCount: input.targetCount,
+      providerOverride: input.aiProvider, mode: input.mode, targetDurationSeconds: input.targetDurationSeconds
     });
     return ok({ queued: true, jobId: job.id }, { status: 202 });
   } catch (error) {

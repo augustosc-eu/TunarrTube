@@ -6,17 +6,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveAiProvider } from "@/lib/programming/provider";
 
-const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+const originalAnthropicKey = process.env.TUNARRTUBE_ANTHROPIC_API_KEY;
 const originalOpenAiKey = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
-  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.TUNARRTUBE_ANTHROPIC_API_KEY;
   delete process.env.OPENAI_API_KEY;
 });
 
 afterEach(() => {
-  if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-  else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+  if (originalAnthropicKey === undefined) delete process.env.TUNARRTUBE_ANTHROPIC_API_KEY;
+  else process.env.TUNARRTUBE_ANTHROPIC_API_KEY = originalAnthropicKey;
   if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
   else process.env.OPENAI_API_KEY = originalOpenAiKey;
 });
@@ -26,8 +26,8 @@ describe("resolveAiProvider -- Claude Code is additive, not a change to existing
     expect(() => resolveAiProvider(null, "auto")).toThrow(/No AI provider is configured/);
   });
 
-  it("\"auto\" with only ANTHROPIC_API_KEY set still resolves to Anthropic, unaffected by Claude Code existing", () => {
-    process.env.ANTHROPIC_API_KEY = "test-key";
+  it("\"auto\" with only TUNARRTUBE_ANTHROPIC_API_KEY set still resolves to Anthropic, unaffected by Claude Code existing", () => {
+    process.env.TUNARRTUBE_ANTHROPIC_API_KEY = "test-key";
     expect(resolveAiProvider(null, "auto").name).toBe("anthropic");
   });
 
@@ -37,9 +37,9 @@ describe("resolveAiProvider -- Claude Code is additive, not a change to existing
   });
 
   it("\"auto\" with both API keys set still throws AI_PROVIDER_AMBIGUOUS -- exactly today's behavior", () => {
-    process.env.ANTHROPIC_API_KEY = "test-key";
+    process.env.TUNARRTUBE_ANTHROPIC_API_KEY = "test-key";
     process.env.OPENAI_API_KEY = "test-key";
-    expect(() => resolveAiProvider(null, "auto")).toThrow(/Both ANTHROPIC_API_KEY and OPENAI_API_KEY/);
+    expect(() => resolveAiProvider(null, "auto")).toThrow(/Both TUNARRTUBE_ANTHROPIC_API_KEY and OPENAI_API_KEY/);
   });
 
   it("resolves \"claude-code\" only when explicitly selected -- never as part of \"auto\"", () => {

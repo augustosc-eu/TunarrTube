@@ -298,6 +298,19 @@ tr:last-child td { border-bottom: 0; }
 .title-cell { max-width: 440px; }
 .title-cell strong { display: block; line-height: 1.4; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .title-cell .meta { margin-top: 3px; }
+
+/* Div/CSS-grid based table (components/video-selection-table.tsx) -- a real <table>'s row layout
+   ignores position:absolute entirely (an absolutely positioned <tr>/<td> computes to plain block boxes
+   per spec), which breaks column alignment the moment rows are windowed for virtualization. Explicit
+   grid columns shared between the header and each row sidestep that, at the cost of using role
+   attributes instead of native table semantics. */
+.video-grid { min-width: 760px; }
+.video-grid-row { display: grid; grid-template-columns: 40px 44px minmax(220px, 1fr) 84px 160px 130px 56px 56px; gap: 12px; align-items: center; padding: 13px 15px; border-bottom: 1px solid var(--border); }
+.video-grid-row:last-child { border-bottom: 0; }
+.video-grid-header { position: sticky; top: 0; z-index: 1; background: var(--panel-2); color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .09em; font-weight: 750; }
+.video-grid-body { position: relative; overflow: auto; max-height: 70vh; }
+.video-grid-cell { min-width: 0; font-size: 13px; }
+.video-grid-row:not(.video-grid-header):hover { background: color-mix(in srgb, var(--panel-2) 68%, transparent); }
 .badge { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: var(--radius-full); padding: 4px 8px; font-size: 9px; line-height: 1.2; font-weight: 750; text-transform: uppercase; letter-spacing: .065em; white-space: nowrap; background: var(--panel-2); color: var(--text-muted); }
 .badge.complete, .badge.available, .badge.matched { background: var(--success-subtle); color: var(--success); border-color: color-mix(in srgb, var(--success) 18%, transparent); }
 .badge.failed, .badge.unavailable, .badge.missing, .badge.cancelled { background: var(--error-subtle); color: var(--error); border-color: color-mix(in srgb, var(--error) 18%, transparent); }
@@ -494,6 +507,20 @@ tr:last-child td { border-bottom: 0; }
   .responsive-table .title-cell strong { white-space: normal; overflow: visible; text-overflow: clip; }
   .responsive-table td > .toolbar { margin: 0; }
   .responsive-table td > :where(.button, .input) { justify-self: start; }
+
+  /* Mobile equivalent of the .responsive-table rules above, for the div/grid-based table
+     (components/video-selection-table.tsx) -- same labeled-card treatment, not virtualized (every row
+     mounts, exactly like before this table gained virtualization at wider widths). */
+  .video-grid { min-width: 0; }
+  .video-grid-header { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+  .video-grid-row:not(.video-grid-header) { grid-template-columns: 1fr; gap: 0; padding: 7px 14px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-sm); }
+  .video-grid-cell { display: grid; grid-template-columns: minmax(76px, 30%) minmax(0, 1fr); gap: 12px; align-items: center; min-width: 0; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .video-grid-cell:last-child { border-bottom: 0; }
+  .video-grid-cell::before { content: attr(data-label); color: var(--text-muted); font-size: 10px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+  .video-grid-cell[data-label="Video"] { align-items: start; }
+  .video-grid .title-cell { max-width: none; }
+  .video-grid .title-cell strong { white-space: normal; overflow: visible; text-overflow: clip; }
+  .video-grid-cell > :where(.button, .input) { justify-self: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

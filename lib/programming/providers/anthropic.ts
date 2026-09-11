@@ -15,8 +15,8 @@ const MODEL = "claude-opus-5";
 export const anthropicProvider: AiProvider = {
   name: "anthropic",
   async generatePlan(input: GeneratePlanInput, signal?: AbortSignal): Promise<unknown> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new AppError("AI_PROVIDER_UNCONFIGURED", "ANTHROPIC_API_KEY is not set.", 422);
+    const apiKey = process.env.TUNARRTUBE_ANTHROPIC_API_KEY;
+    if (!apiKey) throw new AppError("AI_PROVIDER_UNCONFIGURED", "TUNARRTUBE_ANTHROPIC_API_KEY is not set.", 422);
     const client = new Anthropic({ apiKey });
     const response = await client.messages.parse({
       model: MODEL,
@@ -37,8 +37,8 @@ export const anthropicProvider: AiProvider = {
     return response.parsed_output;
   },
   async selectContent(input: SelectContentInput, signal?: AbortSignal): Promise<unknown> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new AppError("AI_PROVIDER_UNCONFIGURED", "ANTHROPIC_API_KEY is not set.", 422);
+    const apiKey = process.env.TUNARRTUBE_ANTHROPIC_API_KEY;
+    if (!apiKey) throw new AppError("AI_PROVIDER_UNCONFIGURED", "TUNARRTUBE_ANTHROPIC_API_KEY is not set.", 422);
     const client = new Anthropic({ apiKey });
     const response = await client.messages.parse({
       model: MODEL,

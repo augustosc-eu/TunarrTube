@@ -108,6 +108,11 @@ model SourceVideo {
   // discovering older videos later never renumbers/renames anything already on disk.
   seasonNumber     Int?
   episodeNumber    Int?
+  // Stamped by lib/channels/service.ts:attachExistingVideo every time this video is attached to any
+  // Channel (AI content selection, heuristic Smart selection, or manual add) -- the closest proxy this
+  // app has for "recently watched"/"unwatched", since Tunarr (not TunarrTube) actually plays content
+  // and no playback telemetry flows back here. Null means "never selected onto a channel".
+  lastSelectedAt   DateTime?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   source           Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
