@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FolderOpen, Link as LinkIcon, ListVideo, Plus } from "lucide-react";
+import { FolderOpen, Link as LinkIcon, ListVideo } from "lucide-react";
 
 // A downloaded video, as returned by GET /api/videos -- filtered client-side to the SourceVideo
 // pairings that have actually finished downloading, since rendering needs one concrete local file.
@@ -62,42 +62,52 @@ export function AddChannelItemsForm({ channelId }: { channelId: string }) {
   }
 
   return (
-    <div className="card" style={{ marginBottom: 24 }}>
-      <h2>Add media</h2>
+    <section className="card channel-panel">
+      <div className="channel-panel-heading">
+        <div>
+          <h2>Add media</h2>
+          <p>Choose a video already in TunarrTube, scan a local folder, or paste a YouTube link.</p>
+        </div>
+      </div>
+      <div className="add-media-options">
       {existing.length ? (
-        <div className="form-grid">
+        <div className="add-media-option">
+          <div className="add-media-option-title"><ListVideo size={17} /><h3>From your library</h3></div>
           <div className="field">
-            <label htmlFor="existing-video">Already-downloaded video</label>
+            <label htmlFor="existing-video">Downloaded video</label>
             <select id="existing-video" className="input" value={sourceVideoId} onChange={(event) => setSourceVideoId(event.target.value)}>
               <option value="">Choose a video…</option>
               {existing.map((item) => <option key={item.sourceVideoId} value={item.sourceVideoId}>{item.label}</option>)}
             </select>
           </div>
-          <button className="button secondary" type="button" disabled={!sourceVideoId || busy !== null} onClick={() => submit({ type: "existingVideo", sourceVideoId })}>
-            <ListVideo size={16} /> {busy === "existing" ? "Adding…" : "Add"}
+          <button className="button secondary add-media-action" type="button" disabled={!sourceVideoId || busy !== null} onClick={() => submit({ type: "existingVideo", sourceVideoId })}>
+            {busy === "existing" ? "Adding…" : "Add video"}
           </button>
         </div>
       ) : null}
-      <div className="form-grid">
+      <div className="add-media-option">
+        <div className="add-media-option-title"><FolderOpen size={17} /><h3>Local folder</h3></div>
         <div className="field">
-          <label htmlFor="folder-path">Local folder (absolute path)</label>
+          <label htmlFor="folder-path">Absolute path</label>
           <input id="folder-path" className="input" value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="/absolute/path/to/videos" />
         </div>
-        <button className="button secondary" type="button" disabled={!folder.trim() || busy !== null} onClick={() => submit({ type: "local", folder })}>
+        <button className="button secondary add-media-action" type="button" disabled={!folder.trim() || busy !== null} onClick={() => submit({ type: "local", folder })}>
           <FolderOpen size={16} /> {busy === "folder" ? "Scanning…" : "Scan folder"}
         </button>
       </div>
-      <div className="form-grid">
+      <div className="add-media-option">
+        <div className="add-media-option-title"><LinkIcon size={17} /><h3>YouTube link</h3></div>
         <div className="field">
-          <label htmlFor="youtube-url">YouTube video URL</label>
+          <label htmlFor="youtube-url">Video URL</label>
           <input id="youtube-url" className="input" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" />
         </div>
-        <button className="button secondary" type="button" disabled={!url.trim() || busy !== null} onClick={() => submit({ type: "youtube", url })}>
+        <button className="button secondary add-media-action" type="button" disabled={!url.trim() || busy !== null} onClick={() => submit({ type: "youtube", url })}>
           <LinkIcon size={16} /> {busy === "url" ? "Adding…" : "Add"}
         </button>
       </div>
+      </div>
       {error ? <p className="error">{error}</p> : null}
-      <p className="muted"><Plus size={13} className="inline-icon" />Pasting a URL downloads it through a Source dedicated to this channel (visible under Sources); scanning a folder queues background work — refresh this page in a moment to see new items.</p>
-    </div>
+      <p className="channel-panel-note">YouTube links download through this channel&apos;s Source. Folder scans run in the background, so new items may take a moment to appear.</p>
+    </section>
   );
 }

@@ -25,7 +25,7 @@ export type SelectContentInput = {
 // provider ran, so neither is trusted more than the other and a malformed response is caught
 // identically regardless of which one produced it.
 export type AiProvider = {
-  name: "anthropic" | "openai";
+  name: "anthropic" | "openai" | "claude-code";
   generatePlan(input: GeneratePlanInput, signal?: AbortSignal): Promise<unknown>;
   selectContent(input: SelectContentInput, signal?: AbortSignal): Promise<unknown>;
 };

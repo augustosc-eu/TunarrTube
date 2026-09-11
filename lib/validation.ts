@@ -14,6 +14,10 @@ export const aiProviderSettingSchema = z.enum([...AI_PROVIDERS, "auto"]);
 export const aiProviderOverrideSchema = z.enum(AI_PROVIDERS).nullable();
 export const aiProgrammingInstructionsSchema = z.string().trim().max(4_000).nullable();
 export const aiScheduleStyleSchema = z.enum(SCHEDULE_STYLES).nullable();
+// Timeout bounds mirror lib/ai/claude-code.ts's MIN_TIMEOUT_MS/MAX_TIMEOUT_MS (10s-600s) -- kept as a
+// literal range here too since lib/validation.ts doesn't import lib/ai/ (that module is server-only
+// and heavier; the two ranges are small and unlikely to drift, but keep them in sync if either changes).
+export const aiClaudeCodeTimeoutSecondsSchema = z.number().int().min(10).max(600);
 
 export const analyzeSourceSchema = z.object({
   url: z.string().url(),
@@ -66,6 +70,12 @@ export const settingsSchema = z.object({
   metadataItunesEnabled: z.boolean().optional(),
   metadataAutoApplyThreshold: z.number().int().min(0).max(100).optional(),
   aiProvider: aiProviderSettingSchema.optional(),
+  // Local Claude Code CLI integration (lib/ai/) -- see the matching AppSettings columns' comment in
+  // prisma/schema.prisma. aiClaudeCodePath: null clears back to auto-detection, a string sets an
+  // explicit override; omitted leaves the stored value alone (same convention as ytdlpCookiesPath).
+  aiClaudeCodeEnabled: z.boolean().optional(),
+  aiClaudeCodePath: z.string().trim().min(1).nullable().optional(),
+  aiClaudeCodeTimeoutSeconds: aiClaudeCodeTimeoutSecondsSchema.optional(),
   ytdlpCookiesPath: z.string().trim().min(1).nullable().optional(),
   pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional(),
   defaultNamingScheme: namingSchemeSchema.optional(),
@@ -163,6 +173,15 @@ export const selectChannelContentSchema = z.object({
   sourceIds: z.array(z.string().min(1)).min(1).max(20),
   instructions: z.string().trim().min(1).max(4_000),
   targetCount: z.number().int().min(1).max(200).optional(),
+  aiProvider: aiProviderOverrideSchema.optional()
+});
+
+// AI Programming Director preview request (lib/programming/director.ts) -- deliberately its own schema
+// rather than reusing updateChannelSchema: scheduleStyle is required here (a preview always needs a
+// concrete kind to ask the AI for), where it's optional/nullable on the channel itself.
+export const directorPreviewSchema = z.object({
+  instructions: z.string().trim().min(1).max(4_000),
+  scheduleStyle: z.enum(SCHEDULE_STYLES),
   aiProvider: aiProviderOverrideSchema.optional()
 });
 

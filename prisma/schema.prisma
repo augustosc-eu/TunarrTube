@@ -192,10 +192,21 @@ model AppSettings {
   metadataMusicbrainzEnabled  Boolean @default(true)
   metadataItunesEnabled       Boolean @default(true)
   metadataAutoApplyThreshold  Int     @default(80)
-  // Global default for lib/programming/'s AI provider selection ("auto" | "anthropic" | "openai");
-  // "auto" picks whichever of ANTHROPIC_API_KEY/OPENAI_API_KEY is set in the environment. A Source or
-  // Channel's own aiProvider column overrides this per-entity.
+  // Global default for lib/programming/'s AI provider selection ("auto" | "anthropic" | "openai" |
+  // "claude-code"); "auto" picks whichever of ANTHROPIC_API_KEY/OPENAI_API_KEY is set in the
+  // environment (never "claude-code" -- see lib/programming/provider.ts's comment on why). A Source
+  // or Channel's own aiProvider column overrides this per-entity.
   aiProvider              String   @default("auto")
+  // Local Claude Code CLI integration (lib/ai/) -- an alternative to the ANTHROPIC_API_KEY/OPENAI_API_KEY
+  // providers above that shells out to an already-authenticated `claude` CLI instead of calling an API
+  // with a key. Off by default (aiClaudeCodeEnabled) so installing this app never starts invoking a local
+  // binary without the operator opting in, even if one happens to be on PATH. aiClaudeCodePath is an
+  // optional override for when auto-detection (PATH lookup) is unreliable -- null means auto-detect, same
+  // convention as ytdlpCookiesPath above. aiClaudeCodeTimeoutSeconds bounds how long TunarrTube waits for
+  // one `claude` invocation before killing it.
+  aiClaudeCodeEnabled     Boolean  @default(false)
+  aiClaudeCodePath        String?
+  aiClaudeCodeTimeoutSeconds Int   @default(120)
   // Global default for a downloaded video's on-disk filename/folder layout -- "id" (today's
   // <youtubeId>.mp4, flat, unchanged default), "template" (defaultFilenameTemplate applied flat), or
   // "tvshow" (Emby/Plex/Jellyfin- and Tunarr-Shows-compatible Show/Season <year>/S<year>E<nnn> layout).

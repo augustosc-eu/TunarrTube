@@ -134,10 +134,11 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: var(--bg); }
+html { min-width: 0; background: var(--bg); }
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: clip;
   background:
     radial-gradient(circle at 78% -10%, var(--accent-subtle), transparent 34rem),
     var(--bg);
@@ -154,13 +155,17 @@ button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 svg { flex: 0 0 auto; }
+/* Allow content to shrink within cards and grids, including long paths and titles. */
+.card, .card-wrap, .field, .input, .page-header > *, .form-grid > *, .meta > * { min-width: 0; }
+h1, h2, h3, p, .meta, .error, .log > span { overflow-wrap: anywhere; }
 
 .shell { min-height: 100vh; display: grid; grid-template-columns: 252px minmax(0, 1fr); }
 .sidebar {
   position: sticky;
   top: 0;
   z-index: 10;
-  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
@@ -196,12 +201,13 @@ p { color: var(--text-muted); line-height: 1.65; }
   padding: 9px 15px;
   font-weight: 650;
   font-size: 13px;
-  line-height: 1;
+  line-height: 1.35;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 100%;
   transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease, transform .12s ease, opacity .12s ease;
 }
 .button:hover { background: var(--accent-hover); box-shadow: 0 6px 16px -8px var(--accent); transform: translateY(-1px); }
@@ -249,11 +255,14 @@ p { color: var(--text-muted); line-height: 1.65; }
   transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
 }
 textarea.input { min-height: 112px; line-height: 1.5; resize: vertical; }
+/* Narrow .form-grid columns can be tighter than a select's longer option labels; ellipsize the
+   closed box instead of letting the browser hard-clip the text with no indication it's cut off. */
+select.input, .choice select { text-overflow: ellipsis; }
 .input::placeholder { color: var(--text-subtle); }
 .input:hover { border-color: color-mix(in srgb, var(--border-strong) 72%, var(--text-muted)); }
 .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
 .input:disabled { opacity: .58; cursor: not-allowed; background: var(--panel-2); }
-input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); vertical-align: -3px; }
+input[type="checkbox"] { width: 16px; height: 16px; flex-shrink: 0; margin: 0; accent-color: var(--accent); vertical-align: -3px; }
 .error { color: var(--error); background: var(--error-subtle); border: 1px solid color-mix(in srgb, var(--error) 24%, transparent); padding: 11px 13px; border-radius: var(--radius-md); font-size: 13px; line-height: 1.5; margin: 14px 0; white-space: pre-wrap; }
 .success { color: var(--success); }
 p.success { background: var(--success-subtle); border: 1px solid color-mix(in srgb, var(--success) 22%, transparent); padding: 11px 13px; border-radius: var(--radius-md); font-size: 13px; }
@@ -284,6 +293,8 @@ th { position: sticky; top: 0; z-index: 1; color: var(--text-muted); background:
 tbody tr { transition: background-color .1s ease; }
 tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 68%, transparent); }
 tr:last-child td { border-bottom: 0; }
+.sort-header { display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.sort-header:hover { color: var(--text); }
 .title-cell { max-width: 440px; }
 .title-cell strong { display: block; line-height: 1.4; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .title-cell .meta { margin-top: 3px; }
@@ -301,7 +312,8 @@ tr:last-child td { border-bottom: 0; }
 .stat::after { content: ""; position: absolute; inset: auto -20px -32px auto; width: 84px; height: 84px; border-radius: 50%; background: var(--accent-subtle); }
 .stat span { position: relative; z-index: 1; display: block; color: var(--text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 9px; }
 .stat strong { position: relative; z-index: 1; font-size: 24px; line-height: 1; letter-spacing: -.035em; color: var(--text); }
-.log { display: grid; grid-template-columns: 168px 88px minmax(0, 1fr); gap: 16px; padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+.log { display: grid; grid-template-columns: 168px 132px minmax(0, 1fr); gap: 16px; padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+.log > .badge { align-self: start; justify-self: start; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .log:hover { background: var(--panel-2); }
 .log:last-child { border-bottom: 0; }
 .code { font-family: var(--font-mono); font-size: 11px; word-break: break-word; color: var(--text-muted); }
@@ -315,8 +327,38 @@ tr:last-child td { border-bottom: 0; }
 .integration-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .integration-heading > svg { color: var(--accent); padding: 8px; width: 40px; height: 40px; border-radius: var(--radius-md); background: var(--accent-subtle); }
 .integration-heading h2 { margin-bottom: 0; }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 14px; align-items: end; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 0 14px; align-items: end; }
+/* A checklist of variable-length labels doesn't fit .form-grid's shared-row-height model: one long,
+   wrapping label forces every other column in its grid row just as tall, leaving a dead gap under
+   the short items beside it. A multi-column flow lets a tall label push down only its own column. */
+.checklist-columns { columns: 200px; column-gap: 20px; }
+.checklist-columns > label { display: flex; align-items: center; gap: 6px; padding: 4px 0; break-inside: avoid; }
 .form-grid > .button { align-self: center; margin-bottom: 18px; }
+
+/* Channel workspace: keep authoring controls readable on wide displays and group each action
+   into a compact, scannable surface instead of stretching inputs and disabled buttons edge-to-edge. */
+.channel-detail { width: 100%; max-width: 1200px; }
+.channel-panel { margin-bottom: 20px; padding: 24px; }
+.channel-tunarr-card { width: 100%; max-width: none; margin-top: 24px; }
+.channel-panel-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
+.channel-panel-heading h2 { margin-bottom: 4px; }
+.channel-panel-heading p { max-width: 760px; margin: 0; font-size: 13px; line-height: 1.55; }
+.channel-panel-icon { display: grid; place-items: center; flex: 0 0 auto; width: 34px; height: 34px; border-radius: var(--radius-md); background: var(--accent-subtle); color: var(--accent); }
+.add-media-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 12px; }
+.add-media-option { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); display: flex; flex-direction: column; }
+.add-media-option-title { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--accent); }
+.add-media-option-title h3 { margin: 0; color: var(--text); font-size: 13px; font-weight: 680; }
+.add-media-option .field { margin-bottom: 12px; }
+.add-media-option .input { background: var(--panel); }
+.add-media-action { width: 100%; margin-top: auto; }
+.channel-panel-note { margin: 15px 2px 0; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.source-picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 8px; margin-top: 2px; }
+.source-picker-option { display: flex; align-items: center; gap: 9px; min-width: 0; height: 52px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); color: var(--text-muted); font-size: 12px; font-weight: 600; line-height: 1.35; cursor: pointer; transition: border-color .12s ease, background-color .12s ease, color .12s ease; }
+.source-picker-option:hover { border-color: var(--border-strong); color: var(--text); }
+.source-picker-option:has(input:checked) { border-color: var(--accent); background: var(--accent-subtle); color: var(--text); }
+.source-picker-option span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ai-brief-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px); gap: 14px; align-items: start; }
+.ai-selection-action { min-width: 170px; }
 
 /* Channel style template gallery (ConceptPresetPicker) -- replaces a flat <select> of preset
    labels with categorized, previewable cards. */
@@ -360,6 +402,10 @@ tr:last-child td { border-bottom: 0; }
 
 /* Selection checkbox overlaid on a card's top-right corner -- kept out of the thumb/text flow. */
 .card-wrap { position: relative; }
+.card-wrap > .card { height: 100%; padding-right: 44px; }
+.template-card h3 { margin-bottom: 6px; font-size: 15px; line-height: 1.35; font-weight: 680; }
+.template-card > p:last-child:not(.meta) { margin-top: 10px; }
+.list .card-wrap > .card { padding-right: 42px; }
 .card-select { position: absolute; top: 16px; right: 16px; z-index: 2; }
 .list .card-select { top: 14px; right: 14px; }
 
@@ -379,19 +425,20 @@ tr:last-child td { border-bottom: 0; }
 
 @media (max-width: 640px) {
   .shell { display: block; }
-  .sidebar { position: sticky; height: auto; min-width: 0; flex-direction: row; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebar { position: sticky; width: 100%; max-width: 100%; height: auto; min-width: 0; flex-direction: row; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
   .brand { min-height: 38px; padding: 0 10px 0 0; }
   .brand svg { width: 28px; height: 28px; }
-  .nav { display: flex; overflow-x: auto; flex: 1; gap: 2px; scrollbar-width: none; }
+  .nav { display: flex; overflow-x: auto; min-width: 0; flex: 1; gap: 2px; scrollbar-width: none; }
   .nav::-webkit-scrollbar { display: none; }
   .nav a { min-width: 40px; min-height: 38px; }
   .nav a:hover { transform: none; }
-  .nav a[aria-current="page"]::before { left: 7px; right: 7px; top: auto; bottom: -10px; height: 3px; width: auto; }
+  .nav a[aria-current="page"]::before { left: 7px; right: 7px; top: auto; bottom: 0; height: 3px; width: auto; }
   .sidebar-footer { margin-top: 0; padding: 0 0 0 4px; border: 0; }
   .theme-toggle { width: 40px; min-height: 38px; padding: 0; }
   .content { padding: 26px 16px 52px; }
   .page-header { align-items: flex-start; flex-direction: column; gap: 18px; margin-bottom: 24px; }
   .page-header .button { width: 100%; }
+  .page-header > .toolbar { width: 100%; margin-bottom: 0; }
   h1 { font-size: 30px; }
   .content > p { margin-top: -8px; }
   .card { padding: 18px; }
@@ -411,6 +458,9 @@ tr:last-child td { border-bottom: 0; }
   .toolbar > .spacer { display: none; }
   .toolbar > .muted { width: 100%; }
   .toolbar > .input, .toolbar > .button:not([aria-label]) { flex: 1 1 100%; width: 100%; }
+  .toolbar > .input { min-width: 0; }
+  .system-row-actions > .button:not([aria-label]) { flex: 0 1 auto; width: auto; }
+  .input, .choice select { font-size: 16px; }
   .choice { align-items: flex-start; flex-direction: column; }
   .choice select { width: 100%; }
   .log { grid-template-columns: 1fr auto; gap: 4px 10px; }
@@ -420,7 +470,30 @@ tr:last-child td { border-bottom: 0; }
   .system-row > .system-row-actions { grid-column: 2; grid-row: 1; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid > .button { width: 100%; }
+  .channel-panel { padding: 18px; }
+  .channel-panel-heading { margin-bottom: 16px; }
+  .add-media-options { grid-template-columns: 1fr; }
+  .source-picker-grid { grid-template-columns: 1fr; }
+  .ai-brief-grid { grid-template-columns: 1fr; gap: 0; }
+  .ai-selection-action { width: 100%; }
   .empty { min-height: 230px; padding: 42px 18px; }
+
+  /* Dense desktop tables become labeled records on phones. This keeps titles, states, and
+     actions visible without making people discover a hidden horizontal scrollbar. */
+  .table-wrap.responsive-table { overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .responsive-table table { min-width: 0; background: transparent; }
+  .responsive-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+  .responsive-table tbody { display: grid; gap: 10px; }
+  .responsive-table tbody tr { display: grid; padding: 7px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-sm); }
+  .responsive-table tbody tr:hover { background: var(--panel); }
+  .responsive-table td { display: grid; grid-template-columns: minmax(76px, 30%) minmax(0, 1fr); gap: 12px; align-items: center; min-width: 0; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .responsive-table td:last-child { border-bottom: 0; }
+  .responsive-table td::before { content: attr(data-label); color: var(--text-muted); font-size: 10px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+  .responsive-table td[data-label="Video"], .responsive-table td[data-label="Title"], .responsive-table td[data-label="Target"] { align-items: start; }
+  .responsive-table .title-cell { max-width: none; }
+  .responsive-table .title-cell strong { white-space: normal; overflow: visible; text-overflow: clip; }
+  .responsive-table td > .toolbar { margin: 0; }
+  .responsive-table td > :where(.button, .input) { justify-self: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

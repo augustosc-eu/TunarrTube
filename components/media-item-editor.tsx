@@ -17,7 +17,7 @@ type MediaItem = {
   customFieldsJson: string | null;
 };
 
-type Template = { id: string; name: string; htmlTemplate: string; bindingsJson: string };
+type Template = { id: string; name: string; htmlTemplate: string; bindingsJson: string; layersJson: string };
 type RenderInfo = {
   id: string;
   status: string;
@@ -211,7 +211,7 @@ export function MediaItemEditor({ channelId: _channelId, mediaItem, template, re
 
   return (
     <div className="card form-card">
-        <TemplatePreviewFrame htmlTemplate={template.htmlTemplate} values={previewValues} />
+        <TemplatePreviewFrame htmlTemplate={template.htmlTemplate} values={previewValues} layersJson={template.layersJson} />
 
         <div className="form-grid" style={{ marginTop: 22 }}>
           <div className="field"><label>Title</label><input className="input" value={title} onChange={(event) => setTitle(event.target.value)} /></div>

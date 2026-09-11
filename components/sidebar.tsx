@@ -28,7 +28,7 @@ export function Sidebar() {
         {links.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
-            <Link href={href} key={href} aria-current={active ? "page" : undefined}>
+            <Link href={href} key={href} aria-label={label} title={label} aria-current={active ? "page" : undefined}>
               <Icon size={17} /><span>{label}</span>
             </Link>
           );

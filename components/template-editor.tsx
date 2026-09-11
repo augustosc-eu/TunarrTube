@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fillTemplate } from "@/lib/overlay/bindings";
+import { TemplatePreviewFrame } from "@/components/template-preview-frame";
 import { layoutToBindings, renderLayoutToHtml } from "@/lib/overlay/visual";
 import { TemplateVisualEditor } from "@/components/template-visual-editor";
 import type { BindingField, OverlayLayer } from "@/lib/overlay/types";
@@ -113,13 +113,13 @@ export function TemplateEditor({ template }: { template: Template }) {
 
   return (
     <div className="card form-card" style={{ maxWidth: 1100 }}>
-      <div className="preview-frame-wrap" style={{ marginBottom: 22 }}>
-        <iframe title="Template preview" srcDoc={fillTemplate(html, sampleValues)} sandbox="" />
+      <div style={{ marginBottom: 22 }}>
+        <TemplatePreviewFrame title="Template preview" htmlTemplate={html} values={sampleValues} layersJson={layersJson} />
       </div>
 
       <div className="toolbar" style={{ marginBottom: 14 }}>
-        <button type="button" className={`button${mode === "visual" ? "" : " secondary"}`} disabled={!layout} onClick={() => setMode("visual")}>Visual</button>
-        <button type="button" className={`button${mode === "code" ? "" : " secondary"}`} onClick={() => setMode("code")}>Code</button>
+        <button type="button" className={`button${mode === "visual" ? "" : " secondary"}`} aria-pressed={mode === "visual"} disabled={!layout} onClick={() => setMode("visual")}>Visual</button>
+        <button type="button" className={`button${mode === "code" ? "" : " secondary"}`} aria-pressed={mode === "code"} onClick={() => setMode("code")}>Code</button>
         {!layout ? <span className="muted" style={{ marginLeft: 10 }}>Hand-edited past what the visual builder can represent — start a new template to use it.</span> : null}
       </div>
 
@@ -127,20 +127,20 @@ export function TemplateEditor({ template }: { template: Template }) {
         <TemplateVisualEditor layout={layout} onChange={updateLayout} />
       ) : (
         <div className="field">
-          <label>HTML / CSS ({"{{binding}}"} placeholders)</label>
+          <label htmlFor="template-html">HTML / CSS ({"{{binding}}"} placeholders)</label>
           {layout ? <p className="muted" style={{ marginBottom: 6 }}>Editing this directly will detach the template from its visual layout on save.</p> : null}
-          <textarea className="input" style={{ minHeight: 260, fontFamily: "var(--font-mono)", fontSize: 12 }} value={html} onChange={(event) => editHtmlDirectly(event.target.value)} />
+          <textarea id="template-html" className="input" style={{ minHeight: 260, fontFamily: "var(--font-mono)", fontSize: 12 }} value={html} onChange={(event) => editHtmlDirectly(event.target.value)} />
         </div>
       )}
 
       <div className="form-grid" style={{ marginTop: 18 }}>
         <div className="field">
-          <label>Bindings (JSON){layout ? " — derived from the visual layout" : ""}</label>
-          <textarea className="input" style={{ minHeight: 140, fontFamily: "var(--font-mono)", fontSize: 12 }} value={bindingsJson} readOnly={Boolean(layout)} onChange={(event) => setBindingsJson(event.target.value)} />
+          <label htmlFor="template-bindings">Bindings (JSON){layout ? " — derived from the visual layout" : ""}</label>
+          <textarea id="template-bindings" className="input" style={{ minHeight: 140, fontFamily: "var(--font-mono)", fontSize: 12 }} value={bindingsJson} readOnly={Boolean(layout)} onChange={(event) => setBindingsJson(event.target.value)} />
         </div>
         <div className="field">
-          <label>Layers (JSON — position/timing)</label>
-          <textarea className="input" style={{ minHeight: 140, fontFamily: "var(--font-mono)", fontSize: 12 }} value={layersJson} onChange={(event) => setLayersJson(event.target.value)} />
+          <label htmlFor="template-layers">Layers (JSON — position/timing)</label>
+          <textarea id="template-layers" className="input" style={{ minHeight: 140, fontFamily: "var(--font-mono)", fontSize: 12 }} value={layersJson} onChange={(event) => setLayersJson(event.target.value)} />
         </div>
       </div>
       {error ? <p className="error">{error}</p> : null}

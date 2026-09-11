@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCollectionVideosSchema, analyzeSourceSchema, createSourceSchema, createTemplateSchema, logsPurgeSchema, patchSourceSchema, settingsSchema } from "@/lib/validation";
+import { addCollectionVideosSchema, aiProviderOverrideSchema, aiProviderSettingSchema, analyzeSourceSchema, createSourceSchema, createTemplateSchema, directorPreviewSchema, logsPurgeSchema, patchSourceSchema, settingsSchema } from "@/lib/validation";
 
 describe("Phase 2 validation", () => {
   it("accepts channel analysis and all playback modes", () => {
@@ -27,6 +27,24 @@ describe("Phase 2 validation", () => {
     expect(patchSourceSchema.parse({ namingScheme: "template", filenameTemplate: "{channel} - {title}" }).filenameTemplate).toBe("{channel} - {title}");
     expect(patchSourceSchema.parse({ namingScheme: null }).namingScheme).toBeNull();
     expect(() => patchSourceSchema.parse({ filenameTemplate: "" })).toThrow();
+  });
+  it("accepts \"claude-code\" as an AI provider choice everywhere the other two providers are accepted", () => {
+    expect(aiProviderSettingSchema.parse("claude-code")).toBe("claude-code");
+    expect(aiProviderOverrideSchema.parse("claude-code")).toBe("claude-code");
+    expect(() => aiProviderOverrideSchema.parse("ollama")).toThrow();
+  });
+  it("validates the local Claude Code settings fields (enable switch, path, timeout bounds)", () => {
+    const parsed = settingsSchema.parse({ aiClaudeCodeEnabled: true, aiClaudeCodePath: "/usr/local/bin/claude", aiClaudeCodeTimeoutSeconds: 90 });
+    expect(parsed).toMatchObject({ aiClaudeCodeEnabled: true, aiClaudeCodePath: "/usr/local/bin/claude", aiClaudeCodeTimeoutSeconds: 90 });
+    expect(settingsSchema.parse({ aiClaudeCodePath: null }).aiClaudeCodePath).toBeNull();
+    expect(() => settingsSchema.parse({ aiClaudeCodeTimeoutSeconds: 5 })).toThrow();
+    expect(() => settingsSchema.parse({ aiClaudeCodeTimeoutSeconds: 601 })).toThrow();
+  });
+  it("validates an AI Programming Director preview request", () => {
+    const parsed = directorPreviewSchema.parse({ instructions: "Program the evening block.", scheduleStyle: "daily-dayparts", aiProvider: "claude-code" });
+    expect(parsed.scheduleStyle).toBe("daily-dayparts");
+    expect(() => directorPreviewSchema.parse({ instructions: "", scheduleStyle: "daily-dayparts" })).toThrow();
+    expect(() => directorPreviewSchema.parse({ instructions: "x", scheduleStyle: "bogus" })).toThrow();
   });
   it("bounds template field sizes -- a direct API call bypasses the visual editor's client-side image-size check", () => {
     const base = { name: "Test", htmlTemplate: "<div></div>", bindingsJson: "[]", layersJson: "[]" };

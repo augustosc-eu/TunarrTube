@@ -81,7 +81,7 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
         <span className="spacer" />
         <button className="button" type="button" onClick={renderAll} disabled={rendering}><Wand2 size={16} /> {rendering ? "Queuing…" : "Render all"}</button>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap responsive-table">
         <table>
           <thead>
             <tr><th><input type="checkbox" aria-label="Select all items" checked={items.length > 0 && items.every(({ mediaItem }) => selected.has(mediaItem.id))} onChange={(event) => setSelected(event.target.checked ? new Set(items.map(({ mediaItem }) => mediaItem.id)) : new Set())} /></th><th>Title</th><th>Source</th><th>Metadata</th><th>Render</th><th /></tr>
@@ -92,14 +92,14 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
               const hasSourceFile = mediaItem.originType === "local" ? Boolean(mediaItem.originLocalPath) : mediaItem.downloadStatus === "complete";
               return (
                 <tr key={mediaItem.id}>
-                  <td><input type="checkbox" checked={selected.has(mediaItem.id)} onChange={() => toggle(mediaItem.id)} aria-label={`Select ${mediaItem.title}`} /></td>
-                  <td className="title-cell">
+                  <td data-label="Select"><input type="checkbox" checked={selected.has(mediaItem.id)} onChange={() => toggle(mediaItem.id)} aria-label={`Select ${mediaItem.title}`} /></td>
+                  <td className="title-cell" data-label="Title">
                     <strong><Link href={`/channels/${channelId}/items/${mediaItem.id}`}>{mediaItem.title}</Link></strong>
                     <div className="meta">{mediaItem.artist ?? "—"}{mediaItem.album ? ` · ${mediaItem.album}` : ""}</div>
                   </td>
-                  <td><span className="badge">{mediaItem.originType}</span></td>
-                  <td><span className={`badge ${mediaItem.metadataStatus}`}>{mediaItem.metadataStatus}</span></td>
-                  <td>
+                  <td data-label="Source"><span className="badge">{mediaItem.originType}</span></td>
+                  <td data-label="Metadata"><span className={`badge ${mediaItem.metadataStatus}`}>{mediaItem.metadataStatus}</span></td>
+                  <td data-label="Render">
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       {render?.status === "complete" && render.hasThumbnail ? (
                         <Link href={`/channels/${channelId}/items/${mediaItem.id}`}>
@@ -112,7 +112,7 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
                       ) : null}
                     </div>
                   </td>
-                  <td><button className="button secondary" aria-label="Remove" onClick={() => remove(mediaItem.id)} disabled={removing === mediaItem.id}><Trash2 size={15} /></button></td>
+                  <td data-label="Remove"><button className="button secondary" aria-label="Remove" onClick={() => remove(mediaItem.id)} disabled={removing === mediaItem.id}><Trash2 size={15} /></button></td>
                 </tr>
               );
             })}

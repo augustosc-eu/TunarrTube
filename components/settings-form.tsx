@@ -5,6 +5,7 @@ import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
 
 type BinaryStatus = { name: string; found: boolean; path: string | null; version: string | null; error?: string };
 type TunarrStatus = { connected: boolean; version: { tunarr: string; ffmpeg: string; nodejs: string }; capabilities: Record<string, boolean> };
+type ClaudeCodeStatus = { available: boolean; detail: string; version: string | null; path: string | null };
 
 type Mapping = { ytarrPrefix: string; tunarrPrefix: string };
 export const VIDEO_QUALITY_OPTIONS = [
@@ -21,7 +22,7 @@ export const NAMING_SCHEME_OPTIONS = [
   { value: "tvshow", label: "TV show (Emby/Plex/Jellyfin/Tunarr Shows)" }
 ];
 
-export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialMusicbrainzContactEmail, initialMetadataMusicbrainzEnabled, initialMetadataItunesEnabled, initialMetadataAutoApplyThreshold, initialAiProvider, initialYtdlpCookiesPath, initialMappings, initialDefaultNamingScheme, initialDefaultFilenameTemplate, ytDlp, ffmpeg }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialMusicbrainzContactEmail: string | null; initialMetadataMusicbrainzEnabled: boolean; initialMetadataItunesEnabled: boolean; initialMetadataAutoApplyThreshold: number; initialAiProvider: string; initialYtdlpCookiesPath: string | null; initialMappings: Mapping[]; initialDefaultNamingScheme: string; initialDefaultFilenameTemplate: string; ytDlp: BinaryStatus; ffmpeg: BinaryStatus }) {
+export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheMegabytes, initialCacheAgeDays, initialLogRetentionDays, initialDefaultVideoQuality, initialMusicbrainzContactEmail, initialMetadataMusicbrainzEnabled, initialMetadataItunesEnabled, initialMetadataAutoApplyThreshold, initialAiProvider, initialAiClaudeCodeEnabled, initialAiClaudeCodePath, initialAiClaudeCodeTimeoutSeconds, initialYtdlpCookiesPath, initialMappings, initialDefaultNamingScheme, initialDefaultFilenameTemplate, ytDlp, ffmpeg, claudeCode }: { initialDirectory: string; initialTunarrUrl: string; initialCacheMegabytes: number; initialCacheAgeDays: number; initialLogRetentionDays: number; initialDefaultVideoQuality: string; initialMusicbrainzContactEmail: string | null; initialMetadataMusicbrainzEnabled: boolean; initialMetadataItunesEnabled: boolean; initialMetadataAutoApplyThreshold: number; initialAiProvider: string; initialAiClaudeCodeEnabled: boolean; initialAiClaudeCodePath: string | null; initialAiClaudeCodeTimeoutSeconds: number; initialYtdlpCookiesPath: string | null; initialMappings: Mapping[]; initialDefaultNamingScheme: string; initialDefaultFilenameTemplate: string; ytDlp: BinaryStatus; ffmpeg: BinaryStatus; claudeCode: ClaudeCodeStatus }) {
   const [directory, setDirectory] = useState(initialDirectory);
   const [tunarrUrl, setTunarrUrl] = useState(initialTunarrUrl);
   const [cacheMegabytes, setCacheMegabytes] = useState(String(initialCacheMegabytes));
@@ -33,6 +34,11 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   const [metadataItunesEnabled, setMetadataItunesEnabled] = useState(initialMetadataItunesEnabled);
   const [metadataAutoApplyThreshold, setMetadataAutoApplyThreshold] = useState(String(initialMetadataAutoApplyThreshold));
   const [aiProvider, setAiProvider] = useState(initialAiProvider);
+  const [aiClaudeCodeEnabled, setAiClaudeCodeEnabled] = useState(initialAiClaudeCodeEnabled);
+  const [aiClaudeCodePath, setAiClaudeCodePath] = useState(initialAiClaudeCodePath ?? "");
+  const [aiClaudeCodeTimeoutSeconds, setAiClaudeCodeTimeoutSeconds] = useState(String(initialAiClaudeCodeTimeoutSeconds));
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeCodeStatus>(claudeCode);
+  const [claudeTestResult, setClaudeTestResult] = useState<string | null>(null);
   const [ytdlpCookiesPath, setYtdlpCookiesPath] = useState(initialYtdlpCookiesPath ?? "");
   const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ ytarrPrefix, tunarrPrefix }) => ({ ytarrPrefix, tunarrPrefix })));
   const [namingScheme, setNamingScheme] = useState(initialDefaultNamingScheme);
@@ -80,6 +86,17 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     finally { setBusy(null); }
   }
 
+  async function testClaudeCode() {
+    setBusy("claude-code"); setMessage(null); setClaudeTestResult(null);
+    try {
+      const data = await responseData(await fetch("/api/ai/test", { method: "POST" }));
+      setClaudeTestResult(`Connected in ${data.latencyMs}ms. Sample reply: "${data.sample}"`);
+      const refreshed = await responseData(await fetch("/api/ai/status"));
+      setClaudeStatus(refreshed);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Claude Code test failed"); setMessageTone("error"); }
+    finally { setBusy(null); }
+  }
+
   async function repairMetadata() {
     setBusy("repair"); setMessage(null);
     try {
@@ -92,7 +109,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   async function save() {
     setBusy("settings"); setMessage(null);
     try {
-      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, musicbrainzContactEmail: musicbrainzContactEmail.trim() || null, metadataMusicbrainzEnabled, metadataItunesEnabled, metadataAutoApplyThreshold: Number(metadataAutoApplyThreshold), aiProvider, ytdlpCookiesPath: ytdlpCookiesPath.trim() || null, pathMappings: mappings, defaultNamingScheme: namingScheme, defaultFilenameTemplate: filenameTemplate }) }));
+      const data = await responseData(await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaBaseDirectory: directory, tunarrUrl, cacheMaxMegabytes: Number(cacheMegabytes), cacheMaxAgeDays: Number(cacheAgeDays), logRetentionDays: Number(logRetentionDays), defaultVideoQuality: videoQuality, musicbrainzContactEmail: musicbrainzContactEmail.trim() || null, metadataMusicbrainzEnabled, metadataItunesEnabled, metadataAutoApplyThreshold: Number(metadataAutoApplyThreshold), aiProvider, aiClaudeCodeEnabled, aiClaudeCodePath: aiClaudeCodePath.trim() || null, aiClaudeCodeTimeoutSeconds: Number(aiClaudeCodeTimeoutSeconds), ytdlpCookiesPath: ytdlpCookiesPath.trim() || null, pathMappings: mappings, defaultNamingScheme: namingScheme, defaultFilenameTemplate: filenameTemplate }) }));
       setDirectory(data.mediaBaseDirectory); setTunarrUrl(data.tunarrUrl);
       setMessage(`Settings saved. Updated ${data.updatedSources} existing source destination${data.updatedSources === 1 ? "" : "s"}.`); setMessageTone("success");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Save failed"); setMessageTone("error"); }
@@ -137,8 +154,28 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
       <div className="field"><label htmlFor="metadata-itunes-enabled"><input id="metadata-itunes-enabled" type="checkbox" checked={metadataItunesEnabled} onChange={(event) => setMetadataItunesEnabled(event.target.checked)} /> iTunes lookups</label></div>
       <div className="field"><label htmlFor="metadata-auto-apply-threshold">Auto-apply confidence threshold</label><input className="input" id="metadata-auto-apply-threshold" type="number" min="0" max="100" value={metadataAutoApplyThreshold} onChange={(event) => setMetadataAutoApplyThreshold(event.target.value)} /></div>
     </div>
-    <span className="meta">When a media item is added to a channel with no artist (a synced video whose YouTube tags didn&apos;t supply one, or a local file), TunarrTube automatically searches the lookups enabled above and applies the best match scoring at or above this threshold (0-100). Lower catches more matches but risks the wrong artist; raise to be conservative. A weaker match is still visible for manual review in the media item editor&apos;s own Search.</span>
-    <div className="field"><label htmlFor="ai-provider">AI programming provider</label><select className="input" id="ai-provider" value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option value="auto">Auto-detect from configured API key</option><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option></select><span className="meta">Default for any source or channel using &ldquo;AI Programming&rdquo; order that doesn&apos;t set its own provider. Requires <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code> in the environment — no key is stored here.</span></div>
+    <div className="field"><span className="meta">When a media item is added to a channel with no artist (a synced video whose YouTube tags didn&apos;t supply one, or a local file), TunarrTube automatically searches the lookups enabled above and applies the best match scoring at or above this threshold (0-100). Lower catches more matches but risks the wrong artist; raise to be conservative. A weaker match is still visible for manual review in the media item editor&apos;s own Search.</span></div>
+    <div className="field"><label htmlFor="ai-provider">AI programming provider</label><select className="input" id="ai-provider" value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option value="auto">Auto-detect from configured API key</option><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option><option value="claude-code">Claude Code (Local)</option></select><span className="meta">Default for any source or channel using &ldquo;AI Programming&rdquo; order that doesn&apos;t set its own provider. Anthropic/OpenAI require <code>ANTHROPIC_API_KEY</code>/<code>OPENAI_API_KEY</code> in the environment (no key stored here); &ldquo;Claude Code (Local)&rdquo; uses the local CLI below instead and needs neither. &ldquo;Auto-detect&rdquo; only considers the two API-key providers — select &ldquo;Claude Code (Local)&rdquo; explicitly to use it.</span></div>
+
+    <h2 className="section-heading">AI Assistant</h2>
+    <p>Runs the locally installed <code>claude</code> CLI as a background process, using your existing Claude Code sign-in — no Anthropic API key required. Fully optional: leave it off and every other TunarrTube feature behaves exactly as it does today. Each call draws from your Claude plan&rsquo;s usage the same as any other Claude Code session — even a small request carries real, non-trivial usage, so use &ldquo;Test connection&rdquo; and &ldquo;Preview Schedule&rdquo; deliberately rather than repeatedly.</p>
+    <div className="field"><label htmlFor="ai-claude-code-enabled"><input id="ai-claude-code-enabled" type="checkbox" checked={aiClaudeCodeEnabled} onChange={(event) => setAiClaudeCodeEnabled(event.target.checked)} /> Enable Claude Code integration</label><span className="meta">Master switch. While off, TunarrTube never invokes the <code>claude</code> CLI, even if a source or channel still has &ldquo;Claude Code (Local)&rdquo; selected as its AI provider.</span></div>
+    <div className="system-row">
+      <strong>Claude Code CLI</strong>
+      <div>
+        <span className={claudeStatus.available ? "success" : "error"}>{claudeStatus.available ? <CheckCircle2 size={14} className="inline-icon" /> : <XCircle size={14} className="inline-icon" />}{claudeStatus.available ? "Available" : "Claude CLI not detected"}</span>
+        <div className="meta">{claudeStatus.detail}</div>
+      </div>
+      <div className="toolbar system-row-actions">
+        <button className="button secondary" type="button" disabled={Boolean(busy) || !aiClaudeCodeEnabled} onClick={testClaudeCode}>{busy === "claude-code" && <LoaderCircle size={14} className="animate-spin" />} Test connection</button>
+      </div>
+    </div>
+    {!aiClaudeCodeEnabled && <p className="meta">Enable the integration above before testing the connection.</p>}
+    {claudeTestResult && <p className="success">{claudeTestResult}</p>}
+    <div className="form-grid">
+      <div className="field"><label htmlFor="ai-claude-code-path">Claude executable path (optional)</label><input className="input code" id="ai-claude-code-path" value={aiClaudeCodePath} onChange={(event) => setAiClaudeCodePath(event.target.value)} placeholder="auto-detected from PATH" /><span className="meta">Only needed if auto-detection picks the wrong (or no) binary. Leave blank to auto-detect via PATH.</span></div>
+      <div className="field"><label htmlFor="ai-claude-code-timeout">Timeout (seconds)</label><input className="input" id="ai-claude-code-timeout" type="number" min="10" max="600" value={aiClaudeCodeTimeoutSeconds} onChange={(event) => setAiClaudeCodeTimeoutSeconds(event.target.value)} /><span className="meta">How long TunarrTube waits for one Claude Code response before giving up (10-600s).</span></div>
+    </div>
 
     <h2 className="section-heading">Tunarr</h2>
     <div className="field"><label htmlFor="tunarr-url">Tunarr URL</label><input className="input code" id="tunarr-url" type="url" value={tunarrUrl} onChange={(event) => { setTunarrUrl(event.target.value); setTunarr(null); }} /><span className="meta">TunarrTube discovers the configured server&apos;s OpenAPI contract before creating or updating channels.</span></div>

@@ -211,13 +211,41 @@ This creates a second, independent Tunarr channel alongside any Source-based one
 
 Instead of a fixed sort order, a Source or Channel can hand its programming to an AI provider (Anthropic or OpenAI): pick **AI Programming** as the programming order, optionally describe how you want it scheduled (e.g. "mornings should be calmer clips, evenings more upbeat"), and publish. TunarrTube asks the provider for a repeating daily schedule of named blocks (e.g. "Morning", "Primetime"), each with an ordered clip list, then creates one real Tunarr **Custom Show** per block and a native Tunarr **time-slot schedule** referencing them — this is Tunarr's own dayparting feature, not something TunarrTube simulates on top of a flat lineup.
 
-- Requires `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in the environment (see Configuration below) — no API key is ever stored in the database or shown in the UI.
+- Requires `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in the environment (see Configuration below) — no API key is ever stored in the database or shown in the UI. As an alternative that needs no API key at all, see **Claude Code Integration** below.
 - Choose a provider globally in **Settings**, or override it per Source/Channel; leaving it as "auto" picks whichever single key is configured (having both set requires an explicit choice, so a request never silently runs against the wrong provider and bills the wrong account).
 - Regenerating a schedule is a real, billed call to the configured provider. TunarrTube only calls it again when the candidate clips or your instructions actually changed since the last publish — an unrelated republish (a new video, a renumber) reuses the cached schedule and just updates the same Tunarr Custom Shows in place.
 - Requires a Tunarr server whose Custom Shows API (`/api/custom-shows`) is available — checked the same way every other required capability is, via `/openapi.json` discovery, and only when AI Programming is actually selected.
 - **Schedule style** picks the shape of the schedule: **Daily dayparts** and **Weekly broadcast** are both fixed-time schedules (Tunarr's own "time slots"), the only difference being whether the AI plans one repeating day or a different lineup per weekday. **Endless rotation** has no fixed times at all — the AI groups clips with a relative weight and cooldown, and Tunarr shuffles them forever (its "random slots" engine), good for a channel that should just feel like a themed radio/video rotation.
 - **Concept preset** is a shortcut for the instructions box (Balanced variety, Throwback/retro countdown, Late night chill, High energy/party, or Custom) — it just fills in a starting point you can still edit before publishing.
 - Every AI-generated schedule is dry-run through Tunarr's own schedule preview endpoints before being published, and refused (not silently published) if the preview looks broken (a non-finite duration, or a block Tunarr's scheduler never actually reaches) rather than risk a channel with no real programming.
+
+### Claude Code Integration
+
+As an alternative to the Anthropic API, TunarrTube can run AI Programming through a locally installed **Claude Code CLI**, using your existing Claude Code sign-in — **no Anthropic API key is required for this provider**, and none of your Claude Code credentials ever pass through TunarrTube's own request/response bodies or get stored in its database. This is entirely optional: if you never enable it, TunarrTube behaves exactly like it always has, and if the `claude` executable isn't installed, every other feature keeps working normally.
+
+To set it up:
+
+1. **Install Claude Code** on the same machine (or container) running TunarrTube. See [claude.com/claude-code](https://claude.com/claude-code).
+2. **Authenticate** by running `claude` once from a terminal and signing in.
+3. In TunarrTube, open **Settings → AI Assistant** and turn on **Enable Claude Code integration**. If auto-detection can't find the binary, set an explicit **Claude executable path**.
+4. Click **Test connection** — this runs one real, short round-trip through the CLI (a fixed test prompt, never anything you typed) and reports whether it's genuinely working.
+5. Pick **Claude Code (Local)** as the AI provider — globally in Settings, or per Source/Channel — and use AI Programming (or the **AI Programming Director**, below) as usual.
+
+A few things worth knowing:
+
+- Claude Code integration is optional. Existing TunarrTube functionality does not depend on it, and "auto" provider resolution never silently picks it — you always have to select it explicitly.
+- TunarrTube shells out to the `claude` CLI as a plain child process (`claude -p --output-format json --max-turns 1 --restricted --tools ""`, with the prompt sent over stdin rather than as a command-line argument), with tool use disabled — it's used purely as a language-model inference process, never given filesystem, command-execution, or repository access, and it can never mutate TunarrTube's database or lineup directly.
+- Calls run with a configurable timeout (10–600s, default 120s) and are capped to a couple of concurrent invocations at a time, so TunarrTube never launches a pile of `claude` processes at once.
+- **This uses your Claude subscription's usage, not a separate bill.** Each call (even a trivial one) reports a nontrivial cost-equivalent in TunarrTube's logs — this reflects real usage against your plan's limits, not a fee on top of it, but it's not free/instant either. Use **Test connection** and **Preview Schedule** deliberately rather than repeatedly.
+- If Claude Code isn't installed, isn't authenticated, or is disabled in Settings, you'll get a clear message ("Claude Code was not detected or is not authenticated. Install Claude Code and run `claude` once from Terminal to sign in.") rather than a silent failure — and every other TunarrTube feature is entirely unaffected.
+
+### AI Programming Director
+
+The **AI Programming Director** (shown on a Channel's Tunarr panel when AI Programming is selected) lets you describe a schedule in plain language — e.g. *"Program this channel from 18:00 until midnight, playing episodes in order, and keep the schedule close to 30-minute blocks"* — and preview exactly what the configured AI provider (Anthropic, OpenAI, or Claude Code) proposes before anything is saved:
+
+1. Type your request and click **Preview Schedule**. TunarrTube gathers this channel's own curated clips (never anything outside it), asks the AI for a schedule, and shows you the result: proposed blocks or rotation groups, computed start/end times and durations, and any warnings (clips that weren't used, overlapping blocks, or a request — like per-item filler — that TunarrTube's schedule shape doesn't support).
+2. **Regenerate** to try again, or **Cancel** to discard the preview without changing anything.
+3. **Apply Schedule** saves the same programming settings the manual AI Programming panel above it already uses, then republishes through the exact same Tunarr publish path as any other AI-scheduled channel — the AI never writes to the lineup or to Tunarr directly.
 
 ## Playback and retention
 
@@ -264,6 +292,7 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `ANTHROPIC_API_KEY` | Enables Anthropic (Claude) as an AI Programming provider | None (feature unavailable if unset) |
 | `OPENAI_API_KEY` | Enables OpenAI as an AI Programming provider | None (feature unavailable if unset) |
 | `TUNARRTUBE_OPENAI_MODEL` | OpenAI model used for AI Programming | `gpt-4o` |
+| `TUNARRTUBE_CLAUDE_PATH` | Absolute `claude` (Claude Code CLI) executable path, used when Settings' own path override is unset | Auto-discovered |
 | `YTARR_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium |
 | `TUNARRTUBE_PORT` | Docker host port | `3000` |
 | `TUNARR_PORT` | Optional Tunarr Docker host port | `8000` |

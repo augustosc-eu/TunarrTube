@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { VisualElement, VisualLayout } from "@/lib/overlay/visual-types";
 
@@ -53,7 +53,18 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const scale = PREVIEW_WIDTH / layout.canvasWidth;
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const [previewWidth, setPreviewWidth] = useState(PREVIEW_WIDTH);
+  useEffect(() => {
+    const container = canvasContainerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setPreviewWidth(Math.min(PREVIEW_WIDTH, entry.contentRect.width));
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+  const scale = previewWidth / layout.canvasWidth;
   const previewHeight = Math.round(layout.canvasHeight * scale);
   const selected = layout.elements.find((element) => element.id === selectedId) ?? null;
 
@@ -121,7 +132,7 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
 
   return (
     <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-      <div>
+      <div ref={canvasContainerRef} style={{ width: "100%", maxWidth: PREVIEW_WIDTH, minWidth: 0 }}>
         <div className="toolbar" style={{ marginBottom: 10 }}>
           <button type="button" className="button secondary" onClick={addElement}>+ Add text element</button>
           <button type="button" className="button secondary" onClick={() => fileInputRef.current?.click()}>+ Add image (PNG/GIF)</button>
@@ -134,7 +145,7 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
         <div
           onPointerDown={() => setSelectedId(null)}
           style={{
-            position: "relative", width: PREVIEW_WIDTH, height: previewHeight,
+            position: "relative", width: previewWidth, height: previewHeight, touchAction: "none",
             backgroundImage: "linear-gradient(45deg, #2a2e37 25%, transparent 25%), linear-gradient(-45deg, #2a2e37 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2e37 75%), linear-gradient(-45deg, transparent 75%, #2a2e37 75%)",
             backgroundSize: "20px 20px", backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
             backgroundColor: "#14161b", overflow: "hidden", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)"
@@ -174,7 +185,7 @@ export function TemplateVisualEditor({ layout, onChange }: { layout: VisualLayou
         </div>
       </div>
 
-      <div style={{ minWidth: 240, flex: "1 0 240px" }}>
+      <div style={{ minWidth: 0, flex: "1 1 240px" }}>
         {selected?.kind === "image" ? (
           <div className="form-grid" style={{ gridTemplateColumns: "1fr" }}>
             <div className="field">

@@ -9,8 +9,8 @@ import { SCHEDULE_STYLES, type ScheduleStyle } from "@/lib/programming/types";
 
 export const SCHEDULE_STYLE_OPTIONS: Array<{ value: ScheduleStyle; label: string; description: string }> = [
   { value: "daily-dayparts", label: "Daily dayparts", description: "Named blocks at fixed times, repeating every day (e.g. Morning, Primetime)." },
-  { value: "weekly-broadcast", label: "Weekly broadcast", description: "Named blocks at fixed times, repeating every week -- different lineup per weekday." },
-  { value: "endless-rotation", label: "Endless rotation", description: "No fixed times -- weighted shuffle with cooldowns, like a radio rotation." }
+  { value: "weekly-broadcast", label: "Weekly broadcast", description: "Named blocks at fixed times, repeating every week — different lineup per weekday." },
+  { value: "endless-rotation", label: "Endless rotation", description: "No fixed times — weighted shuffle with cooldowns, like a radio rotation." }
 ];
 export const DEFAULT_SCHEDULE_STYLE: ScheduleStyle = SCHEDULE_STYLES[0];
 

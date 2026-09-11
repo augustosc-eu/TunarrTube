@@ -65,7 +65,11 @@ function Target({ job }: { job: Job }) {
   return <span className="muted">—</span>;
 }
 
-function Detail({ job, now }: { job: Job; now: number }) {
+function Detail({ job, now }: { job: Job; now: number | null }) {
+  // `now` is null until the client has mounted (see JobQueue) so this relative-time text is never
+  // computed from the server's clock during SSR, which would disagree with the client's clock on
+  // hydration and trigger a hydration mismatch.
+  if (now === null) return <span className="muted">—</span>;
   if (job.status === "running") return <span>Running for {formatDuration(now - new Date(job.startedAt ?? job.createdAt).getTime())}</span>;
   if (job.status === "queued") {
     const runAfter = new Date(job.runAfter).getTime();
@@ -108,19 +112,19 @@ function Actions({ job, busy, onAction }: { job: Job; busy: boolean; onAction: (
   return <span className="muted">—</span>;
 }
 
-function JobRows({ jobs, now, busyId, onAction, selected, onToggle, eligible }: { jobs: Job[]; now: number; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void; selected?: Set<string>; onToggle?: (id: string) => void; eligible?: (job: Job) => boolean }) {
+function JobRows({ jobs, now, busyId, onAction, selected, onToggle, eligible }: { jobs: Job[]; now: number | null; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void; selected?: Set<string>; onToggle?: (id: string) => void; eligible?: (job: Job) => boolean }) {
   return <>{jobs.map((job) => <tr key={job.id}>
-    {selected ? <td><input type="checkbox" disabled={eligible ? !eligible(job) : false} checked={selected.has(job.id)} onChange={() => onToggle?.(job.id)} aria-label={`Select ${typeLabel(job.type)} job`} /></td> : null}
-    <td>{typeLabel(job.type)}</td>
-    <td className="title-cell">{job.source ? <Link href={`/sources/${job.source.id}`}><Target job={job} /></Link> : <Target job={job} />}</td>
-    <td><span className={`badge ${job.status}`}>{job.status}</span></td>
-    <td><Detail job={job} now={now} /></td>
-    <td><Actions job={job} busy={busyId === job.id} onAction={onAction} /></td>
+    {selected ? <td data-label="Select"><input type="checkbox" disabled={eligible ? !eligible(job) : false} checked={selected.has(job.id)} onChange={() => onToggle?.(job.id)} aria-label={`Select ${typeLabel(job.type)} job`} /></td> : null}
+    <td data-label="Job">{typeLabel(job.type)}</td>
+    <td className="title-cell" data-label="Target">{job.source ? <Link href={`/sources/${job.source.id}`}><Target job={job} /></Link> : <Target job={job} />}</td>
+    <td data-label="Status"><span className={`badge ${job.status}`}>{job.status}</span></td>
+    <td data-label="Detail"><Detail job={job} now={now} /></td>
+    <td data-label="Actions"><Actions job={job} busy={busyId === job.id} onAction={onAction} /></td>
   </tr>)}</>;
 }
 
 function Section({ title, jobs, now, busyId, onAction, bulk }: {
-  title: string; jobs: Job[]; now: number; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void;
+  title: string; jobs: Job[]; now: number | null; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void;
   bulk?: { label: string; icon: React.ReactNode; eligible: (job: Job) => boolean; selected: Set<string>; onToggle: (id: string) => void; onSelectAll: (ids: string[]) => void; onClear: () => void; busy: boolean; onRun: () => void };
 }) {
   if (!jobs.length) return null;
@@ -131,7 +135,7 @@ function Section({ title, jobs, now, busyId, onAction, bulk }: {
       onSelectAll={() => bulk.onSelectAll(eligibleIds)} onClear={bulk.onClear}>
       <button className="button secondary" disabled={bulk.busy} onClick={bulk.onRun}>{bulk.icon} {bulk.label} ({bulk.selected.size})</button>
     </BulkBar> : null}
-    <div className="table-wrap" style={{ marginBottom: 24 }}>
+    <div className="table-wrap responsive-table" style={{ marginBottom: 24 }}>
       <table>
         <thead><tr>{bulk ? <th /> : null}<th>Job</th><th>Target</th><th>Status</th><th>Detail</th><th>Actions</th></tr></thead>
         <tbody><JobRows jobs={jobs} now={now} busyId={busyId} onAction={onAction} selected={bulk?.selected} onToggle={bulk?.onToggle} eligible={bulk?.eligible} /></tbody>
@@ -142,7 +146,9 @@ function Section({ title, jobs, now, busyId, onAction, bulk }: {
 
 export function JobQueue({ initial }: { initial: QueueData }) {
   const [data, setData] = useState<QueueData>(initial);
-  const [now, setNow] = useState(() => Date.now());
+  // Starts null so the server render and the client's pre-hydration render agree; the mount effect
+  // below fills in the real clock once it's safe to diverge from the server (see Detail).
+  const [now, setNow] = useState<number | null>(null);
   const [stale, setStale] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -165,6 +171,7 @@ export function JobQueue({ initial }: { initial: QueueData }) {
 
   useEffect(() => {
     mounted.current = true;
+    setNow(Date.now());
     const tick = setInterval(() => setNow(Date.now()), 1000);
     const poll = setInterval(refresh, 3000);
     return () => { mounted.current = false; clearInterval(tick); clearInterval(poll); };

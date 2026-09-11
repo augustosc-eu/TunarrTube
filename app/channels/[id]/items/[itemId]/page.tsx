@@ -19,7 +19,7 @@ export default async function MediaItemPage({ params }: { params: Promise<{ id: 
     <MediaItemEditor
       channelId={channel.id}
       mediaItem={{ id: mediaItem.id, title: mediaItem.title, artist: mediaItem.artist, album: mediaItem.album, year: mediaItem.year, genre: mediaItem.genre, customFieldsJson: mediaItem.customFieldsJson }}
-      template={{ id: channel.template.id, name: channel.template.name, htmlTemplate: channel.template.htmlTemplate, bindingsJson: channel.template.bindingsJson }}
+      template={{ id: channel.template.id, name: channel.template.name, htmlTemplate: channel.template.htmlTemplate, bindingsJson: channel.template.bindingsJson, layersJson: channel.template.layersJson }}
       render={render ? {
         id: render.id,
         status: render.status,

@@ -33,6 +33,21 @@ export async function validateCookiesPath(input: string) {
   return input;
 }
 
+// Same convention as validateCookiesPath above: only called from updateSettings() when the operator
+// explicitly sets/changes this path, not from getSettings()'s initial create, so a not-yet-installed
+// Claude Code binary never blocks the app from starting. Unlike ytdlpCookiesPath this is optional even
+// when set -- most installs leave it null and rely on lib/ai/claude-code.ts's own PATH auto-detection;
+// this exists only for the rare case where that detection picks the wrong (or no) binary.
+export async function validateClaudeCodePath(input: string) {
+  if (!path.isAbsolute(input)) throw new AppError("INVALID_CLAUDE_CODE_PATH", "Claude Code executable path must be absolute.");
+  try {
+    await access(input, constants.X_OK);
+  } catch {
+    throw new AppError("INVALID_CLAUDE_CODE_PATH", "Claude Code executable must exist and be executable at that path.");
+  }
+  return input;
+}
+
 export async function getSettings() {
   const existing = await db.appSettings.findUnique({ where: { id: 1 } });
   if (existing) return reconcileMediaDirectory(existing);
@@ -94,7 +109,7 @@ function joinTunarrPath(prefix: string, relative: string) {
     : path.posix.join(prefix, relative.replaceAll("\\", "/"));
 }
 
-export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; musicbrainzContactEmail?: string | null; metadataMusicbrainzEnabled?: boolean; metadataItunesEnabled?: boolean; metadataAutoApplyThreshold?: number; aiProvider?: string; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }>; defaultNamingScheme?: string; defaultFilenameTemplate?: string }) {
+export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; musicbrainzContactEmail?: string | null; metadataMusicbrainzEnabled?: boolean; metadataItunesEnabled?: boolean; metadataAutoApplyThreshold?: number; aiProvider?: string; aiClaudeCodeEnabled?: boolean; aiClaudeCodePath?: string | null; aiClaudeCodeTimeoutSeconds?: number; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }>; defaultNamingScheme?: string; defaultFilenameTemplate?: string }) {
   const current = await getSettings();
   const valid = input.mediaBaseDirectory
     ? await validateMediaDirectory(input.mediaBaseDirectory)
@@ -106,6 +121,9 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   const ytdlpCookiesPath = input.ytdlpCookiesPath === undefined
     ? undefined
     : input.ytdlpCookiesPath === null ? null : await validateCookiesPath(input.ytdlpCookiesPath);
+  const aiClaudeCodePath = input.aiClaudeCodePath === undefined
+    ? undefined
+    : input.aiClaudeCodePath === null ? null : await validateClaudeCodePath(input.aiClaudeCodePath);
   const mappings = input.pathMappings ? input.pathMappings.map((mapping, position) => {
     if (!path.isAbsolute(mapping.ytarrPrefix) || !isAbsoluteTunarrPath(mapping.tunarrPrefix)) {
       throw new AppError("INVALID_PATH_MAPPING", "The TunarrTube prefix must be absolute on this host, and the Tunarr prefix must be an absolute Unix or Windows path.");
@@ -125,8 +143,8 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   const settings = await db.$transaction(async (tx) => {
     const saved = await tx.appSettings.upsert({
       where: { id: 1 },
-      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, metadataMusicbrainzEnabled: input.metadataMusicbrainzEnabled, metadataItunesEnabled: input.metadataItunesEnabled, metadataAutoApplyThreshold: input.metadataAutoApplyThreshold, aiProvider: input.aiProvider, ytdlpCookiesPath, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate },
-      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, metadataMusicbrainzEnabled: input.metadataMusicbrainzEnabled, metadataItunesEnabled: input.metadataItunesEnabled, metadataAutoApplyThreshold: input.metadataAutoApplyThreshold, aiProvider: input.aiProvider, ytdlpCookiesPath: ytdlpCookiesPath ?? null, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate }
+      update: { mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, metadataMusicbrainzEnabled: input.metadataMusicbrainzEnabled, metadataItunesEnabled: input.metadataItunesEnabled, metadataAutoApplyThreshold: input.metadataAutoApplyThreshold, aiProvider: input.aiProvider, aiClaudeCodeEnabled: input.aiClaudeCodeEnabled, aiClaudeCodePath, aiClaudeCodeTimeoutSeconds: input.aiClaudeCodeTimeoutSeconds, ytdlpCookiesPath, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate },
+      create: { id: 1, mediaBaseDirectory: valid, tunarrUrl, cacheMaxMegabytes: input.cacheMaxMegabytes, cacheMaxAgeDays: input.cacheMaxAgeDays, logRetentionDays: input.logRetentionDays, defaultVideoQuality: input.defaultVideoQuality, musicbrainzContactEmail: input.musicbrainzContactEmail, metadataMusicbrainzEnabled: input.metadataMusicbrainzEnabled, metadataItunesEnabled: input.metadataItunesEnabled, metadataAutoApplyThreshold: input.metadataAutoApplyThreshold, aiProvider: input.aiProvider, aiClaudeCodeEnabled: input.aiClaudeCodeEnabled, aiClaudeCodePath: aiClaudeCodePath ?? null, aiClaudeCodeTimeoutSeconds: input.aiClaudeCodeTimeoutSeconds, ytdlpCookiesPath: ytdlpCookiesPath ?? null, defaultNamingScheme: input.defaultNamingScheme, defaultFilenameTemplate: input.defaultFilenameTemplate }
     });
     for (const source of destinations) {
       await tx.source.update({ where: { id: source.id }, data: { mediaDirectory: source.mediaDirectory } });

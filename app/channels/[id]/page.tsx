@@ -11,7 +11,7 @@ export default async function ChannelDetailPage({ params }: { params: Promise<{ 
   const { id } = await params;
   const channel = await getChannel(id);
 
-  return <>
+  return <div className="channel-detail">
     <PageHeader eyebrow={`${channel.channelType.replace("_", " ")} · ${channel.template.name}`} title={channel.name} />
     <AddChannelItemsForm channelId={channel.id} />
     <AiContentSelectForm channelId={channel.id} />
@@ -38,8 +38,6 @@ export default async function ChannelDetailPage({ params }: { params: Promise<{ 
         }
       }))}
     />
-    <div style={{ marginTop: 24 }}>
-      <ChannelTunarrPublishForm channelId={channel.id} initialProgrammingOrder={channel.programmingOrder} initialAiInstructions={channel.aiProgrammingInstructions} initialAiProvider={channel.aiProvider} initialAiScheduleStyle={channel.aiScheduleStyle} />
-    </div>
-  </>;
+    <ChannelTunarrPublishForm channelId={channel.id} initialProgrammingOrder={channel.programmingOrder} initialAiInstructions={channel.aiProgrammingInstructions} initialAiProvider={channel.aiProvider} initialAiScheduleStyle={channel.aiScheduleStyle} />
+  </div>;
 }

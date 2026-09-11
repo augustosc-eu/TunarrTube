@@ -46,7 +46,7 @@ export function ChannelBriefForm({ templates, sources }: { templates: Template[]
   }
 
   if (!sources.length) {
-    return <p className="muted">You need at least one Source with downloaded videos before you can build a channel from a brief -- add a Source first.</p>;
+    return <p className="muted">You need at least one Source with downloaded videos before you can build a channel from a brief — add a Source first.</p>;
   }
 
   return (
@@ -65,9 +65,9 @@ export function ChannelBriefForm({ templates, sources }: { templates: Template[]
       </div>
       <div className="field">
         <label>Sources to draw content from</label>
-        <div className="form-grid">
+        <div className="checklist-columns">
           {sources.map((source) => (
-            <label key={source.id} className="switch-text" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label key={source.id} className="switch-text">
               <input type="checkbox" checked={selectedSourceIds.includes(source.id)} onChange={() => toggleSource(source.id)} /> {source.name}
             </label>
           ))}
@@ -89,7 +89,7 @@ export function ChannelBriefForm({ templates, sources }: { templates: Template[]
       <button className="button" type="submit" disabled={submitting || !templateId || !selectedSourceIds.length || !brief.trim()}>
         {submitting ? "Starting…" : "Build this channel"}
       </button>
-      <p className="muted">This selects content, renders it, and publishes to Tunarr in the background -- open the channel page or the Queue to watch progress.</p>
+      <p className="muted">This selects content, renders it, and publishes to Tunarr in the background — open the channel page or the Queue to watch progress.</p>
     </form>
   );
 }

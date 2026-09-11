@@ -5,7 +5,7 @@ type TemplateCardProps = { id: string; name: string; channelType: string; isBuil
 
 export function TemplateCard(template: TemplateCardProps) {
   return (
-    <Link href={`/templates/${template.id}`} className="card">
+    <Link href={`/templates/${template.id}`} className="card template-card">
       <div className="integration-heading" style={{ marginBottom: 10 }}>
         <LayoutTemplate size={18} />
       </div>

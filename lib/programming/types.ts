@@ -57,7 +57,7 @@ export function scheduleStyleToKind(style: ScheduleStyle): { kind: ProgrammingKi
   }
 }
 
-export const AI_PROVIDERS = ["anthropic", "openai"] as const;
+export const AI_PROVIDERS = ["anthropic", "openai", "claude-code"] as const;
 export type AiProviderName = (typeof AI_PROVIDERS)[number];
 // "auto" is only a valid *setting* (AppSettings.aiProvider / Source|Channel.aiProvider) -- resolving it
 // to a concrete AiProviderName happens in lib/programming/provider.ts.

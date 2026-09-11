@@ -40,11 +40,11 @@ export default async function VideosPage({ searchParams }: { searchParams: Promi
       <span className="muted">{total} video{total === 1 ? "" : "s"}</span>
     </form>
     {videos.length ? <>
-      <div className="table-wrap"><table><thead><tr><th>Video</th><th>Duration</th><th>Sources</th><th>Availability</th></tr></thead><tbody>{videos.map((video) => <tr key={video.id}>
-        <td className="title-cell"><strong>{video.title}</strong><span className="meta">{video.uploader ?? video.youtubeId}</span></td>
-        <td>{duration(video.durationSeconds)}</td>
-        <td>{video.sources.map((membership) => membership.source.name).join(", ")}</td>
-        <td><span className={`badge ${video.availability}`}>{video.availability}</span>{video.availabilityReason ? <span className="availability-reason">{video.availabilityReason}</span> : null}</td>
+      <div className="table-wrap responsive-table"><table><thead><tr><th>Video</th><th>Duration</th><th>Sources</th><th>Availability</th></tr></thead><tbody>{videos.map((video) => <tr key={video.id}>
+        <td className="title-cell" data-label="Video"><strong>{video.title}</strong><span className="meta">{video.uploader ?? video.youtubeId}</span></td>
+        <td data-label="Duration">{duration(video.durationSeconds)}</td>
+        <td data-label="Sources">{video.sources.map((membership) => membership.source.name).join(", ")}</td>
+        <td data-label="Availability"><span className={`badge ${video.availability}`}>{video.availability}</span>{video.availabilityReason ? <span className="availability-reason">{video.availabilityReason}</span> : null}</td>
       </tr>)}</tbody></table></div>
       {pageCount > 1 ? <div className="toolbar" style={{ marginTop: 16 }}>
         {page > 1 ? <Link className="button secondary" href={pageHref(query, page - 1)}>Previous</Link> : <button className="button secondary" disabled>Previous</button>}

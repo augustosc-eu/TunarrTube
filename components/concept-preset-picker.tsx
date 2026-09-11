@@ -57,7 +57,7 @@ export function ConceptPresetPicker({ idPrefix, selectedIndex, onSelect }: Props
           );
         })}
       </div>
-      <span className="meta">{selected.blurb || "Fills the instructions below -- edit freely after picking one."}</span>
+      <span className="meta">{selected.blurb || "Fills the instructions below — edit freely after picking one."}</span>
     </div>
   );
 }
