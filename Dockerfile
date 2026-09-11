@@ -26,6 +26,7 @@ RUN apt-get update \
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/.next/standalone ./
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/.next/static ./.next/static
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/prisma ./prisma
+COPY --from=builder --chown=tunarrtube:tunarrtube /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/node_modules ./node_modules
 USER tunarrtube
 EXPOSE 3000
