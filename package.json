@@ -23,9 +23,11 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@prisma/client": "6.19.3",
+    "@prisma/adapter-better-sqlite3": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "better-sqlite3": "12.11.1",
     "clsx": "2.1.1",
-    "lucide-react": "1.39.0",
+    "lucide-react": "1.42.0",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -33,12 +35,12 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
-    "@types/node": "26.4.0",
+    "@types/node": "26.5.0",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
-    "prisma": "6.19.3",
+    "@types/react-dom": "19.2.7",
+    "prisma": "7.10.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "5.0.0"
   }
 }
