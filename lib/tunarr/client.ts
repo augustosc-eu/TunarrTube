@@ -101,12 +101,25 @@ function errorText(value: unknown) {
   return typeof candidate?.message === "string" ? candidate.message : "Tunarr returned an unexpected response.";
 }
 
+// Applied to the calls that replace a channel's live programming (create/update the channel itself,
+// then hand it a new lineup or schedule): observed once in the wild leaving a channel's remote lineup
+// empty -- Tunarr's request handler doesn't appear to treat "clear the old programming, write the new
+// programming" as one atomic step, so a client-side abort landing between those two halves (the default
+// 15s budget below is tight for a channel with a large lineup, or a Tunarr instance already under load)
+// can leave the channel published with zero programs. Tunarr then can't compute a real end time for that
+// channel's guide and free-spins trying to extend one that never advances, pegging its CPU and taking the
+// whole server down for every other channel too -- see the incident this timeout was widened after.
+// Giving these specific calls more room to finish doesn't fix that Tunarr-side atomicity gap (out of
+// reach here -- Tunarr is a separate app), but it does make TunarrTube less likely to be the one that
+// interrupts the request mid-write.
+const WRITE_TIMEOUT_MS = 60_000;
+
 export class TunarrApiClient {
   constructor(private readonly baseUrl: string, private readonly timeoutMs = 15_000) {}
 
-  private async request(path: string, init?: RequestInit, signal?: AbortSignal) {
+  private async request(path: string, init?: RequestInit, signal?: AbortSignal, timeoutMs = this.timeoutMs) {
     signal?.throwIfAborted();
-    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: Response;
     try {
@@ -260,20 +273,20 @@ export class TunarrApiClient {
   }
 
   async createChannel(channel: JsonObject, signal?: AbortSignal) {
-    const body = object(await this.request("/api/channels", { method: "POST", body: JSON.stringify({ type: "new", channel }) }, signal));
+    const body = object(await this.request("/api/channels", { method: "POST", body: JSON.stringify({ type: "new", channel }) }, signal, WRITE_TIMEOUT_MS));
     if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a channel but did not return its ID.", 502);
     return body as TunarrChannel;
   }
 
   async updateChannel(channelId: string, channel: JsonObject, signal?: AbortSignal) {
-    await this.request(`/api/channels/${encodeURIComponent(channelId)}`, { method: "PUT", body: JSON.stringify(channel) }, signal);
+    await this.request(`/api/channels/${encodeURIComponent(channelId)}`, { method: "PUT", body: JSON.stringify(channel) }, signal, WRITE_TIMEOUT_MS);
   }
 
   async replaceProgramming(channelId: string, lineup: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
     await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
       method: "POST",
       body: JSON.stringify({ type: "manual", lineup, append: false })
-    }, signal);
+    }, signal, WRITE_TIMEOUT_MS);
   }
 
   // AI-scheduled programming (lib/programming/schedule-builder.ts) posts a "time" lineup instead of a
@@ -285,7 +298,7 @@ export class TunarrApiClient {
     await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
       method: "POST",
       body: JSON.stringify({ type: "time", programs, schedule })
-    }, signal);
+    }, signal, WRITE_TIMEOUT_MS);
   }
 
   async listCustomShows(signal?: AbortSignal): Promise<TunarrCustomShow[]> {
@@ -320,7 +333,7 @@ export class TunarrApiClient {
     await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
       method: "POST",
       body: JSON.stringify({ type: "random", programs, schedule })
-    }, signal);
+    }, signal, WRITE_TIMEOUT_MS);
   }
 
   private parseMaterializedLineup(body: unknown): TunarrMaterializedLineupEntry[] {

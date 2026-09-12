@@ -38,6 +38,18 @@
 
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
+  /* Categorical series colors for schedule-preview visualizations (components/director-schedule-preview.tsx).
+     Fixed hue order, validated with the dataviz skill's validate_palette.js against this app's own
+     --panel surfaces in both modes -- don't reorder or recolor without re-validating. */
+  --director-series-1: #2a78d6;
+  --director-series-2: #eb6834;
+  --director-series-3: #1baf7a;
+  --director-series-4: #eda100;
+  --director-series-5: #e87ba4;
+  --director-series-6: #008300;
+  --director-series-7: #4a3aa7;
+  --director-series-8: #e34948;
+
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -76,6 +88,15 @@
     --error: #f43f5e;
     --error-subtle: rgba(244, 63, 94, 0.14);
 
+    --director-series-1: #3987e5;
+    --director-series-2: #d95926;
+    --director-series-3: #199e70;
+    --director-series-4: #c98500;
+    --director-series-5: #d55181;
+    --director-series-6: #008300;
+    --director-series-7: #9085e9;
+    --director-series-8: #e66767;
+
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 14px 32px -10px rgba(0, 0, 0, 0.5);
   }
@@ -103,6 +124,14 @@
   --warning-subtle: rgba(217, 119, 6, 0.14);
   --error: #e11d48;
   --error-subtle: rgba(225, 29, 72, 0.12);
+  --director-series-1: #2a78d6;
+  --director-series-2: #eb6834;
+  --director-series-3: #1baf7a;
+  --director-series-4: #eda100;
+  --director-series-5: #e87ba4;
+  --director-series-6: #008300;
+  --director-series-7: #4a3aa7;
+  --director-series-8: #e34948;
   --shadow-sm: 0 1px 2px rgba(15, 20, 28, 0.06);
   --shadow-md: 0 10px 24px -8px rgba(15, 20, 28, 0.18);
 }
@@ -129,6 +158,14 @@
   --warning-subtle: rgba(245, 158, 11, 0.14);
   --error: #f43f5e;
   --error-subtle: rgba(244, 63, 94, 0.14);
+  --director-series-1: #3987e5;
+  --director-series-2: #d95926;
+  --director-series-3: #199e70;
+  --director-series-4: #c98500;
+  --director-series-5: #d55181;
+  --director-series-6: #008300;
+  --director-series-7: #9085e9;
+  --director-series-8: #e66767;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 14px 32px -10px rgba(0, 0, 0, 0.5);
 }
@@ -337,6 +374,32 @@ tr:last-child td { border-bottom: 0; }
 .inline-icon { display: inline; margin-right: 6px; vertical-align: -2px; }
 .integration-card { margin: 0 0 20px; max-width: 1060px; }
 .integration-card > p:first-of-type { max-width: 760px; }
+
+/* AI Programming Director preview (components/director-schedule-preview.tsx) -- a Tunarr-guide-style
+   timeline for a dayparts plan, or a proportional composition bar for a rotation plan, in place of a
+   flat block/group list. Colors come from the fixed --director-series-N tokens set on :root above. */
+.director-preview { margin-top: 4px; }
+.director-timeline { margin: 14px 0 4px; }
+.director-track { display: flex; width: 100%; height: 30px; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border); background: var(--panel-2); }
+.director-segment { height: 100%; min-width: 3px; }
+.director-segment + .director-segment { border-left: 2px solid var(--panel-2); }
+.director-gap {
+  background: repeating-linear-gradient(135deg, var(--border-strong), var(--border-strong) 4px, transparent 4px, transparent 8px);
+  opacity: .6;
+}
+.director-ruler { display: flex; justify-content: space-between; margin-top: 6px; color: var(--text-subtle); font-size: 10px; font-variant-numeric: tabular-nums; }
+.director-ruler span:first-child { text-align: left; }
+.director-ruler span:last-child { text-align: right; }
+.director-composition-caption { margin: 8px 0 0; }
+.director-legend { display: grid; gap: 12px; margin-top: 16px; }
+.director-legend-item { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 12px; }
+.director-swatch { width: 12px; height: 12px; margin-top: 4px; border-radius: 3px; flex: 0 0 auto; }
+.director-legend-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 9px; }
+.director-legend-head strong { font-size: 13px; }
+.director-clip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-height: 118px; overflow-y: auto; }
+.director-clip-chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-full); padding: 3px 10px; font-size: 11px; line-height: 1.4; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.director-clip-more { background: none; border: none; padding: 3px 6px; font-size: 11px; font-weight: 650; color: var(--accent); cursor: pointer; }
+.director-clip-more:hover { color: var(--accent-hover); text-decoration: underline; }
 .integration-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .integration-heading > svg { color: var(--accent); padding: 8px; width: 40px; height: 40px; border-radius: var(--radius-md); background: var(--accent-subtle); }
 .integration-heading h2 { margin-bottom: 0; }

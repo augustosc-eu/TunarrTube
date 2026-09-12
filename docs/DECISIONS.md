@@ -18,6 +18,12 @@ Each entry is labeled:
 ### Downloads are atomic (temp directory + rename)
 **Explicit** (behavior) **/ Evidenced** (mechanism). README: "Downloads use temporary directories and are published only after `yt-dlp` and FFmpeg finish successfully." The mechanism — a per-attempt temp subdirectory under `._ytarr-tmp/`, `rename()` into the final path, `rm -rf` of the temp directory in a `finally` — is in `lib/downloads/service.ts:downloadMp4`. The same temp-then-rename pattern is reused for JSON sidecars (`writeSidecar`) and mirrored thumbnails (`lib/thumbnails/service.ts:persist`), which is evidenced-only (not called out in prose) but is clearly the same deliberate pattern applied consistently.
 
+### Active job deduplication is database-enforced
+**Explicit / Evidenced.** `Job.activeKey` is unique and non-null only while a job is queued or running. Every enqueue path attempts the insert and treats a unique-key conflict as the dedupe result, removing the earlier find-then-create race. Terminal transitions clear the key so the work can be queued again. Render keys include both `mediaItemId` and the payload's `templateId`, matching `RenderedAsset`'s real identity.
+
+### Downloads and renders have dedicated resource controls
+**Explicit.** The runner keeps one media lane and one render lane separate from the general workers. `lib/downloads/limiter.ts` additionally enforces the media-fetch limit inside `downloadMp4`, so a Tunarr publish cannot bypass it by calling `materializeForTunarr` from a general worker. FFmpeg renders are single-file-at-a-time and pass `TUNARRTUBE_RENDER_THREADS` to both the complex-filter and x264 thread settings.
+
 ### A prior completed download is never deleted because the video disappeared online
 **Explicit.** README: "TunarrTube never deletes a prior completed file because an online video disappeared." Directly evidenced in `lib/sources/service.ts:syncSource`, which sets `membershipStatus: "missing"` on a `SourceVideo` rather than deleting it or its `localPath`.
 

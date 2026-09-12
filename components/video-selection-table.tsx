@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, LoaderCircle, Play, Trash2, X } from "lucide-react";
 
@@ -20,21 +20,14 @@ const SORT_COLUMNS: Array<{ key: SortKey; label: string }> = [
 ];
 const STATUS_SORT_COLUMN: { key: SortKey; label: string } = { key: "status", label: "Download" };
 
-function sortValue(row: Row, key: SortKey): string | number {
-  switch (key) {
-    case "index": return row.playlistIndex ?? Number.MAX_SAFE_INTEGER;
-    case "title": return row.title.toLowerCase();
-    case "duration": return row.durationSeconds ?? -1;
-    case "status": return row.downloadStatus;
-  }
-}
+type Filters = { query: string; sort: SortKey; order: "asc" | "desc" };
+type Pagination = { page: number; pageSize: number; total: number; totalPages: number; sourceTotal: number };
 
-// A Source can hold thousands of videos with no built-in pagination (Source.historyLimit allows up to
-// 5000, and a plain playlist/channel with no limit set pulls its full history) -- client-side
-// search/sort (rather than a server round-trip) keeps filtering/sorting instant since `rows` is already
-// the full, already-fetched list. Row *rendering* below is virtualized on top of that (only the rows
-// scrolled into view are ever mounted) so a huge list doesn't mean a huge DOM.
-export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows: Row[] }) {
+// Rows are filtered, sorted, and paginated by the Server Component. The client owns only controls and
+// mutations, keeping large sources out of both the database result and the RSC payload.
+export function VideoSelectionTable({ sourceId, rows, filters, pagination, downloadableCount }: {
+  sourceId: string; rows: Row[]; filters: Filters; pagination: Pagination; downloadableCount: number;
+}) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -43,36 +36,30 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
   const [preparing, setPreparing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [bulkRemoving, setBulkRemoving] = useState(false);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
+  const [search, setSearch] = useState(filters.query);
+  const visible = rows;
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return query ? rows.filter((row) => row.title.toLowerCase().includes(query) || row.uploader?.toLowerCase().includes(query)) : rows;
-  }, [rows, search]);
-  const visible = useMemo(() => {
-    if (!sort) return filtered;
-    const direction = sort.dir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      const left = sortValue(a, sort.key); const right = sortValue(b, sort.key);
-      return left < right ? -direction : left > right ? direction : 0;
-    });
-  }, [filtered, sort]);
+  useEffect(() => setSearch(filters.query), [filters.query]);
+
+  function navigate(values: Record<string, string | number>) {
+    const query = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(values)) query.set(key, String(value));
+    router.push(`/sources/${sourceId}?${query.toString()}`);
+  }
 
   function toggleSort(key: SortKey) {
-    setSort((current) => current?.key === key ? (current.dir === "asc" ? { key, dir: "desc" } : null) : { key, dir: "asc" });
+    navigate({ sort: key, order: filters.sort === key && filters.order === "asc" ? "desc" : "asc", page: 1 });
   }
   function sortHeader(column: { key: SortKey; label: string }) {
     return <div className="video-grid-cell" key={column.key} role="columnheader">
       <button type="button" className="sort-header" onClick={() => toggleSort(column.key)} aria-label={`Sort by ${column.label}`}>
-        {column.label} {sort?.key === column.key ? (sort.dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="muted" />}
+        {column.label} {filters.sort === column.key ? (filters.order === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="muted" />}
       </button>
     </div>;
   }
 
-  // "Select all" scopes to what's currently visible (filtered/sorted), not the full source -- searching
-  // for "live" and selecting all should only select the matching rows, not everything.
-  const downloadable = rows.filter((row) => row.downloadStatus !== "complete" && row.membershipStatus === "present");
+  // "Select all" scopes to the current server-filtered page, not the full source -- searching for
+  // "live" and selecting all should only select matching rows on this page, not everything.
   const visibleDownloadable = visible.filter((row) => row.downloadStatus !== "complete" && row.membershipStatus === "present");
   const removableSelected = rows.filter((row) => selected.has(row.videoId) && (row.downloadStatus === "unavailable" || row.downloadStatus === "failed"));
   function toggle(id: string) { setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
@@ -82,18 +69,41 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     try {
       const response = await fetch("/api/downloads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [...selected].map((videoId) => ({ sourceId, videoId })) }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error?.message ?? "Queueing failed");
-      setSelected(new Set()); router.refresh();
-      const ids = body.data.map((job: { id: string }) => job.id);
-      while (ids.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1800));
-        const states = await Promise.all(ids.map(async (id: string) => (await (await fetch(`/api/jobs/${id}`, { cache: "no-store" })).json()).data));
-        if (states.every((job) => ["complete", "failed", "cancelled"].includes(job.status))) {
-          const failures = states.filter((job) => job.status === "failed");
-          if (failures.length) setError(failures.map((job) => job.error ?? "Download failed").join("\n"));
-          break;
+      setSelected(new Set());
+      const jobs = body.data as Array<{ id: string; status: string }>;
+      const pending = new Set(jobs.filter((job) => !["complete", "failed", "cancelled"].includes(job.status)).map((job) => job.id));
+      const previous = new Map(jobs.map((job) => [job.id, job.status]));
+      const failures: string[] = [];
+      router.refresh();
+      while (pending.size) {
+        if (document.hidden) {
+          await new Promise<void>((resolve) => {
+            const resume = () => { if (!document.hidden) { document.removeEventListener("visibilitychange", resume); resolve(); } };
+            document.addEventListener("visibilitychange", resume);
+          });
         }
-        router.refresh();
+        await new Promise((resolve) => setTimeout(resolve, 1800));
+        if (document.hidden) continue;
+        const statusResponse = await fetch("/api/jobs/status", {
+          method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [...pending] })
+        });
+        const statusBody = await statusResponse.json();
+        if (!statusResponse.ok) throw new Error(statusBody.error?.message ?? "Status refresh failed");
+        const states = new Map((statusBody.data as Array<{ id: string; status: string; error: string | null }>).map((job) => [job.id, job]));
+        let relevantChange = false;
+        for (const id of [...pending]) {
+          const job = states.get(id);
+          if (!job) { pending.delete(id); relevantChange = true; continue; }
+          if (previous.get(id) !== job.status) { previous.set(id, job.status); relevantChange = true; }
+          if (["complete", "failed", "cancelled"].includes(job.status)) {
+            pending.delete(id);
+            if (job.status === "failed") failures.push(job.error ?? "Download failed");
+          }
+        }
+        if (relevantChange) router.refresh();
       }
+      if (failures.length) setError(failures.join("\n"));
       router.refresh();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Download failed"); }
     finally { setBusy(false); }
@@ -166,11 +176,23 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     <div className="toolbar">
       <button className="button" disabled={busy || selected.size === 0} onClick={download}><Download size={15} /> Download selected ({selected.size})</button>
       {removableSelected.length > 0 ? <button className="button secondary" disabled={bulkRemoving} onClick={bulkRemove}><Trash2 size={15} /> Remove selected ({removableSelected.length})</button> : null}
-      <input className="input" type="search" placeholder="Search by title or uploader…" value={search} onChange={(event) => setSearch(event.target.value)} style={{ maxWidth: 260 }} aria-label="Search videos" />
-      <span className="muted">{search ? `${visible.length} of ${rows.length} videos` : `${rows.length} video${rows.length === 1 ? "" : "s"}`} · {downloadable.length} available to download</span>
+      <form onSubmit={(event) => { event.preventDefault(); navigate({ query: search.trim(), page: 1 }); }} style={{ display: "flex", gap: 8 }}>
+        <input className="input" type="search" placeholder="Search by title, uploader, or ID…" value={search} onChange={(event) => setSearch(event.target.value)} style={{ maxWidth: 280 }} aria-label="Search videos" />
+        <button className="button secondary" type="submit">Search</button>
+      </form>
+      <span className="muted">{filters.query ? `${pagination.total} of ${pagination.sourceTotal} videos` : `${pagination.sourceTotal} video${pagination.sourceTotal === 1 ? "" : "s"}`} · {downloadableCount} available to download</span>
     </div>
     {error ? <div className="error">{error}</div> : null}
     <VirtualizedRows visible={visible} selectAllHeader={selectAllHeader} sortHeader={sortHeader} row={row} />
+    <div className="toolbar" style={{ marginTop: 12 }}>
+      <button className="button secondary" disabled={pagination.page <= 1} onClick={() => navigate({ page: pagination.page - 1 })}>Previous</button>
+      <span className="muted">Page {pagination.page} of {pagination.totalPages} · {pagination.total} matching</span>
+      <button className="button secondary" disabled={pagination.page >= pagination.totalPages} onClick={() => navigate({ page: pagination.page + 1 })}>Next</button>
+      <span className="spacer" />
+      <select className="input" aria-label="Videos per page" value={pagination.pageSize} onChange={(event) => navigate({ pageSize: Number(event.target.value), page: 1 })} style={{ width: "auto" }}>
+        {[25, 50, 100].map((size) => <option key={size} value={size}>{size} per page</option>)}
+      </select>
+    </div>
   </>;
 }
 

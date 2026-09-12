@@ -34,7 +34,7 @@ These are traced directly from the route handlers, service functions, and page/c
 ### 2. Review and download videos
 On a source's detail page ([app/sources/[id]/page.tsx](../app/sources/%5Bid%5D/page.tsx), [components/video-selection-table.tsx](../components/video-selection-table.tsx)):
 - Videos appear immediately after creation; per-video metadata (description, duration, upload date) fills in as background `metadata` jobs complete.
-- The user selects videos and clicks **Download selected**, which posts to `POST /api/downloads` and polls job status until each finishes. For a **download**-mode source this is largely redundant with step 1's auto-queue (see below) and mainly useful for a video whose download failed or was skipped; for **cache**/**stream**-mode sources it is the only thing that triggers a permanent download ahead of playback.
+- The source library is searched, sorted, counted, and paginated on the server (50 rows by default). The user selects videos and clicks **Download selected**, which posts to `POST /api/downloads` and polls all unfinished jobs through one batch-status request; finished IDs leave the poll set and hidden tabs make no status requests. For a **download**-mode source this is largely redundant with step 1's auto-queue (see below) and mainly useful for a video whose download failed or was skipped; for **cache**/**stream**-mode sources it is the only thing that triggers a permanent download ahead of playback.
 - Completed downloads are written as `<mediaDirectory>/<youtubeId>.mp4` plus a `<youtubeId>.json` sidecar with title/description/duration/source metadata.
 - A **Play** button on each row prepares playback (`POST /api/playback/prepare`) and opens an inline `<video>` player streamed from `GET /api/playback/[sourceId]/[videoId]`.
 
@@ -68,7 +68,7 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 - **Dashboard** (`/`) — source count, unique video count, downloaded asset count, and the most recently updated sources.
 - **Videos** (`/videos`) — the canonical, deduplicated video library across all sources, with availability and duration.
 - **Channels** (`/channels`) and **Templates** (`/templates`) — the curated-overlay-channel feature described in step 7, listed and managed like Sources/Videos.
-- **Queue** (`/jobs`) — every running, queued, and recently finished background job (download, cache, metadata, thumbnail, sync, retag, Tunarr publish/refresh, plus a Channel's own render/local-scan/Tunarr-publish jobs) with its target and status, self-polling every few seconds.
+- **Queue** (`/jobs`) — every running job, a server-paginated queued-job page, and recently finished background work (download, cache, metadata, thumbnail, sync, retag, Tunarr publish/refresh, plus a Channel's own render/local-scan/Tunarr-publish jobs) with its target and status, self-polling every few seconds while the tab is visible.
 - **Cache** (`/cache`) — usage dashboard (used/pinned/protected/evictable bytes), per-asset pin/unpin/evict actions, and manual "enforce limits" / "clear evictable" actions.
 - **Logs** (`/logs`) — sanitized operational history (source, sync, metadata, download, video categories), filterable by category. Signed YouTube URLs and cookie flags are redacted before any log line is persisted.
 - **Settings** (`/settings`) — base media directory, `yt-dlp`/FFmpeg detection ("Test" buttons), Tunarr base URL and connectivity test, cache size/age limits, the global AI Programming provider default (Anthropic/OpenAI/auto-detect), and ordered Tunarr path mappings with a live preview.
@@ -90,7 +90,7 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 | **Video** | A canonical YouTube video record, deduplicated by YouTube ID across all sources that reference it. |
 | **SourceVideo** | The join between a `Source` and a `Video`: playlist position, membership status (`present`/`missing`), and this source's download status/local path/retention origin for that video. |
 | **ImportDraft** | An ephemeral (1-hour TTL) record of an `yt-dlp` analysis, created by "Analyze" and consumed by "Create Source". Prevents re-running `yt-dlp` between analyze and create. |
-| **Job** | A queued unit of background work: `metadata`, `thumbnail`, `sync`, `download`, `cache`, `tunarr_publish`, `tunarr_refresh`. Processed one at a time by the single in-process worker. |
+| **Job** | A queued unit of background work: `metadata`, `thumbnail`, `sync`, `download`, `cache`, `render`, `tunarr_publish`, `tunarr_refresh`, and Channel work. Processed by dedicated media/render lanes plus lightweight general lanes in the single app process. |
 | **Playback mode** | Per-source retention strategy: `download` (permanent), `cache` (download on first play, evictable), `stream` (no retention, live proxy). |
 | **Retention origin** | Why a downloaded file exists on disk for a given `SourceVideo`: `permanent` (user-requested download), `tunarr` (materialized only to satisfy a Tunarr publish), or `none`. |
 | **Feed type** | For channel sources, which YouTube feed to read: `videos`, `shorts`, `live` (archived live streams), or `all` (merged, deduplicated, newest-first). |

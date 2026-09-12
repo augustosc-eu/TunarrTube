@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildOverlayFilterGraph, renderVideoWithOverlay } from "@/lib/ffmpeg/compose";
+import { buildOverlayFilterGraph, renderThreadBudget, renderVideoWithOverlay } from "@/lib/ffmpeg/compose";
 
 // requireFfmpeg/runProcess shell out to a real binary and a real process -- stubbed here so this test
 // exercises only the argument construction, same convention as the rest of tests/ (fetch/child_process
@@ -79,8 +79,16 @@ describe("renderVideoWithOverlay", () => {
       expect(tIndex).toBeGreaterThan(-1);
       expect(args[tIndex + 1]).toBe("12.5");
       expect(args).toContain("-shortest");
+      expect(args[args.indexOf("-threads") + 1]).toBe(String(renderThreadBudget()));
+      expect(args[args.indexOf("-filter_complex_threads") + 1]).toBe(String(renderThreadBudget()));
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
+  });
+
+  it("accepts a bounded configurable render CPU budget", () => {
+    expect(renderThreadBudget("6")).toBe(6);
+    expect(renderThreadBudget("999")).toBe(64);
+    expect(renderThreadBudget("invalid")).toBe(2);
   });
 });

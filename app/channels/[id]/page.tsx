@@ -10,6 +10,10 @@ export const dynamic = "force-dynamic";
 export default async function ChannelDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const channel = await getChannel(id);
+  // Same check publishChannelToTunarr enforces server-side (lib/tunarr/channel-service.ts) -- computed
+  // here too so the Publish panel can warn/disable up front instead of the user finding out only after
+  // "Publish to Tunarr" comes back with a wall of unrendered titles.
+  const unrenderedCount = channel.items.filter((item) => !item.mediaItem.renders.some((render) => render.templateId === channel.templateId && render.status === "complete")).length;
 
   return <div className="channel-detail">
     <PageHeader eyebrow={`${channel.channelType.replace("_", " ")} · ${channel.template.name}`} title={channel.name} />
@@ -38,6 +42,6 @@ export default async function ChannelDetailPage({ params }: { params: Promise<{ 
         }
       }))}
     />
-    <ChannelTunarrPublishForm channelId={channel.id} initialProgrammingOrder={channel.programmingOrder} initialAiInstructions={channel.aiProgrammingInstructions} initialAiProvider={channel.aiProvider} initialAiScheduleStyle={channel.aiScheduleStyle} />
+    <ChannelTunarrPublishForm channelId={channel.id} initialProgrammingOrder={channel.programmingOrder} initialAiInstructions={channel.aiProgrammingInstructions} initialAiProvider={channel.aiProvider} initialAiScheduleStyle={channel.aiScheduleStyle} unrenderedCount={unrenderedCount} />
   </div>;
 }

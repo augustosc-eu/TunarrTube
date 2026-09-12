@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
+import { enqueueActiveJob, enqueueActiveJobs } from "@/lib/jobs/enqueue";
 import { writeLog } from "@/lib/logging/service";
 import { sidecarPathsFor } from "@/lib/naming/service";
 import { getSettings } from "@/lib/settings/service";
@@ -22,6 +23,12 @@ function storeEntries(entries: PlaylistEntry[]): StoredEntry[] {
 
 function restoreEntries(json: string): PlaylistEntry[] {
   return (JSON.parse(json) as StoredEntry[]).map((entry) => ({ ...entry, uploadDate: entry.uploadDate ? new Date(entry.uploadDate) : null }));
+}
+
+async function awaitInBatches(operations: Array<PromiseLike<unknown>>, batchSize = 100) {
+  for (let start = 0; start < operations.length; start += batchSize) {
+    await Promise.all(operations.slice(start, start + batchSize));
+  }
 }
 
 export async function analyzeAndStoreDraft(url: string, options: AnalyzeSourceOptions = {}, signal?: AbortSignal) {
@@ -95,11 +102,18 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
     return created;
   });
   const videos = await db.video.findMany({ where: { youtubeId: { in: entries.map((entry) => entry.youtubeId) } }, select: { id: true } });
-  for (const video of videos) await enqueueUniqueJob("metadata", source.id, video.id);
-  await enqueueUniqueJob("thumbnail", source.id);
-  if (playbackMode === "download") for (const video of videos) {
-    await enqueueUniqueJob("download", source.id, video.id, { target: "permanent" });
-    await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } }, data: { downloadStatus: "queued" } });
+  await enqueueActiveJobs([
+    ...videos.map((video) => ({ type: "metadata", sourceId: source.id, videoId: video.id })),
+    { type: "thumbnail", sourceId: source.id },
+    ...(playbackMode === "download"
+      ? videos.map((video) => ({ type: "download", sourceId: source.id, videoId: video.id, payload: { target: "permanent" } }))
+      : [])
+  ]);
+  if (playbackMode === "download" && videos.length) {
+    await db.sourceVideo.updateMany({
+      where: { sourceId: source.id, videoId: { in: videos.map((video) => video.id) } },
+      data: { downloadStatus: "queued" }
+    });
   }
   await writeLog({ category: "source", sourceId: source.id, message: `Added ${source.name} with ${entries.length} videos.` });
   const { kickWorker } = await import("@/lib/jobs/runner");
@@ -130,55 +144,105 @@ export async function syncSource(sourceId: string, signal?: AbortSignal) {
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   if (source.sourceType === "collection") throw new AppError("COLLECTION_SYNC_UNSUPPORTED", "Curated video collections are updated by adding individual videos.", 422);
   const analysis = await analyzeSource(source.url, { feedType: source.feedType === "playlist" ? undefined : source.feedType as "videos" | "shorts" | "live" | "all", historyLimit: source.historyLimit }, signal);
+  signal?.throwIfAborted();
+  // A playlist can contain the same video more than once. SourceVideo is unique by source/video, so
+  // keep the last occurrence (matching createSourceFromDraft's upsert behavior) before batching work.
+  const entries = [...new Map(analysis.entries.map((entry) => [entry.youtubeId, entry])).values()];
   const seenAt = new Date();
   let newCount = 0;
   const metadataVideoIds: string[] = [];
   await db.$transaction(async (tx) => {
-    if (!(source.sourceType === "channel" && source.historyLimit !== null)) {
-      await tx.sourceVideo.updateMany({ where: { sourceId }, data: { membershipStatus: "missing" } });
+    signal?.throwIfAborted();
+    const youtubeIds = entries.map((entry) => entry.youtubeId);
+    const existingVideos = await tx.video.findMany({ where: { youtubeId: { in: youtubeIds } } });
+    const existingByYoutubeId = new Map(existingVideos.map((video) => [video.youtubeId, video]));
+    const missingEntries = entries.filter((entry) => !existingByYoutubeId.has(entry.youtubeId));
+
+    if (missingEntries.length) {
+      await tx.video.createMany({ data: missingEntries.map((entry) => ({
+        youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl,
+        thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds,
+        uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability,
+        artist: entry.artist, album: entry.album
+      })) });
     }
-    for (const entry of analysis.entries) {
-      const existing = await tx.video.findUnique({ where: { youtubeId: entry.youtubeId } });
-      const video = await tx.video.upsert({
-        where: { youtubeId: entry.youtubeId },
-        update: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined },
-        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability, artist: entry.artist, album: entry.album }
+
+    const videos = await tx.video.findMany({ where: { youtubeId: { in: youtubeIds } } });
+    const byYoutubeId = new Map(videos.map((video) => [video.youtubeId, video]));
+    const existingMemberships = await tx.sourceVideo.findMany({
+      where: { sourceId, videoId: { in: videos.map((video) => video.id) } },
+      select: { id: true, videoId: true, playlistIndex: true }
+    });
+    const membershipByVideoId = new Map(existingMemberships.map((membership) => [membership.videoId, membership]));
+
+    const videoUpdates = entries.flatMap((entry) => {
+      const existing = existingByYoutubeId.get(entry.youtubeId);
+      if (!existing) return [];
+      const thumbnailChanged = entry.thumbnailUrl != null && entry.thumbnailUrl !== existing.thumbnailUrl;
+      if (existing.title === entry.title && existing.youtubeUrl === entry.youtubeUrl && !thumbnailChanged) return [];
+      return [tx.video.update({
+        where: { id: existing.id },
+        data: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined }
+      })];
+    });
+    await awaitInBatches(videoUpdates);
+
+    const newMemberships: Array<{ sourceId: string; videoId: string; playlistIndex: number | null; lastSeenAt: Date }> = [];
+    const playlistUpdates = [];
+    for (const entry of entries) {
+      const video = byYoutubeId.get(entry.youtubeId)!;
+      const membership = membershipByVideoId.get(video.id);
+      if (!membership) {
+        newMemberships.push({ sourceId, videoId: video.id, playlistIndex: entry.playlistIndex, lastSeenAt: seenAt });
+        newCount += 1;
+      } else if (membership.playlistIndex !== entry.playlistIndex) {
+        playlistUpdates.push(tx.sourceVideo.update({ where: { id: membership.id }, data: { playlistIndex: entry.playlistIndex } }));
+      }
+      if (!existingByYoutubeId.has(entry.youtubeId) || video.metadataStatus !== "complete") metadataVideoIds.push(video.id);
+    }
+    if (newMemberships.length) await tx.sourceVideo.createMany({ data: newMemberships });
+    if (existingMemberships.length) {
+      await tx.sourceVideo.updateMany({
+        where: { id: { in: existingMemberships.map((membership) => membership.id) } },
+        data: { membershipStatus: "present", lastSeenAt: seenAt }
       });
-      const existingMembership = existing
-        ? await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: existing.id } }, select: { id: true } })
-        : null;
-      if (!existingMembership) newCount += 1;
-      await tx.sourceVideo.upsert({
-        where: { sourceId_videoId: { sourceId, videoId: video.id } },
-        update: { playlistIndex: entry.playlistIndex, membershipStatus: "present", lastSeenAt: seenAt },
-        create: { sourceId, videoId: video.id, playlistIndex: entry.playlistIndex, lastSeenAt: seenAt }
+    }
+    await awaitInBatches(playlistUpdates);
+
+    if (!(source.sourceType === "channel" && source.historyLimit !== null)) {
+      await tx.sourceVideo.updateMany({
+        where: { sourceId, videoId: { notIn: videos.map((video) => video.id) } },
+        data: { membershipStatus: "missing" }
       });
-      if (!existing || existing.metadataStatus !== "complete") metadataVideoIds.push(video.id);
     }
     await tx.source.update({ where: { id: sourceId }, data: { uploaderName: analysis.uploaderName, thumbnailUrl: analysis.thumbnailUrl, lastSyncedAt: seenAt, lastSyncStatus: "complete", nextSyncAt: source.syncEnabled ? new Date(seenAt.getTime() + source.syncIntervalMinutes * 60_000) : null } });
   });
-  for (const videoId of metadataVideoIds) await enqueueUniqueJob("metadata", sourceId, videoId);
-  await enqueueUniqueJob("thumbnail", sourceId);
+  const jobs = [
+    ...metadataVideoIds.map((videoId) => ({ type: "metadata", sourceId, videoId })),
+    { type: "thumbnail", sourceId }
+  ];
   if (source.playbackMode === "download") {
     // Excludes "cancelled" and "unavailable" as well as "complete" -- a user-cancelled download must stay
     // cancelled through automatic syncs, and a video downloadVideo() already recorded as permanently gone
     // (lib/downloads/service.ts) would otherwise get a fresh download job queued -- and fail again -- on
     // every single sync forever. Only the explicit retry action (lib/jobs/service.ts) brings either back.
     const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled", "unavailable"] } }, select: { videoId: true } });
-    for (const item of fresh) {
-      await enqueueUniqueJob("download", sourceId, item.videoId, { target: "permanent" });
-      await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId, videoId: item.videoId } }, data: { downloadStatus: "queued" } });
+    jobs.push(...fresh.map((item) => ({ type: "download", sourceId, videoId: item.videoId, payload: { target: "permanent" } })));
+    if (fresh.length) {
+      await db.sourceVideo.updateMany({
+        where: { sourceId, videoId: { in: fresh.map((item) => item.videoId) } },
+        data: { downloadStatus: "queued" }
+      });
     }
   }
-  if (source.tunarrChannelId && source.tunarrChannelName) await enqueueUniqueJob("tunarr_refresh", sourceId);
+  if (source.tunarrChannelId && source.tunarrChannelName) jobs.push({ type: "tunarr_refresh", sourceId });
+  await enqueueActiveJobs(jobs);
   await writeLog({ category: "sync", sourceId, message: `Synced ${source.name}. Found ${newCount} new video${newCount === 1 ? "" : "s"}.` });
   return { newCount, totalCount: analysis.entries.length, syncedAt: seenAt };
 }
 
 export async function enqueueUniqueJob(type: string, sourceId?: string, videoId?: string, payload?: unknown) {
-  const existing = await db.job.findFirst({ where: { type, sourceId, videoId, status: { in: ["queued", "running"] } } });
-  if (existing) return existing;
-  return db.job.create({ data: { type, sourceId, videoId, payloadJson: payload ? JSON.stringify(payload) : undefined, maxAttempts: type === "tunarr_refresh" ? 100 : 3 } });
+  return enqueueActiveJob({ type, sourceId, videoId, payload });
 }
 
 export async function enqueueMetadataRepair() {
@@ -214,7 +278,7 @@ export async function deleteSource(id: string) {
   const { removeSourceThumbnail } = await import("@/lib/thumbnails/service");
   await removeSourceThumbnail(id);
   await db.$transaction([
-    db.job.updateMany({ where: { sourceId: id, status: "queued" }, data: { status: "cancelled", finishedAt: new Date() } }),
+    db.job.updateMany({ where: { sourceId: id, status: "queued" }, data: { status: "cancelled", activeKey: null, finishedAt: new Date() } }),
     db.source.delete({ where: { id } })
   ]);
   const orphaned = await db.video.findMany({ where: { id: { in: source.videos.map((item) => item.videoId) }, sources: { none: {} } }, include: { cacheAsset: true } });

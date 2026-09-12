@@ -3,6 +3,7 @@ import { access, copyFile, link, mkdir, readdir, rename, rm, stat, writeFile } f
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
+import { withDownloadPermit } from "@/lib/downloads/limiter";
 import { requireFfmpeg } from "@/lib/ffmpeg/service";
 import { writeLog } from "@/lib/logging/service";
 import { assignEpisodeNumber, resolveVideoPaths, seasonNumberFor, type NamingScheme, type ResolvedVideoPaths } from "@/lib/naming/service";
@@ -167,30 +168,32 @@ async function writeSidecarsAndArt(
 }
 
 async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string, quality: VideoQuality, signal?: AbortSignal) {
-  const targetDirectory = path.dirname(target);
-  await mkdir(targetDirectory, { recursive: true });
-  const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
-  await mkdir(tempRoot, { recursive: true });
-  const tempDirectory = path.join(tempRoot, `${youtubeId}-${Date.now()}-${process.pid}`);
-  await mkdir(tempDirectory, { recursive: false });
-  try {
-    const ytdlp = await getYtDlpPath();
-    const ffmpeg = await requireFfmpeg();
-    await runProcess(ytdlp, [
-      "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
-      "--ffmpeg-location", path.dirname(ffmpeg),
-      "-f", downloadFormatSelector(quality),
-      "--concurrent-fragments", "4",
-      "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
-      "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
-    ], { timeoutMs: 12 * 60 * 60_000, signal });
-    const files = await readdir(tempDirectory);
-    const output = files.find((file) => file === `${youtubeId}.mp4`);
-    if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);
-    if (!(await exists(target))) await rename(path.join(/* turbopackIgnore: true */ tempDirectory, output), target);
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true });
-  }
+  return withDownloadPermit(async () => {
+    const targetDirectory = path.dirname(target);
+    await mkdir(targetDirectory, { recursive: true });
+    const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
+    await mkdir(tempRoot, { recursive: true });
+    const tempDirectory = path.join(tempRoot, `${youtubeId}-${Date.now()}-${process.pid}`);
+    await mkdir(tempDirectory, { recursive: false });
+    try {
+      const ytdlp = await getYtDlpPath();
+      const ffmpeg = await requireFfmpeg();
+      await runProcess(ytdlp, [
+        "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
+        "--ffmpeg-location", path.dirname(ffmpeg),
+        "-f", downloadFormatSelector(quality),
+        "--concurrent-fragments", "4",
+        "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
+        "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
+      ], { timeoutMs: 12 * 60 * 60_000, signal });
+      const files = await readdir(tempDirectory);
+      const output = files.find((file) => file === `${youtubeId}.mp4`);
+      if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);
+      if (!(await exists(target))) await rename(path.join(/* turbopackIgnore: true */ tempDirectory, output), target);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  }, signal);
 }
 
 async function reuseExistingAsset(sourceId: string, videoId: string, target: string) {

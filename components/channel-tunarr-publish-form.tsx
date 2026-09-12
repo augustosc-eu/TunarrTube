@@ -4,38 +4,7 @@ import { useEffect, useState } from "react";
 import { LoaderCircle, Radio, Sparkles } from "lucide-react";
 import { DEFAULT_SCHEDULE_STYLE, SCHEDULE_STYLE_OPTIONS, type ConceptPreset } from "@/components/ai-programming-presets";
 import { ConceptPresetPicker } from "@/components/concept-preset-picker";
-
-// AI Programming Director's preview shape -- mirrors lib/programming/director.ts's DirectorPreview.
-// Only the fields this UI reads are typed here; the server is the source of truth for the rest.
-type DirectorPreviewItem = { id: string; title: string; durationSeconds: number };
-type DirectorPreviewBlock = { label: string; startMinutes: number; endMinutes: number; items: DirectorPreviewItem[] };
-type DirectorPreviewGroup = { label: string; weight: number; cooldownMinutes: number; items: DirectorPreviewItem[] };
-type DirectorPreview = {
-  provider: string;
-  kind: "dayparts" | "rotation";
-  period: "day" | "week";
-  blocks: DirectorPreviewBlock[] | null;
-  groups: DirectorPreviewGroup[] | null;
-  totalCandidateCount: number;
-  usedCandidateCount: number;
-  unusedCandidateCount: number;
-  warnings: string[];
-};
-
-function formatClock(period: "day" | "week", minutes: number) {
-  const dayMinutes = 24 * 60;
-  const wrapped = ((minutes % dayMinutes) + dayMinutes) % dayMinutes;
-  const clock = `${String(Math.floor(wrapped / 60)).padStart(2, "0")}:${String(wrapped % 60).padStart(2, "0")}`;
-  if (period === "day") return clock;
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  return `${days[Math.floor(minutes / dayMinutes) % 7]} ${clock}`;
-}
-
-function formatDuration(totalSeconds: number) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const hours = Math.floor(minutes / 60);
-  return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
-}
+import { DirectorSchedulePreview, type DirectorPreview } from "@/components/director-schedule-preview";
 
 type LinkStatus = {
   linked: boolean;
@@ -51,6 +20,11 @@ type Props = {
   initialAiInstructions: string | null;
   initialAiProvider: string | null;
   initialAiScheduleStyle: string | null;
+  // Computed server-side (app/channels/[id]/page.tsx) from the same check
+  // lib/tunarr/channel-service.ts:publishChannelToTunarr enforces -- lets this panel warn and disable
+  // Publish up front instead of the user only finding out from a TUNARR_UNRENDERED_ITEMS error after
+  // clicking it (which lists every unrendered item's title, unreadable once there are more than a few).
+  unrenderedCount: number;
 };
 
 async function pollJob(jobId: string): Promise<void> {
@@ -66,7 +40,7 @@ async function pollJob(jobId: string): Promise<void> {
 
 // Distinct from components/tunarr-channel-form.tsx (a Source's own 1:1 Tunarr channel) -- this
 // publishes a curated, overlay-rendered Channel as its own, separate Tunarr channel.
-export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, initialAiInstructions, initialAiProvider, initialAiScheduleStyle }: Props) {
+export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, initialAiInstructions, initialAiProvider, initialAiScheduleStyle, unrenderedCount }: Props) {
   const [status, setStatus] = useState<LinkStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -187,6 +161,12 @@ export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, i
           )}
         </div>
       </div>
+      {unrenderedCount > 0 ? (
+        <p className="error">
+          {unrenderedCount} item{unrenderedCount === 1 ? "" : "s"} still need{unrenderedCount === 1 ? "s" : ""} rendering with this channel&rsquo;s template
+          before {status?.linked ? "republishing" : "publishing"} -- click &ldquo;Render all&rdquo; above and wait for it to finish first.
+        </p>
+      ) : null}
       <div className="form-grid">
         <div className="field"><label htmlFor="channel-programming-order">Programming order</label><select className="input" id="channel-programming-order" value={order} onChange={(event) => setOrder(event.target.value)}><option value="manual">Manual order</option><option value="random">Random</option><option value="ai">AI Programming</option></select></div>
       </div>
@@ -211,22 +191,9 @@ export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, i
               using {directorPreview.usedCandidateCount} of {directorPreview.totalCandidateCount} available clip{directorPreview.totalCandidateCount === 1 ? "" : "s"}.
             </p>
             {directorPreview.warnings.map((warning, index) => <p key={index} className="error">{warning}</p>)}
-            {directorPreview.blocks ? directorPreview.blocks.map((block) => (
-              <div key={block.label} className="system-row">
-                <strong>{block.label}</strong>
-                <div className="meta">{formatClock(directorPreview.period, block.startMinutes)} – {formatClock(directorPreview.period, block.endMinutes)} · {formatDuration(block.items.reduce((sum, item) => sum + item.durationSeconds, 0))} · {block.items.length} clip{block.items.length === 1 ? "" : "s"}</div>
-                <div className="meta">{block.items.map((item) => item.title).join(", ")}</div>
-              </div>
-            )) : null}
-            {directorPreview.groups ? directorPreview.groups.map((group) => (
-              <div key={group.label} className="system-row">
-                <strong>{group.label}</strong>
-                <div className="meta">weight {group.weight} · cooldown {group.cooldownMinutes}m · {group.items.length} clip{group.items.length === 1 ? "" : "s"}</div>
-                <div className="meta">{group.items.map((item) => item.title).join(", ")}</div>
-              </div>
-            )) : null}
+            <DirectorSchedulePreview preview={directorPreview} />
             <div className="toolbar">
-              <button className="button" type="button" onClick={applyDirectorSchedule} disabled={busy || directorBusy}>{busy ? "Applying…" : "Apply Schedule"}</button>
+              <button className="button" type="button" onClick={applyDirectorSchedule} disabled={busy || directorBusy || unrenderedCount > 0}>{busy ? "Applying…" : "Apply Schedule"}</button>
               <button className="button secondary" type="button" onClick={previewSchedule} disabled={directorBusy || busy}>Regenerate</button>
               <button className="button secondary" type="button" onClick={() => setDirectorPreview(null)} disabled={directorBusy || busy}>Cancel</button>
             </div>
@@ -235,7 +202,7 @@ export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, i
       </> : null}
       {error ? <p className="error">{error}</p> : null}
       <div className="toolbar">
-        <button className="button" type="button" onClick={publish} disabled={busy}>{busy ? "Publishing…" : status?.linked ? "Republish" : "Publish to Tunarr"}</button>
+        <button className="button" type="button" onClick={publish} disabled={busy || unrenderedCount > 0}>{busy ? "Publishing…" : status?.linked ? "Republish" : "Publish to Tunarr"}</button>
         {status?.linked ? <button className="button secondary" type="button" onClick={unlink} disabled={busy}>Unlink</button> : null}
       </div>
     </section>

@@ -6,6 +6,11 @@ import type { OverlayLayerTiming } from "@/lib/overlay/types";
 
 type LayerInput = { pngInputIndex: number; timing: OverlayLayerTiming };
 
+export function renderThreadBudget(value = process.env.TUNARRTUBE_RENDER_THREADS) {
+  const parsed = Number.parseInt(value ?? "2", 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 64) : 2;
+}
+
 // Each PNG is a `-loop 1` input sharing the same global clock as the source video (input 0), so
 // the fade filter's own `st` times line up directly with the overlay `enable` window -- no
 // separate local/global time conversion needed. Layers chain in order; each stage overlays onto
@@ -47,15 +52,17 @@ export async function renderVideoWithOverlay(
 
   const inputArgs = layerPngs.flatMap((layer) => ["-loop", "1", "-i", layer.pngPath]);
   const audioArgs = opts.audioCodec === "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "192k"];
+  const threads = String(renderThreadBudget());
 
   await runProcess(ffmpeg, [
     "-y",
     "-i", sourcePath,
     ...inputArgs,
+    "-filter_complex_threads", threads,
     "-filter_complex", filterGraph,
     "-map", `[${lastLabel}]`,
     "-map", "0:a?",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+    "-c:v", "libx264", "-threads", threads, "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
     ...audioArgs,
     "-movflags", "+faststart",
     // "-shortest" alone isn't enough to bound the output: each overlay layer is a "-loop 1" PNG

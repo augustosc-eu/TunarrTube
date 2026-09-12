@@ -11,7 +11,7 @@ vi.mock("@/lib/jobs/runner", async (importOriginal) => {
   return { ...actual, kickWorker: vi.fn() };
 });
 
-const { cancelJob, postponeJob, retryJob, stopJob } = await import("@/lib/jobs/service");
+const { cancelJob, getJobsStatus, postponeJob, retryJob, stopJob } = await import("@/lib/jobs/service");
 
 describe("job cancel/retry", () => {
   const cleanupSourceIds: string[] = [];
@@ -172,5 +172,17 @@ describe("job cancel/retry", () => {
     expect(stopSpy).toHaveBeenCalledWith(job.id);
     expect(await db.job.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({ status: "cancelled", finishedAt: expect.any(Date) });
     stopSpy.mockRestore();
+  });
+
+  it("returns lightweight status for several jobs in one query", async () => {
+    const first = await db.job.create({ data: { type: "sync", status: "queued" } });
+    const second = await db.job.create({ data: { type: "sync", status: "failed", error: "boom", finishedAt: new Date() } });
+    cleanupJobIds.push(first.id, second.id);
+
+    const statuses = await getJobsStatus([first.id, second.id]);
+    expect(statuses).toHaveLength(2);
+    expect(statuses.find((job) => job.id === first.id)).toMatchObject({ status: "queued", error: null });
+    expect(statuses.find((job) => job.id === second.id)).toMatchObject({ status: "failed", error: "boom" });
+    expect(statuses[0]).not.toHaveProperty("payloadJson");
   });
 });

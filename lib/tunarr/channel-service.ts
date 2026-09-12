@@ -192,15 +192,22 @@ export async function publishChannelToTunarr(channelId: string, signal?: AbortSi
       providerOverride: channel.aiProvider, globalProviderSetting: settings.aiProvider as AiProviderSetting, signal
     });
     if (ensured.plan.kind === "rotation") {
+      programCount = ensured.plan.groups.reduce((total, group) => total + group.itemIds.length, 0);
+      // Checked before the Tunarr write below, same as the non-AI lineup guard above: a schedule with
+      // zero items is a valid-looking request Tunarr will happily accept and apply, leaving the channel
+      // published with no programming at all. Tunarr can't compute a real guide end time for a channel
+      // in that state and free-spins trying to extend one that never advances -- see WRITE_TIMEOUT_MS's
+      // comment in lib/tunarr/client.ts for the incident this was found from.
+      if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- render this channel's items (or wait for Tunarr's scan to catch up) before publishing.", 422);
       const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal });
       await db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
       await client.replaceProgrammingWithRandomSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
-      programCount = ensured.plan.groups.reduce((total, group) => total + group.itemIds.length, 0);
     } else {
+      programCount = ensured.plan.blocks.reduce((total, block) => total + block.itemIds.length, 0);
+      if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- render this channel's items (or wait for Tunarr's scan to catch up) before publishing.", 422);
       const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal });
       await db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
       await client.replaceProgrammingWithSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
-      programCount = ensured.plan.blocks.reduce((total, block) => total + block.itemIds.length, 0);
     }
   } else {
     await client.replaceProgramming(channelIdOnTunarr, lineup, signal);

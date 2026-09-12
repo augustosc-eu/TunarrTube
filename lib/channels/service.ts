@@ -2,6 +2,7 @@ import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
+import { enqueueActiveJob } from "@/lib/jobs/enqueue";
 import { getSettings } from "@/lib/settings/service";
 import { writeLog } from "@/lib/logging/service";
 import { addVideosToCollection, slugify } from "@/lib/sources/service";
@@ -324,17 +325,10 @@ export async function addYoutubeUrlToChannel(channelId: string, url: string, sig
   return { addedCount: result.addedCount, duplicateCount: result.duplicateCount, mediaItems };
 }
 
-// A small, independent dedupe-and-create helper for Channel/MediaItem-targeted jobs (render,
-// ingest_local_scan, channel_publish) -- deliberately not a change to the existing sourceId/videoId
-// enqueueUniqueJob (lib/sources/service.ts:175), so that shared, load-bearing function stays untouched.
+// Channel/MediaItem jobs share the same database-enforced active-key path as Source jobs. Render keys
+// additionally include the template id, because the same clip can legitimately need several outputs.
 export async function enqueueChannelJob(type: string, target: { channelId?: string; mediaItemId?: string }, payload?: unknown) {
-  const existing = await db.job.findFirst({
-    where: { type, channelId: target.channelId, mediaItemId: target.mediaItemId, status: { in: ["queued", "running"] } }
-  });
-  if (existing) return existing;
-  const job = await db.job.create({
-    data: { type, channelId: target.channelId, mediaItemId: target.mediaItemId, payloadJson: payload ? JSON.stringify(payload) : undefined, maxAttempts: 3 }
-  });
+  const job = await enqueueActiveJob({ type, ...target, payload });
   const { kickWorker } = await import("@/lib/jobs/runner");
   kickWorker();
   return job;

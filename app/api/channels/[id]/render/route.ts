@@ -26,7 +26,7 @@ export async function POST(_request: Request, { params }: Context) {
       if (!ready) continue; // not downloaded/available yet -- skip silently, retry later
       jobs.push(await enqueueChannelJob("render", { mediaItemId: item.mediaItemId }, { templateId: channel.templateId }));
     }
-    return ok({ queued: jobs.length, skipped: pending.length - jobs.length });
+    return ok({ queued: jobs.length, skipped: pending.length - jobs.length, jobIds: jobs.map((job) => job.id) });
   } catch (error) {
     return toErrorResponse(error);
   }

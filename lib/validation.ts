@@ -108,6 +108,18 @@ export const jobMutationSchema = z.object({
   path: ["postponeMinutes"]
 });
 export const jobsPauseSchema = z.object({ paused: z.boolean() });
+export const jobsListQuerySchema = z.object({
+  queuedPage: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(10).max(100).default(50)
+});
+export const jobsStatusSchema = z.object({ ids: z.array(z.string().min(1)).min(1).max(100) });
+export const sourceVideosQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(10).max(100).default(50),
+  query: z.string().trim().max(200).default(""),
+  sort: z.enum(["index", "title", "duration", "status"]).default("index"),
+  order: z.enum(["asc", "desc"]).default("asc")
+});
 export const cacheEnforceSchema = z.object({ action: z.enum(["enforce", "clear"]).default("enforce") });
 export const logsPurgeSchema = z.object({ action: z.enum(["purge", "clear"]).default("purge") });
 export const reconcileTunarrSchema = z.object({ channelId: z.string().min(1).optional() });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCollectionVideosSchema, aiProviderOverrideSchema, aiProviderSettingSchema, analyzeSourceSchema, createSourceSchema, createTemplateSchema, directorPreviewSchema, logsPurgeSchema, patchSourceSchema, settingsSchema } from "@/lib/validation";
+import { addCollectionVideosSchema, aiProviderOverrideSchema, aiProviderSettingSchema, analyzeSourceSchema, createSourceSchema, createTemplateSchema, directorPreviewSchema, jobsListQuerySchema, jobsStatusSchema, logsPurgeSchema, patchSourceSchema, settingsSchema, sourceVideosQuerySchema } from "@/lib/validation";
 
 describe("Phase 2 validation", () => {
   it("accepts channel analysis and all playback modes", () => {
@@ -53,5 +53,11 @@ describe("Phase 2 validation", () => {
     expect(() => createTemplateSchema.parse({ ...base, visualLayoutJson: "a".repeat(8_000_001) })).toThrow();
     expect(() => createTemplateSchema.parse({ ...base, bindingsJson: "a".repeat(100_001) })).toThrow();
     expect(() => createTemplateSchema.parse({ ...base, layersJson: "a".repeat(100_001) })).toThrow();
+  });
+  it("bounds job batches and server-side pagination", () => {
+    expect(jobsListQuerySchema.parse({ queuedPage: "2", pageSize: "25" })).toEqual({ queuedPage: 2, pageSize: 25 });
+    expect(sourceVideosQuerySchema.parse({ query: "music", sort: "title", order: "desc" })).toMatchObject({ page: 1, pageSize: 50, query: "music", sort: "title", order: "desc" });
+    expect(() => jobsStatusSchema.parse({ ids: Array.from({ length: 101 }, (_, index) => String(index)) })).toThrow();
+    expect(() => sourceVideosQuerySchema.parse({ pageSize: "500" })).toThrow();
   });
 });

@@ -1,6 +1,7 @@
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { enqueueChannelJob } from "@/lib/channels/service";
+import { enqueueActiveJobs } from "@/lib/jobs/enqueue";
 import { kickWorker, markJobCancelled, requestJobStop, STOPPABLE_JOB_TYPES } from "@/lib/jobs/runner";
 import { writeLog } from "@/lib/logging/service";
 import { getSettings } from "@/lib/settings/service";
@@ -12,14 +13,26 @@ import { enqueueUniqueJob } from "@/lib/sources/service";
 const CHANNEL_TARGETED_JOB_TYPES = ["channel_publish", "render", "ingest_local_scan"];
 
 export async function enqueueDownloads(items: Array<{ sourceId: string; videoId: string }>) {
-  const jobs = [];
-  for (const item of items) {
-    const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: item }, select: { id: true, downloadStatus: true } });
-    if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "At least one selected video is not part of its source.", 404);
-    if (membership.downloadStatus === "complete") continue;
-    const job = await enqueueUniqueJob("download", item.sourceId, item.videoId, { target: "permanent" });
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "queued" } });
-    jobs.push(job);
+  const uniqueItems = [...new Map(items.map((item) => [`${item.sourceId}\0${item.videoId}`, item])).values()];
+  const memberships = uniqueItems.length ? await db.sourceVideo.findMany({
+    where: { OR: uniqueItems },
+    select: { id: true, sourceId: true, videoId: true, downloadStatus: true }
+  }) : [];
+  if (memberships.length !== uniqueItems.length) {
+    throw new AppError("VIDEO_NOT_IN_SOURCE", "At least one selected video is not part of its source.", 404);
+  }
+  const eligible = memberships.filter((membership) => membership.downloadStatus !== "complete");
+  const jobs = await enqueueActiveJobs(eligible.map((membership) => ({
+    type: "download",
+    sourceId: membership.sourceId,
+    videoId: membership.videoId,
+    payload: { target: "permanent" }
+  })));
+  if (eligible.length) {
+    await db.sourceVideo.updateMany({
+      where: { id: { in: eligible.map((membership) => membership.id) } },
+      data: { downloadStatus: "queued" }
+    });
   }
   kickWorker();
   return jobs;
@@ -29,6 +42,14 @@ export async function getJob(id: string) {
   const job = await db.job.findUnique({ where: { id } });
   if (!job) throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
   return { ...job, stoppable: job.status === "running" && STOPPABLE_JOB_TYPES.includes(job.type) };
+}
+
+export async function getJobsStatus(ids: string[]) {
+  const jobs = await db.job.findMany({
+    where: { id: { in: [...new Set(ids)] } },
+    select: { id: true, status: true, error: true, runAfter: true, startedAt: true, finishedAt: true, updatedAt: true }
+  });
+  return jobs;
 }
 
 // Cancelling only reaches jobs still waiting in the queue (including ones sitting in a retry backoff) --
@@ -115,24 +136,34 @@ export async function retryJob(id: string) {
 }
 
 // Powers the /jobs queue view: running and queued jobs (the actual work in flight or waiting on the
-// single in-process worker, see lib/jobs/runner.ts) plus a bounded tail of recent terminal jobs so
+// in-process worker lanes, see lib/jobs/runner.ts) plus a bounded tail of recent terminal jobs so
 // finished/failed work stays visible for a bit after it clears the active queue. Also reports whether
 // the queue is paused (setJobsPaused() above) so the UI can show the toggle's current state.
-export async function listJobs() {
+export async function listJobs(options: { queuedPage?: number; pageSize?: number } = {}) {
+  const queuedPage = Math.max(1, options.queuedPage ?? 1);
+  const pageSize = Math.min(100, Math.max(10, options.pageSize ?? 50));
   const include = {
     source: { select: { id: true, name: true } },
     video: { select: { id: true, title: true, youtubeId: true } }
   } as const;
-  const [{ jobsPaused }, running, queued, recent] = await Promise.all([
+  const [{ jobsPaused }, running, queuedTotal, queued, recent] = await Promise.all([
     getSettings(),
     db.job.findMany({ where: { status: "running" }, orderBy: { startedAt: "asc" }, include }),
-    db.job.findMany({ where: { status: "queued" }, orderBy: [{ runAfter: "asc" }, { createdAt: "asc" }], include }),
+    db.job.count({ where: { status: "queued" } }),
+    db.job.findMany({
+      where: { status: "queued" },
+      orderBy: [{ runAfter: "asc" }, { createdAt: "asc" }],
+      skip: (queuedPage - 1) * pageSize,
+      take: pageSize,
+      include
+    }),
     db.job.findMany({ where: { status: { in: ["complete", "failed", "cancelled"] } }, orderBy: { finishedAt: "desc" }, take: 30, include })
   ]);
   return {
     paused: jobsPaused,
     running: running.map((job) => ({ ...job, stoppable: STOPPABLE_JOB_TYPES.includes(job.type) })),
     queued,
+    queuedPagination: { page: queuedPage, pageSize, total: queuedTotal, totalPages: Math.max(1, Math.ceil(queuedTotal / pageSize)) },
     recent
   };
 }

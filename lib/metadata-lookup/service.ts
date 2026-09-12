@@ -3,6 +3,7 @@ import { musicBrainzProvider } from "@/lib/metadata-lookup/musicbrainz";
 import { itunesProvider } from "@/lib/metadata-lookup/itunes";
 import { applyMetadataCandidate } from "@/lib/media-items/service";
 import { getSettings } from "@/lib/settings/service";
+import { parseMusicTitle } from "@/lib/metadata-lookup/title-parse";
 import { writeLog } from "@/lib/logging/service";
 import type { MetadataCandidate } from "@/lib/metadata-lookup/types";
 
@@ -45,7 +46,12 @@ export async function autoApplyMetadata(mediaItemId: string, signal?: AbortSigna
   if (item.artist || item.metadataStatus === "manual" || item.metadataStatus === "matched") return;
 
   const settings = await getSettings();
-  const candidates = await searchMetadata({ title: item.title }, signal, { musicbrainz: settings.metadataMusicbrainzEnabled, itunes: settings.metadataItunesEnabled });
+  // Raw YouTube titles are noisy ("(Official Music Video)", "MV", "(Test)", ...) and often already
+  // spell out "Artist - Title" -- searching+scoring against that verbatim string was diluting
+  // similarityScore's overlap ratio and throwing away an artist that didn't need a lookup at all.
+  // See lib/metadata-lookup/title-parse.ts.
+  const parsed = parseMusicTitle(item.title);
+  const candidates = await searchMetadata({ title: parsed.title, artist: parsed.artist }, signal, { musicbrainz: settings.metadataMusicbrainzEnabled, itunes: settings.metadataItunesEnabled });
   const best = candidates.find((candidate) => candidate.artist);
   if (best && best.score >= settings.metadataAutoApplyThreshold) {
     await applyMetadataCandidate(mediaItemId, best);

@@ -145,6 +145,9 @@ model ImportDraft {
 
 model Job {
   id          String     @id @default(cuid())
+  // Non-null only while a job is queued/running. The unique constraint makes active-job
+  // deduplication atomic; terminal transitions clear it so the same work can be queued again.
+  activeKey   String?    @unique
   type        String
   status      String     @default("queued")
   sourceId    String?

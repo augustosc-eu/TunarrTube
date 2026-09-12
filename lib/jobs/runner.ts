@@ -32,26 +32,31 @@ function lanes() {
 
 // Media-fetching job types that shell out to yt-dlp for the actual video bytes, as opposed to the light
 // metadata/listing calls made by "sync" -- these are the ones worth pausing as a group on a 429, and the
-// only ones kept to a single worker below (see LANE_IDS) so we never fire concurrent requests at
-// YouTube's video CDN.
+// only ones routed through the dedicated media worker below (see LANE_IDS). The process-wide limiter
+// in lib/downloads/limiter.ts enforces the actual fetch ceiling across this lane and publishing.
 const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
+const RENDER_JOB_TYPES = ["render"];
 
-// How many "general" jobs (everything except download/cache -- metadata, metadata_lookup, thumbnail,
-// sync, retag, tunarr_*, render, channel_*, ingest_local_scan) run at once. These are lighter than a video download
+// How many "general" jobs (everything except download/cache/render -- metadata, metadata_lookup,
+// thumbnail, sync, retag, tunarr_*, channel_*, ingest_local_scan) run at once. These are lighter than a video download
 // (an API call, a quick yt-dlp metadata-only call, or purely local work) and aren't the ones YouTube's
 // 429s are aimed at pausing, so running several concurrently speeds up a large backlog without touching
 // the download/cache rate-limit story at all. Override via env for tuning; default keeps it modest.
 const GENERAL_LANE_COUNT = Number(process.env.TUNARRTUBE_GENERAL_WORKERS) || 3;
 
-// One lane per concurrently-running worker loop: "media" claims only download/cache jobs and runs
-// strictly one at a time (see claimJob() below); "general-0".."general-N" each independently claim and
-// run everything else, so up to GENERAL_LANE_COUNT of those can be in flight together. kickWorker()
+// One lane per concurrently-running worker loop: "media" claims only download/cache jobs, "render"
+// runs exactly one CPU-heavy FFmpeg render at a time, and "general-0".."general-N" independently claim
+// the lightweight remainder. kickWorker()
 // starts whichever lanes aren't already running; each lane's work() loop exits (and is removed from the
 // map) once the queue it draws from is empty.
-const LANE_IDS = ["media", ...Array.from({ length: GENERAL_LANE_COUNT }, (_, index) => `general-${index}`)];
+const LANE_IDS = ["media", "render", ...Array.from({ length: GENERAL_LANE_COUNT }, (_, index) => `general-${index}`)];
 
-function laneKind(id: string): "media" | "general" {
-  return id === "media" ? "media" : "general";
+type LaneKind = "media" | "render" | "general";
+
+function laneKind(id: string): LaneKind {
+  if (id === "media") return "media";
+  if (id === "render") return "render";
+  return "general";
 }
 
 // Job types whose underlying work actually listens for the AbortController below (they end up in
@@ -93,7 +98,7 @@ export async function recoverJobs() {
         : "Recovered after TunarrTube restarted.";
       const changed = await db.job.updateMany({
         where: { id: job.id, status: "running" },
-        data: { status: exhausted ? "failed" : "queued", error: message, runAfter: new Date(),
+        data: { status: exhausted ? "failed" : "queued", activeKey: exhausted ? null : undefined, error: message, runAfter: new Date(),
           startedAt: null, finishedAt: exhausted ? new Date() : null }
       });
       if (changed.count && exhausted && job.type === "download" && job.sourceId && job.videoId) {
@@ -127,7 +132,7 @@ export async function recoverJobs() {
   }
 }
 
-async function claimJob(lane: "media" | "general") {
+async function claimJob(lane: LaneKind) {
   const now = new Date();
   // The media lane only ever claims download/cache jobs (kept single-worker by work()/kickWorker() below
   // running exactly one "media" lane) -- everything else goes to the general lanes, "retag" prioritized
@@ -135,8 +140,10 @@ async function claimJob(lane: "media" | "general") {
   // behind slower network-bound work in strict creation order.
   const candidate = lane === "media"
     ? await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { in: RATE_LIMITED_JOB_TYPES } }, orderBy: { createdAt: "asc" } })
-    : (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "retag" }, orderBy: { createdAt: "asc" } })) ??
-      (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { notIn: [...RATE_LIMITED_JOB_TYPES, "retag"] } }, orderBy: { createdAt: "asc" } }));
+    : lane === "render"
+      ? await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { in: RENDER_JOB_TYPES } }, orderBy: { createdAt: "asc" } })
+      : (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: "retag" }, orderBy: { createdAt: "asc" } })) ??
+        (await db.job.findFirst({ where: { status: "queued", runAfter: { lte: now }, type: { notIn: [...RATE_LIMITED_JOB_TYPES, ...RENDER_JOB_TYPES, "retag"] } }, orderBy: { createdAt: "asc" } }));
   if (!candidate) return null;
   const claimed = await db.job.updateMany({ where: { id: candidate.id, status: "queued" }, data: { status: "running", startedAt: new Date(), attempts: { increment: 1 }, error: null } });
   return claimed.count === 1 ? db.job.findUnique({ where: { id: candidate.id } }) : null;
@@ -193,7 +200,7 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
 // it was working on marked "cancelled" (sticky, so syncSource/materializeForTunarr's automatic
 // re-enqueue paths leave it alone until an explicit retry).
 export async function markJobCancelled(job: { id: string; type: string; sourceId: string | null; videoId: string | null }, message: string) {
-  const changed = await db.job.updateMany({ where: { id: job.id, status: { in: ["queued", "running"] } }, data: { status: "cancelled", error: message, finishedAt: new Date() } });
+  const changed = await db.job.updateMany({ where: { id: job.id, status: { in: ["queued", "running"] } }, data: { status: "cancelled", activeKey: null, error: message, finishedAt: new Date() } });
   if (!changed.count) return false;
   if (job.type === "download" && job.sourceId && job.videoId) {
     await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: job.sourceId, videoId: job.videoId } }, data: { downloadStatus: "cancelled" } }).catch(() => undefined);
@@ -248,7 +255,7 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     // never come back, so fail the job immediately instead of the ordinary retry-with-backoff below. The
     // Jobs page's Retry action still works if the user wants another attempt (e.g. YouTube later
     // reinstates it), or they can remove the video from its source instead.
-    await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "failed", error: message.slice(-2000), finishedAt: new Date() } }).catch(() => undefined);
+    await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "failed", activeKey: null, error: message.slice(-2000), finishedAt: new Date() } }).catch(() => undefined);
     await writeLog({ level: "warn", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message} (video unavailable, not retrying)` }).catch(() => undefined);
     return;
   }
@@ -256,7 +263,7 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
   const delaySeconds = Math.min(60, 2 ** job.attempts * 2);
   await db.job.updateMany({
     where: { id: job.id, status: "running" },
-    data: { status: retry ? "queued" : "failed", error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
+    data: { status: retry ? "queued" : "failed", activeKey: retry ? undefined : null, error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
   }).catch(() => undefined);
   if (error instanceof SourceJobsActiveError) {
     // Routine deferral, not a failure: log it quietly so it doesn't read like an incident in the logs
@@ -268,7 +275,7 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
   await writeLog({ level: "error", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined, message: `${job.type} job failed: ${message}` }).catch(() => undefined);
 }
 
-async function work(lane: "media" | "general") {
+async function work(lane: LaneKind) {
   await recoverJobs();
   for (;;) {
     // Checked before every claim (not just once at the top) so a pause requested mid-drain takes effect
@@ -285,7 +292,7 @@ async function work(lane: "media" | "general") {
       await handleJob(job, controller.signal);
       controller.signal.throwIfAborted();
       if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.ytarrRateLimitHits = 0;
-      const completed = await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "complete", finishedAt: new Date() } });
+      const completed = await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "complete", activeKey: null, finishedAt: new Date() } });
       if (!completed.count) continue;
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
         const linked = await db.source.findUnique({ where: { id: job.sourceId }, select: { tunarrChannelId: true } });

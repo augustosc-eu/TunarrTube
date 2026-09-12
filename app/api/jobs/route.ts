@@ -1,10 +1,11 @@
 import { ok, serialize, toErrorResponse } from "@/lib/api";
 import { listJobs, setJobsPaused } from "@/lib/jobs/service";
-import { jobsPauseSchema } from "@/lib/validation";
+import { jobsListQuerySchema, jobsPauseSchema } from "@/lib/validation";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    return ok(serialize(await listJobs()));
+    const query = jobsListQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
+    return ok(serialize(await listJobs(query)));
   } catch (error) {
     return toErrorResponse(error);
   }
