@@ -21,6 +21,15 @@ async function buildCustomShows(input: {
   namePrefix: string;
   previous: StoredProgrammingPlan["tunarr"];
   signal?: AbortSignal;
+  // Called after each label's Custom Show create/update succeeds, with the accumulated map so far --
+  // lets the caller persist Tunarr-side progress as it happens rather than only once this whole
+  // function returns. A channel with several labels makes several sequential Tunarr writes here; if one
+  // partway through fails (a slow Tunarr instance, a dropped connection) without this, everything
+  // already created is invisible to `previous` on the retry -- the next attempt has no record of it,
+  // recreates the earlier labels from scratch under fresh Custom Show ids, and leaves the ones actually
+  // created here as permanent orphans in Tunarr. Persisting as each one lands means a retry's `previous`
+  // (loaded from the same field this writes) picks up right where the failed attempt left off.
+  onProgress?: (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) => Promise<void>;
 }) {
   const tunarr: NonNullable<StoredProgrammingPlan["tunarr"]> = {};
   const resolved: Array<{ label: string; customShowId: string; slotId: string }> = [];
@@ -50,6 +59,9 @@ async function buildCustomShows(input: {
     const slotId = existing?.slotId ?? randomUUID();
     tunarr[entry.label] = { customShowId, slotId };
     resolved.push({ label: entry.label, customShowId, slotId });
+    // Best-effort: losing this one write shouldn't fail an otherwise-successful Custom Show creation --
+    // worst case a later attempt redoes this one label's work, same as before this existed.
+    await input.onProgress?.({ ...tunarr }).catch(() => undefined);
   }
 
   if (skipped) {
@@ -95,8 +107,9 @@ export async function buildTunarrSchedule(input: {
   previous: StoredProgrammingPlan["tunarr"];
   channelId: string;
   signal?: AbortSignal;
+  onProgress?: (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) => Promise<void>;
 }): Promise<BuiltSchedule<TunarrTimeSlotSchedule>> {
-  const { tunarr, resolved } = await buildCustomShows({ client: input.client, labels: input.plan.blocks, programIndex: input.programIndex, namePrefix: input.namePrefix, previous: input.previous, signal: input.signal });
+  const { tunarr, resolved } = await buildCustomShows({ client: input.client, labels: input.plan.blocks, programIndex: input.programIndex, namePrefix: input.namePrefix, previous: input.previous, signal: input.signal, onProgress: input.onProgress });
   if (!resolved.length) {
     throw new AppError("AI_SCHEDULE_EMPTY", "None of the AI's scheduled clips were found in Tunarr's scanned library -- try republishing after downloads finish.", 422);
   }
@@ -152,9 +165,10 @@ export async function buildTunarrRotationSchedule(input: {
   previous: StoredProgrammingPlan["tunarr"];
   channelId: string;
   signal?: AbortSignal;
+  onProgress?: (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) => Promise<void>;
 }): Promise<BuiltSchedule<TunarrRandomSlotSchedule>> {
   const labels: Array<{ label: string; itemIds: string[] }> = input.plan.groups;
-  const { tunarr, resolved } = await buildCustomShows({ client: input.client, labels, programIndex: input.programIndex, namePrefix: input.namePrefix, previous: input.previous, signal: input.signal });
+  const { tunarr, resolved } = await buildCustomShows({ client: input.client, labels, programIndex: input.programIndex, namePrefix: input.namePrefix, previous: input.previous, signal: input.signal, onProgress: input.onProgress });
   if (!resolved.length) {
     throw new AppError("AI_SCHEDULE_EMPTY", "None of the AI's scheduled clips were found in Tunarr's scanned library -- try republishing after downloads finish.", 422);
   }

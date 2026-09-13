@@ -114,6 +114,12 @@ function errorText(value: unknown) {
 // interrupts the request mid-write.
 const WRITE_TIMEOUT_MS = 60_000;
 
+// A healthy guide computation is near-instant (a couple of custom shows and a schedule, not a heavy
+// query) -- the failure this guards against (see verifyChannelGuide below) is an unbounded loop, not a
+// slow-but-finishing one, so this stays well under WRITE_TIMEOUT_MS: the point is to fail fast and
+// clearly rather than tie up a job attempt waiting out a hang that was never going to resolve.
+const GUIDE_VERIFY_TIMEOUT_MS = 20_000;
+
 export class TunarrApiClient {
   constructor(private readonly baseUrl: string, private readonly timeoutMs = 15_000) {}
 
@@ -193,7 +199,7 @@ export class TunarrApiClient {
     const body = object(await this.request("/api/media-sources", {
       method: "POST",
       body: JSON.stringify({ name, type: "local", mediaType: "other_videos", paths: [mediaDirectory], pathReplacements: [] })
-    }, signal));
+    }, signal, WRITE_TIMEOUT_MS));
     if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a media source but did not return its ID.", 502);
     return body.id;
   }
@@ -206,7 +212,7 @@ export class TunarrApiClient {
     const body = object(await this.request("/api/media-sources", {
       method: "POST",
       body: JSON.stringify({ name, type: "local", mediaType: "music_videos", paths: [mediaDirectory], pathReplacements: [] })
-    }, signal));
+    }, signal, WRITE_TIMEOUT_MS));
     if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a media source but did not return its ID.", 502);
     return body.id;
   }
@@ -263,6 +269,28 @@ export class TunarrApiClient {
     });
   }
 
+  // Asks Tunarr to actually compute the near-term guide for one channel, right after publishing it --
+  // not because the caller wants the guide data, but because this is the exact computation that was
+  // observed hanging Tunarr's whole server: a channel whose schedule references a Custom Show program
+  // that Tunarr's guide-builder can't resolve sends it into an unbounded loop (see the incident notes on
+  // WRITE_TIMEOUT_MS above), and that loop runs for *every* channel during Tunarr's own periodic guide
+  // refresh -- one broken channel takes the entire server down for everyone, discovered only much later.
+  // Running the same computation here, under our own bounded timeout, right after publish, means a
+  // channel that would trigger that loop fails *this* request clearly and immediately (a normal,
+  // retryable job failure) instead of silently "succeeding" and taking Tunarr down for every channel on
+  // its next background refresh cycle. A short near-term window is enough -- if Tunarr can compute the
+  // next couple of hours without hanging, the schedule resolves the way the loop needs it to.
+  async verifyChannelGuide(channelId: string, signal?: AbortSignal) {
+    const from = new Date();
+    const to = new Date(from.getTime() + 2 * 60 * 60_000);
+    await this.request(
+      `/api/guide/channels/${encodeURIComponent(channelId)}?dateFrom=${encodeURIComponent(from.toISOString())}&dateTo=${encodeURIComponent(to.toISOString())}`,
+      undefined,
+      signal,
+      GUIDE_VERIFY_TIMEOUT_MS
+    );
+  }
+
   async getDefaultTranscodeConfigId(signal?: AbortSignal) {
     const body = await this.request("/api/transcode_configs", undefined, signal);
     if (!Array.isArray(body)) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned invalid transcode configuration data.", 502);
@@ -312,11 +340,18 @@ export class TunarrApiClient {
     });
   }
 
+  // AI-scheduled publishes (lib/programming/schedule-builder.ts) call these once per programming
+  // group/block -- a channel with several groups fires several of these in one publish, each its own
+  // request. Same WRITE_TIMEOUT_MS as the channel/programming writes above, for the same reason: a
+  // client-side abort here doesn't reliably stop Tunarr's side from finishing the write moments later,
+  // it just stops TunarrTube from getting the resulting id back -- a later step in the same publish then
+  // has nothing to reference (or references a show Tunarr is still mid-creating), which is exactly what
+  // surfaced as Tunarr logging "Program in lineup with ID ... not found in database" on repeat.
   async createCustomShow(name: string, programs: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
     const body = object(await this.request("/api/custom-shows", {
       method: "POST",
       body: JSON.stringify({ name, programs, syncMediaSourceId: null, syncMediaSourceType: null, syncExternalPlaylistId: null })
-    }, signal));
+    }, signal, WRITE_TIMEOUT_MS));
     if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a custom show but did not return its ID.", 502);
     return body.id;
   }
@@ -325,7 +360,7 @@ export class TunarrApiClient {
     await this.request(`/api/custom-shows/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify({ name, programs, enableSync: false })
-    }, signal);
+    }, signal, WRITE_TIMEOUT_MS);
   }
 
   // The "random" counterpart to replaceProgrammingWithSchedule -- see TunarrRandomSlotSchedule.

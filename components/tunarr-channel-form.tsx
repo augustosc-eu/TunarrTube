@@ -100,6 +100,12 @@ export function TunarrChannelForm({ sourceId, sourceName, downloadedCount, playb
     {playbackMode === "download" && downloadedCount === 0 ? <div className="error">Wait for or download at least one video before creating a channel.</div> : null}
     {message && <p className={failed ? "error" : "success"}>{message}</p>}
     {candidates.length ? <div className="toolbar"><select className="input" aria-label="Existing Tunarr channel" value={channelChoice} onChange={(event) => setChannelChoice(event.target.value)}><option value="">Choose an existing channel</option>{candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.name}</option>)}</select><button className="button secondary" disabled={!channelChoice || busy} onClick={reconcile}>Relink selected</button></div> : null}
-    {isLinked && <div className="meta"><span>Channel {channelNumber ?? "—"}</span><span>·</span><span className="code">{channelId}</span><span>·</span><span>Published {lastPublishedLabel}</span></div>}
+    {/* lastPublishedLabel is null whenever a publish was started (channelId got persisted) but the
+        programming/schedule write or its guide-verification never completed successfully -- see the
+        matching comment on lib/tunarr/channel-service.ts:channelTunarrLinkStatus. Called out as
+        "incomplete" rather than silently rendering "Published" with nothing after it. */}
+    {isLinked && <div className="meta"><span>Channel {channelNumber ?? "—"}</span><span>·</span><span className="code">{channelId}</span><span>·</span>
+      {lastPublishedLabel ? <span className="badge complete">Published {lastPublishedLabel}</span> : <span className="badge pending">Publish incomplete — click Update Tunarr Channel to retry</span>}
+    </div>}
   </section>;
 }

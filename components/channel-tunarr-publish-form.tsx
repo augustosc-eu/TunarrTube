@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LoaderCircle, Radio, Sparkles } from "lucide-react";
+import { AlertTriangle, CheckCircle2, LoaderCircle, Radio, Sparkles } from "lucide-react";
 import { DEFAULT_SCHEDULE_STYLE, SCHEDULE_STYLE_OPTIONS, type ConceptPreset } from "@/components/ai-programming-presets";
 import { ConceptPresetPicker } from "@/components/concept-preset-picker";
 import { DirectorSchedulePreview, type DirectorPreview } from "@/components/director-schedule-preview";
@@ -12,7 +12,16 @@ type LinkStatus = {
   libraryFound: boolean;
   channelFound: boolean;
   channel?: { name: string; number: number };
+  // Null whenever `linked` is true but the last publish attempt never reached the end of
+  // publishChannelToTunarr (its programming/schedule write, or the guide-verification check after it,
+  // failed) -- see channelTunarrLinkStatus's comment. That's a distinct, actionable state from "linked
+  // and confirmed working" that the UI below calls out explicitly rather than only showing "Linked".
+  lastPublishedAt: string | null;
 };
+
+function formatPublishedAt(iso: string) {
+  return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
+}
 
 type Props = {
   channelId: string;
@@ -151,13 +160,25 @@ export function ChannelTunarrPublishForm({ channelId, initialProgrammingOrder, i
         <span className="channel-panel-icon"><Radio size={18} /></span>
         <div>
           <h2>Tunarr</h2>
-          {status?.linked ? (
-            <p>
-              Linked to Tunarr channel <strong>{status.channel?.name ?? status.channelFound ? "" : "(missing on Tunarr)"}</strong>
-              {status.channel ? ` (#${status.channel.number})` : ""}.
+          {!status?.linked ? (
+            <p>Not published yet. Every media item must be rendered with this channel&rsquo;s template first.</p>
+          ) : !status.channelFound ? (
+            <p className="publish-status publish-status-warning">
+              <AlertTriangle size={14} />
+              Linked to a Tunarr channel that no longer exists there (deleted or reset on Tunarr&rsquo;s side) — click Republish to recreate it.
+            </p>
+          ) : status.lastPublishedAt ? (
+            <p className="publish-status publish-status-ok">
+              <CheckCircle2 size={14} />
+              <span className="badge complete">Published</span>
+              {status.channel ? ` to Tunarr channel "${status.channel.name}" (#${status.channel.number})` : ""} — last confirmed {formatPublishedAt(status.lastPublishedAt)}.
             </p>
           ) : (
-            <p>Not published yet. Every media item must be rendered with this channel&rsquo;s template first.</p>
+            <p className="publish-status publish-status-warning">
+              <AlertTriangle size={14} />
+              <span className="badge pending">Publish incomplete</span>
+              {status.channel ? ` Tunarr channel "${status.channel.name}" (#${status.channel.number}) exists,` : " A Tunarr channel exists,"} but the last publish attempt never finished successfully — click Republish to try again.
+            </p>
           )}
         </div>
       </div>

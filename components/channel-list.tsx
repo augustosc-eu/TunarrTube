@@ -9,7 +9,7 @@ import { ViewToggle } from "@/components/view-toggle";
 import { BulkBar } from "@/components/bulk-bar";
 import { useViewMode } from "@/lib/hooks/use-view-mode";
 
-type Channel = { id: string; name: string; channelType: string; itemCount: number; published: boolean };
+type Channel = { id: string; name: string; channelType: string; itemCount: number; publishState: "unpublished" | "incomplete" | "published" };
 
 export function ChannelList({ channels }: { channels: Channel[] }) {
   const router = useRouter();

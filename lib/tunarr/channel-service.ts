@@ -199,19 +199,33 @@ export async function publishChannelToTunarr(channelId: string, signal?: AbortSi
       // in that state and free-spins trying to extend one that never advances -- see WRITE_TIMEOUT_MS's
       // comment in lib/tunarr/client.ts for the incident this was found from.
       if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- render this channel's items (or wait for Tunarr's scan to catch up) before publishing.", 422);
-      const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal });
-      await db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
+      const persistProgress = (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) =>
+        db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr } satisfies StoredProgrammingPlan) } }).then(() => undefined);
+      const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal, onProgress: persistProgress });
+      await persistProgress(built.tunarr);
       await client.replaceProgrammingWithRandomSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
     } else {
       programCount = ensured.plan.blocks.reduce((total, block) => total + block.itemIds.length, 0);
       if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- render this channel's items (or wait for Tunarr's scan to catch up) before publishing.", 422);
-      const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal });
-      await db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
+      const persistProgress = (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) =>
+        db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr } satisfies StoredProgrammingPlan) } }).then(() => undefined);
+      const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal, onProgress: persistProgress });
+      await persistProgress(built.tunarr);
       await client.replaceProgrammingWithSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
     }
   } else {
     await client.replaceProgramming(channelIdOnTunarr, lineup, signal);
     programCount = lineup.length;
+  }
+
+  // Ask Tunarr to actually compute this channel's near-term guide before calling the publish done --
+  // see verifyChannelGuide's own comment. A channel that would hang Tunarr's next background guide
+  // refresh (and take every other channel down with it) fails *this* request instead, cleanly and
+  // immediately, as a normal retryable job failure.
+  try {
+    await client.verifyChannelGuide(channelIdOnTunarr, signal);
+  } catch (error) {
+    throw new AppError("TUNARR_GUIDE_VERIFICATION_FAILED", `Tunarr accepted this channel's programming but could not compute its guide (${error instanceof Error ? error.message : String(error)}). Publishing was not completed to avoid leaving Tunarr in a state that could hang on its next guide refresh -- try again.`, 502);
   }
 
   const publishedAt = new Date();
@@ -237,7 +251,15 @@ export async function channelTunarrLinkStatus(channelId: string, signal?: AbortS
     libraryFound: Boolean(mediaSource?.libraries.some((item) => item.id === channel.tunarrLibraryId)),
     channelFound: Boolean(tunarrChannel),
     channel: tunarrChannel,
-    candidates: channels.map((item) => ({ id: item.id, name: item.name, number: item.number }))
+    candidates: channels.map((item) => ({ id: item.id, name: item.name, number: item.number })),
+    // `linked` alone only means a publish attempt got far enough to create/find the remote channel --
+    // tunarrChannelId is persisted right after that first step specifically so a retry can find it (see
+    // publishChannelToTunarr's own comment), well before the programming/schedule write or the guide
+    // verification that follows it. tunarrLastPublishedAt is only ever set at the very end, once, after
+    // that verification passes -- so its presence is what actually distinguishes "this channel is live
+    // and Tunarr can serve its guide" from "a publish was started but never finished" (the exact silent
+    // half-published state this field was added to stop being invisible in the UI).
+    lastPublishedAt: channel.tunarrLastPublishedAt
   };
 }
 

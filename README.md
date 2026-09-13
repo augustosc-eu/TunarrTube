@@ -381,6 +381,12 @@ TunarrTube never uploads, generates, or displays this file's contents — it onl
 
 Use **Reconcile** in the source's Tunarr integration panel to repair local links. **Unlink** only forgets TunarrTube's link; it does not delete the remote Tunarr objects.
 
+### A channel shows "Publish incomplete", or Tunarr stops responding after publishing an AI-scheduled channel
+
+"Publish incomplete" means a Tunarr channel was created or found, but the last publish attempt didn't finish successfully — its programming/schedule write, or TunarrTube's own after-the-fact check that Tunarr can actually compute the channel's guide, failed. Click **Republish**/**Update Tunarr Channel** to try again; TunarrTube reuses what already succeeded rather than starting over. Only a channel that has actually reached a verified publish shows a plain **Published** badge.
+
+This check exists because of a real Tunarr bug: a channel whose schedule ends up empty, or whose Custom Show references content Tunarr can no longer resolve, can send Tunarr's own guide-builder into an infinite loop that pegs a CPU core and makes Tunarr's entire server unresponsive for every channel — not just the one being published. TunarrTube now verifies each publish's guide before reporting success specifically to catch this as one failed publish attempt instead of a dead Tunarr instance, but it can't fix the underlying bug, which lives entirely in Tunarr itself (tracked upstream at [chrisbenincasa/tunarr#2087](https://github.com/chrisbenincasa/tunarr/issues/2087)). If Tunarr is already unresponsive, restarting it alone won't help — guide-building runs at startup, so it re-triggers the same hang. Recovery requires removing the offending channel directly from Tunarr's own database before restarting it; see the linked issue for the mechanism.
+
 ### Deleting a source does not remove its Tunarr channel or files
 
 Removing a source only removes its TunarrTube catalog entry. The source's media directory is left on disk, and TunarrTube never calls the Tunarr API to delete remote objects — any Tunarr channel or Local Media source built from that directory keeps existing in Tunarr, now orphaned from TunarrTube's perspective. Delete the channel in Tunarr yourself, and remove the files from the media directory yourself, if you want them gone too.

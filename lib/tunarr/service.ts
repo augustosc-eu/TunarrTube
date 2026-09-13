@@ -231,20 +231,35 @@ export async function publishSourceToTunarr(sourceId: string, input: PublishTuna
       // in that state and free-spins trying to extend one that never advances -- see WRITE_TIMEOUT_MS's
       // comment in lib/tunarr/client.ts for the incident this was found from.
       if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- ensure this source's videos are downloaded (or wait for Tunarr's scan to catch up) before publishing.", 422);
-      const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: input.channelName, previous: ensured.tunarr, channelId, signal });
-      await db.source.update({ where: { id: source.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
+      const persistProgress = (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) =>
+        db.source.update({ where: { id: source.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr } satisfies StoredProgrammingPlan) } }).then(() => undefined);
+      const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: input.channelName, previous: ensured.tunarr, channelId, signal, onProgress: persistProgress });
+      await persistProgress(built.tunarr);
       await client.replaceProgrammingWithRandomSchedule(channelId, built.programs, built.schedule, signal);
     } else {
       programCount = ensured.plan.blocks.reduce((total, block) => total + block.itemIds.length, 0);
       if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- ensure this source's videos are downloaded (or wait for Tunarr's scan to catch up) before publishing.", 422);
-      const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: input.channelName, previous: ensured.tunarr, channelId, signal });
-      await db.source.update({ where: { id: source.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr: built.tunarr } satisfies StoredProgrammingPlan) } });
+      const persistProgress = (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) =>
+        db.source.update({ where: { id: source.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr } satisfies StoredProgrammingPlan) } }).then(() => undefined);
+      const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: input.channelName, previous: ensured.tunarr, channelId, signal, onProgress: persistProgress });
+      await persistProgress(built.tunarr);
       await client.replaceProgrammingWithSchedule(channelId, built.programs, built.schedule, signal);
     }
   } else {
     await client.replaceProgramming(channelId, lineup, signal);
     programCount = lineup.length;
   }
+
+  // Ask Tunarr to actually compute this channel's near-term guide before calling the publish done --
+  // see verifyChannelGuide's own comment. A channel that would hang Tunarr's next background guide
+  // refresh (and take every other channel down with it) fails *this* request instead, cleanly and
+  // immediately, as a normal retryable job failure.
+  try {
+    await client.verifyChannelGuide(channelId, signal);
+  } catch (error) {
+    throw new AppError("TUNARR_GUIDE_VERIFICATION_FAILED", `Tunarr accepted this channel's programming but could not compute its guide (${error instanceof Error ? error.message : String(error)}). Publishing was not completed to avoid leaving Tunarr in a state that could hang on its next guide refresh -- try again.`, 502);
+  }
+
   const publishedAt = new Date();
   await db.source.update({ where: { id: source.id }, data: { tunarrChannelId: channelId, tunarrChannelNumber: number, tunarrLastPublishedAt: publishedAt, tunarrChannelName: input.channelName, tunarrRequestedChannelNumber: input.channelNumber ?? null, tunarrProgrammingOrder: input.programmingOrder } });
   await writeLog({ category: "tunarr", sourceId: source.id, message: `${existing ? "Updated" : "Created"} Tunarr channel ${input.channelName} (${number}) with ${programCount} program${programCount === 1 ? "" : "s"}.` });

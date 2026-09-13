@@ -69,6 +69,7 @@ describe("Channel Tunarr publish pipeline", () => {
         programmingPayload = JSON.parse(String(init?.body));
         return Response.json({});
       }
+      if (url.pathname.startsWith("/api/guide/channels/")) return Response.json([]);
       return Response.json({ message: `Unexpected ${method} ${url.pathname}` }, { status: 404 });
     }));
 
@@ -173,6 +174,7 @@ describe("Channel Tunarr publish pipeline", () => {
       if (url.pathname.endsWith("/programming") && method === "POST") {
         return failProgramming ? Response.json({ message: "simulated failure" }, { status: 500 }) : Response.json({});
       }
+      if (url.pathname.startsWith("/api/guide/channels/")) return Response.json([]);
       return Response.json({ message: `Unexpected ${method} ${url.pathname}` }, { status: 404 });
     }));
 

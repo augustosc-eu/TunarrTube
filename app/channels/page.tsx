@@ -15,7 +15,12 @@ export default async function ChannelsPage() {
       name: channel.name,
       channelType: channel.channelType,
       itemCount: channel._count.items,
-      published: Boolean(channel.tunarrChannelId)
+      // tunarrChannelId alone only means a publish attempt got as far as creating/finding the remote
+      // channel -- tunarrLastPublishedAt is set once, at the very end, only after the programming/
+      // schedule write and its guide-verification both succeed (see channelTunarrLinkStatus's comment
+      // in lib/tunarr/channel-service.ts). A channel can be linked without ever having finished a
+      // publish successfully, which "incomplete" surfaces instead of the misleading plain "Published".
+      publishState: channel.tunarrLastPublishedAt ? "published" as const : channel.tunarrChannelId ? "incomplete" as const : "unpublished" as const
     }))} />
   </>;
 }
