@@ -226,7 +226,11 @@ export async function syncSource(sourceId: string, signal?: AbortSignal) {
     // cancelled through automatic syncs, and a video downloadVideo() already recorded as permanently gone
     // (lib/downloads/service.ts) would otherwise get a fresh download job queued -- and fail again -- on
     // every single sync forever. Only the explicit retry action (lib/jobs/service.ts) brings either back.
-    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled", "unavailable"] } }, select: { videoId: true } });
+    // Also excludes by the shared Video.availability, not just this membership's own downloadStatus:
+    // Video is deduplicated across sources (unique on youtubeId), so a video already marked unavailable
+    // via one source's download attempt should stay excluded for every other source referencing the same
+    // video too, even for a membership whose own downloadStatus hasn't independently been marked yet.
+    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled", "unavailable"] }, video: { availability: { not: "unavailable" } } }, select: { videoId: true } });
     jobs.push(...fresh.map((item) => ({ type: "download", sourceId, videoId: item.videoId, payload: { target: "permanent" } })));
     if (fresh.length) {
       await db.sourceVideo.updateMany({
