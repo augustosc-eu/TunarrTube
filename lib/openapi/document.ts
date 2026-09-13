@@ -163,7 +163,7 @@ const pathMapping = { type: "object", required: ["ytarrPrefix", "tunarrPrefix"],
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
-    title: "TunarrTube API", version: "0.1.0", summary: "Control a local TunarrTube instance.",
+    title: "TunarrTube API", version: "0.2.0", summary: "Control a local TunarrTube instance.",
     description: "This API has no built-in authentication and can start downloads, change filesystem settings, and mutate Tunarr. Keep it on a trusted network or behind an authenticated reverse proxy or VPN."
   },
   servers: [{ url: "/", description: "The TunarrTube server that served this document." }],

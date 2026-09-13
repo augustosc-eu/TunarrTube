@@ -16,12 +16,22 @@ TunarrTube is a self-hosted, local-first companion for Tunarr. It discovers vide
 - Preserve playlist order and detect additions or removals during manual or scheduled syncs.
 - Choose permanent downloads, cache-on-first-play, or stream-on-demand per source.
 - Produce stable MP4 files with JSON and NFO metadata sidecars.
-- Create or update Tunarr Local Media sources and channels.
+- Create or update Tunarr Local Media sources and channels, with a check that Tunarr can actually serve the published guide before calling a publish successful (see **Known issues** below).
 - Curate a **Channel**: a hand-picked, ordered lineup of clips (from an already-downloaded video, a pasted YouTube URL, or a local folder) with a burned-in overlay (artist/title/album, or a custom HTML/CSS template you design), published as its own Tunarr channel.
+- Pick clips onto a Channel at scale with **Content selection**: AI (a free-text brief interpreted by your configured AI provider) or Smart/heuristic (no AI provider needed — freshness, spread across sources, and optional target length or per-source/artist grouping).
+- **AI Programming**: turn a Source or Channel into a real dayparts/weekly or endless-rotation schedule via Anthropic, OpenAI, or a locally installed Claude Code CLI (no API key needed for that path) — including the **AI Programming Director**, a natural-language preview-before-publish workflow, and ready-made concept presets as a starting point.
 - Translate media paths when TunarrTube and Tunarr use different host or container paths.
-- Monitor background work, cache usage, and sanitized logs from the web interface.
+- Monitor background work, cache usage, and sanitized logs from the web interface, with an explicit **Published**/**Publish incomplete** status per channel — see **Known issues**.
 - Recover interrupted jobs after a restart without deleting previously completed media.
 - Run natively on macOS, Linux, or Windows, or use the included Docker configuration.
+
+## Known issues
+
+- **A specific Tunarr bug can make Tunarr's entire server unresponsive after publishing.** TunarrTube verifies each publish's guide before reporting success and won't leave a channel showing **Published** unless that check passes — but it can't fix the underlying bug, which lives in Tunarr itself. See [chrisbenincasa/tunarr#2087](https://github.com/chrisbenincasa/tunarr/issues/2087) and ["A channel shows 'Publish incomplete'..."](#a-channel-shows-publish-incomplete-or-tunarr-stops-responding-after-publishing-an-ai-scheduled-channel) below if you hit it.
+- **Single instance only.** The job worker and scheduler keep their state in-process with no distributed locking — never run more than one TunarrTube process against the same SQLite database.
+- **A Tunarr channel can never stream a video live from YouTube**, in any playback mode — Tunarr's local-media scanner only reads real files on disk. See the FAQ entry below.
+- **Claude Code AI Programming uses your real Claude usage**, not a separate fee — see **Claude Code Integration** below before enabling it.
+- No login system — see the notice above.
 
 ## Screenshots
 
