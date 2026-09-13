@@ -18,13 +18,18 @@ CREATE TABLE "new_AppSettings" (
     "logRetentionDays" INTEGER NOT NULL DEFAULT 30,
     "defaultVideoQuality" TEXT NOT NULL DEFAULT 'best',
     "jobsPaused" BOOLEAN NOT NULL DEFAULT false,
+    "musicbrainzContactEmail" TEXT,
     "ytdlpCookiesPath" TEXT,
+    "metadataMusicbrainzEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "metadataItunesEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "metadataAutoApplyThreshold" INTEGER NOT NULL DEFAULT 80,
+    "aiProvider" TEXT NOT NULL DEFAULT 'auto',
     "defaultNamingScheme" TEXT NOT NULL DEFAULT 'id',
     "defaultFilenameTemplate" TEXT NOT NULL DEFAULT '{title}',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
-INSERT INTO "new_AppSettings" ("cacheMaxAgeDays", "cacheMaxMegabytes", "createdAt", "defaultVideoQuality", "id", "jobsPaused", "logRetentionDays", "mediaBaseDirectory", "tunarrUrl", "updatedAt", "ytdlpCookiesPath") SELECT "cacheMaxAgeDays", "cacheMaxMegabytes", "createdAt", "defaultVideoQuality", "id", "jobsPaused", "logRetentionDays", "mediaBaseDirectory", "tunarrUrl", "updatedAt", "ytdlpCookiesPath" FROM "AppSettings";
+INSERT INTO "new_AppSettings" ("aiProvider", "cacheMaxAgeDays", "cacheMaxMegabytes", "createdAt", "defaultVideoQuality", "id", "jobsPaused", "logRetentionDays", "mediaBaseDirectory", "metadataAutoApplyThreshold", "metadataItunesEnabled", "metadataMusicbrainzEnabled", "musicbrainzContactEmail", "tunarrUrl", "updatedAt", "ytdlpCookiesPath") SELECT "aiProvider", "cacheMaxAgeDays", "cacheMaxMegabytes", "createdAt", "defaultVideoQuality", "id", "jobsPaused", "logRetentionDays", "mediaBaseDirectory", "metadataAutoApplyThreshold", "metadataItunesEnabled", "metadataMusicbrainzEnabled", "musicbrainzContactEmail", "tunarrUrl", "updatedAt", "ytdlpCookiesPath" FROM "AppSettings";
 DROP TABLE "AppSettings";
 ALTER TABLE "new_AppSettings" RENAME TO "AppSettings";
 PRAGMA foreign_keys=ON;

@@ -1,64 +1,51 @@
-# TunarrTube v0.1.0
+# TunarrTube Extended v0.2.0
 
-Initial public pre-release of TunarrTube, a self-hosted companion that turns public YouTube videos, playlists, and channels into a local media library and publishes them as channels in [Tunarr](https://tunarr.com).
+A major feature release on top of v0.1.0: a whole second publishing surface (curated, overlay-rendered **Channels**), AI-driven scheduling across three providers, and a set of reliability fixes for Tunarr publishing found and closed out during real-world use — including one bug in Tunarr itself, reported upstream.
 
 > [!IMPORTANT]
-> This is pre-1.0 software intended for one trusted operator. TunarrTube has no authentication or authorization layer. Keep it on localhost or behind an authenticated reverse proxy or VPN, and back up its SQLite database and media directory before upgrading.
+> This is still pre-1.0 software intended for one trusted operator. TunarrTube has no authentication or authorization layer. Keep it on localhost or behind an authenticated reverse proxy or VPN, and back up its SQLite database and media directory before upgrading.
 
 ## Highlights
 
-- Import individual YouTube videos, playlists, and channels.
-- Select Videos, Shorts, archived Live streams, or combined channel feeds.
-- Synchronize sources manually or on a configurable schedule.
-- Choose permanent download, cache-on-first-play, or stream-on-demand behavior per source.
-- Publish downloaded media to Tunarr as Local Media and create or update channel lineups.
-- Run natively on macOS, Linux, or Windows, or use the included Docker Compose stack.
+- **Channels**: hand-pick clips into a curated, ordered lineup and burn in a title/artist/album overlay (or a custom HTML/CSS template you design visually), published as its own Tunarr channel — alongside, not instead of, a Source's own 1:1 Tunarr channel.
+- **AI Programming**: turn a Source or Channel into a real dayparts/weekly or endless-rotation schedule, via Anthropic, OpenAI, or a locally installed **Claude Code CLI** — no API key needed for that path, using your existing Claude Code sign-in instead.
+- **Content selection at scale**: pick clips onto a Channel with an AI-interpreted free-text brief, or with **Smart** heuristic selection (no AI provider required) — freshness, spread across sources, target clip length, or grouped-by-source/artist blocks.
+- **AI Programming Director**: describe a schedule in plain language and preview exactly what the AI proposes before anything is saved or sent to Tunarr.
+- **Explicit publish status.** A channel now shows **Published** only once Tunarr has actually confirmed it can serve that channel's guide — not just that a remote channel object exists. A publish that didn't finish shows **Publish incomplete** instead of silently looking the same as a working one.
+- **A real Tunarr bug found and reported.** A channel whose schedule ends up empty, or whose programming references content Tunarr can no longer resolve, could send Tunarr's own guide-builder into an infinite loop — pegging a CPU core and making Tunarr's entire server unresponsive for every channel, not just the broken one, even across restarts. TunarrTube now verifies each publish's guide before reporting success, containing this to one failed, retryable publish instead of a dead Tunarr instance. See **Known issues** below.
 
-## YouTube library management
+## Channels (new)
 
-- Analyze public HTTPS YouTube URLs with `yt-dlp` before creating a source.
-- Preserve playlist ordering and support configurable history limits for large channels.
-- Enrich videos with descriptions, durations, upload dates, thumbnails, and availability information in the background.
-- Detect newly added and missing source memberships without deleting previously completed downloads.
-- Keep one canonical video record when the same YouTube video belongs to multiple sources.
+- Curate a lineup from an already-downloaded video, a pasted YouTube URL (downloaded through an automatically created companion Source), or a scanned local folder.
+- Design an overlay visually — text bound to clip metadata, static PNG/GIF images (logo bugs) — or start from the built-in "Music Video Lower Third" template.
+- Each clip's artist is filled in automatically where possible (YouTube's own official-music tags, or a background MusicBrainz/iTunes lookup only applied above a confidence threshold you control), editable and searchable by hand.
+- Render, preview inline, and publish as an independent Tunarr channel, sharing TunarrTube's existing download/job pipeline rather than a separate one.
 
-## Playback and storage
+## AI Programming
 
-- **Permanent download** queues every discovered video and stores a stable local MP4.
-- **Cache on first play** downloads into a shared, size- and age-limited cache.
-- **Stream on demand** proxies a short-lived YouTube media URL without retaining the video.
-- Generate JSON and NFO sidecars so Tunarr can display useful program metadata.
-- Reuse existing files with hardlinks when possible, falling back to copies across filesystems.
-- Write downloads and metadata atomically using temporary paths followed by rename.
-- Protect pinned, actively playing, and Tunarr-linked cache assets from eviction.
+- Dayparts (daily or weekly, fixed time slots) or endless rotation (weighted, with per-group cooldowns), for both Sources and Channels.
+- Three providers: Anthropic, OpenAI, or a local **Claude Code CLI** — enable it in Settings → AI Assistant with no API key at all, using your existing Claude Code authentication. Uses your real Claude usage, not a separate fee; see the README's Claude Code Integration section before enabling it.
+- Ready-made **concept presets** (Balanced variety, Throwback/retro countdown, Late night chill, High energy/party) as an editable starting point for the instructions box.
+- The **AI Programming Director**: describe a schedule in plain language, preview the resolved clip titles/block timings/warnings, then apply — regenerating a schedule is a real, billed call, only triggered again when candidates or instructions actually changed since the last publish.
+- **Smart** heuristic content selection: a deterministic, no-AI-provider-required alternative that scores candidates by novelty, freshness, and duration fit.
 
-## Tunarr integration
+## Reliability fixes (Tunarr publishing)
 
-- Discover Tunarr API capabilities from its OpenAPI document before making changes.
-- Create or reuse a Local Media source for each TunarrTube source directory.
-- Create and update channel programming in playlist, oldest-first, newest-first, or random order.
-- Translate paths when TunarrTube and Tunarr see the same media under different native or container paths.
-- Reconcile links when a Tunarr channel or media source has been recreated.
-- Preserve remote Tunarr objects when unlinking or deleting a local source.
+Found through two real incidents publishing an AI-scheduled channel, where Tunarr's own guide-builder hung the entire Tunarr server:
+
+- `verifyChannelGuide` — every publish now asks Tunarr to actually compute the channel's near-term guide, under TunarrTube's own bounded timeout, before reporting success. A channel that would have hung Tunarr's background guide refresh now fails cleanly as one retryable job instead.
+- Custom Show creation/update timeouts raised from 15s to 60s, and progress is now persisted incrementally as each one succeeds — a publish that fails partway through several sequential writes no longer recreates everything from scratch on retry, and no longer piles up orphaned duplicate objects in Tunarr.
+- A schedule that resolves to zero programs is now rejected before ever reaching Tunarr, on both the manual and AI-scheduled paths.
+- `tunarrLastPublishedAt`, not the earlier-persisted `tunarrChannelId`, is now the "successfully published" signal shown in the UI — see **Explicit publish status** above.
+- **A genuine bug in Tunarr itself was found, isolated, and reported upstream**: [chrisbenincasa/tunarr#2087](https://github.com/chrisbenincasa/tunarr/issues/2087), cross-referencing the maintainer-acknowledged architectural gap in [#1962](https://github.com/chrisbenincasa/tunarr/issues/1962) and the cascade-delete mechanism in [#1973](https://github.com/chrisbenincasa/tunarr/issues/1973). TunarrTube's fixes above contain the damage; they don't fix Tunarr's own code.
 
 ## Operations and interface
 
-- Dashboard views for sources, videos, downloads, and recent activity.
-- Persistent background queue for metadata, thumbnails, downloads, synchronization, cache work, and Tunarr publishing.
-- Automatic recovery of interrupted jobs after application restart.
-- Cache usage controls with pin, unpin, evict, enforce-limit, and clear-evictable actions.
-- Sanitized operational logs that redact signed media URLs and cookie-related command arguments.
-- Light and dark themes with remembered browser preference.
-- Metadata repair for downloads created before NFO sidecars were available.
-
-## Deployment and security
-
-- Multi-stage Docker image containing Node.js, `yt-dlp`, and FFmpeg.
-- Optional Tunarr service in the included Compose profile.
-- Loopback-only default port bindings for both native production and Docker deployments.
-- Non-root Docker runtime with dropped Linux capabilities and `no-new-privileges`.
-- Cross-site protection for state-changing API requests and baseline browser security headers.
-- Automated tests, TypeScript checking, production builds, and dependency updates through GitHub Actions and Dependabot.
+- Persistent job dedup is now database-enforced (a unique, nullable `activeKey`), removing an earlier find-then-create race; a dedicated download limiter serializes concurrent media fetches across independent callers.
+- Job cancellation and history handling fixes; `channel_publish` jobs correctly retain their `channelId` across retries.
+- Grid/list view toggle, remembered per view, for Channels and other list pages.
+- yt-dlp binary update handling now tracks and reports version changes.
+- Cleaner YouTube video title parsing (artist/title splitting, noise-annotation stripping) for videos without official metadata.
 
 ## Install
 
@@ -76,24 +63,20 @@ npm run build
 npm start
 ```
 
-See the [README](README.md) for operating-system instructions, Docker storage, path mappings, and external Tunarr configurations.
+See the [README](README.md) for operating-system instructions, Docker storage, path mappings, external Tunarr configurations, and the full Channels/AI Programming walkthroughs.
 
 ## Compatibility notes
 
+- No breaking schema changes since v0.1.0 — all new `Channel`/`Source` columns are additive and nullable; existing installations pick up new features without any manual migration step beyond the normal `prisma migrate deploy` already run on startup.
 - Existing `YTARR_*` environment variables remain supported as legacy aliases; new installations should use `TUNARRTUBE_*` names.
-- The existing `ytarr-config` and `ytarr-media` Docker volume names are intentionally retained to avoid disconnecting upgrades from stored data.
-- The SQLite filename remains `ytarr.db` for the same compatibility reason.
-- Only one TunarrTube process may use a given SQLite database. The job worker and scheduler do not provide distributed locking.
+- The existing `ytarr-config`/`ytarr-media` Docker volume names and the `ytarr.db` SQLite filename are unchanged, for the same reason as v0.1.0: upgrading in place should never disconnect an installation from its stored data.
+- Only one TunarrTube process may use a given SQLite database — still true, and now also true of test runs: `npm test` uses its own dedicated `ytarr.test.db`, never the dev database, as of this release.
 
-## Known limitations
+## Known issues
 
-- Public YouTube URLs only; cookies, account credentials, private media, and authenticated age-restricted extraction are unsupported.
-- TunarrTube has no built-in user accounts, authentication, authorization, or TLS termination.
-- YouTube extraction can break when YouTube changes its site behavior; keeping `yt-dlp` current is essential.
-- Publishing requires Tunarr to read the same completed media files, either at the same path or through an explicit path mapping.
-- At least one video must be downloaded before a permanent-download source can be published to Tunarr.
-- The SQLite-backed worker supports a single application instance, not a replicated deployment.
+- **Tunarr's own guide-builder can hang its entire server** in a way TunarrTube can only detect and contain, not fix — see the Reliability fixes section above and [chrisbenincasa/tunarr#2087](https://github.com/chrisbenincasa/tunarr/issues/2087). If Tunarr is already unresponsive, restarting it alone won't help (guide-building runs at startup); see the README's Troubleshooting section for recovery.
+- All v0.1.0 limitations still apply: public YouTube URLs only (no cookies/account credentials/private media beyond the opt-in, file-path-only cookies setting); no built-in authentication, authorization, or TLS termination; a Tunarr channel can never stream a video live from YouTube in any playback mode (Tunarr's local-media scanner only reads real files on disk); the SQLite-backed worker supports a single application instance, not a replicated deployment.
 
 ## Legal
 
-TunarrTube is not affiliated with or endorsed by YouTube or Tunarr. Users are responsible for ensuring that downloading or streaming media complies with applicable law, platform terms, and content-owner rights. The MIT license covers TunarrTube's source code, not downloaded media.
+TunarrTube is not affiliated with or endorsed by YouTube, Tunarr, or Anthropic. Users are responsible for ensuring that downloading or streaming media complies with applicable law, platform terms, and content-owner rights. The MIT license covers TunarrTube's source code, not downloaded media.

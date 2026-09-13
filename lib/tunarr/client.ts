@@ -7,19 +7,88 @@ export type TunarrLibrary = { id: string; name: string; mediaType: string; exter
 export type TunarrMediaSource = { id: string; name: string; type: string; paths?: string[]; libraries: TunarrLibrary[] };
 export type TunarrChannel = { id: string; name: string; number: number; [key: string]: unknown };
 export type TunarrProgram = { type: "content"; id: string; duration: number; program?: { externalId?: string; [key: string]: unknown } };
+export type TunarrCustomShow = { id: string; name: string; contentCount: number; totalDuration: number };
+
+// A Tunarr "time" schedule slot backed by a Custom Show -- see lib/programming/schedule-builder.ts.
+// Tunarr's slot union also has movie/show/flex/redirect/filler/smart-collection variants (see
+// types/src/api/CommonSlots.ts in the Tunarr source); this app only ever constructs custom-show slots,
+// so the other variants aren't modeled here.
+export type TunarrCustomShowSlot = {
+  id: string; // uuid, stable across republishes so a later publish updates this slot in place
+  type: "custom-show";
+  customShowId: string;
+  order: "next" | "shuffle" | "ordered_shuffle" | "alphanumeric" | "chronological";
+  direction?: "asc" | "desc";
+  startTime: number; // ms offset from the period start (midnight for "day", Monday 00:00 for "week")
+};
+
+export type TunarrTimeSlotSchedule = {
+  type: "time";
+  flexPreference: "distribute" | "end";
+  latenessMs: number;
+  maxDays: number;
+  padMs: number;
+  period: "day" | "week";
+  slots: TunarrCustomShowSlot[];
+  timeZoneOffset: number;
+  startTomorrow?: boolean;
+};
+
+// A Tunarr "random" schedule slot backed by a Custom Show -- the counterpart to TunarrCustomShowSlot
+// for endless, weighted/cooldown-based rotation instead of fixed daily start times. See
+// lib/programming/schedule-builder.ts:buildTunarrRotationSchedule.
+export type TunarrRandomCustomShowSlot = {
+  id: string; // uuid, stable across republishes so a later publish updates this slot in place
+  type: "custom-show";
+  customShowId: string;
+  order: "next" | "shuffle" | "ordered_shuffle" | "alphanumeric" | "chronological";
+  direction?: "asc" | "desc";
+  weight: number;
+  cooldownMs: number;
+  durationSpec: { type: "dynamic"; programCount: number } | { type: "fixed"; durationMs: number };
+};
+
+export type TunarrRandomSlotSchedule = {
+  type: "random";
+  flexPreference: "distribute" | "end";
+  maxDays: number;
+  padMs: number;
+  padStyle: "slot" | "episode";
+  slots: TunarrRandomCustomShowSlot[];
+  timeZoneOffset?: number;
+  randomDistribution: "uniform" | "weighted" | "none";
+  periodMs?: number;
+  lockWeights: boolean;
+};
+
+// One entry from a materialized lineup, returned by both the schedule-time-slots/schedule-slots
+// preview endpoints and (indirectly) what gets persisted -- deliberately loose (only the fields
+// lib/programming/schedule-builder.ts's dry-run validation actually inspects) rather than a full port
+// of Tunarr's CondensedChannelProgram union.
+export type TunarrMaterializedLineupEntry = { type: string; duration: number | null; customShowId?: string };
 
 export type TunarrCapabilities = {
   localMedia: boolean;
   channelCreate: boolean;
   channelUpdate: boolean;
   programming: boolean;
+  aiScheduling: boolean;
 };
 
 const REQUIRED_OPERATIONS = {
   localMedia: [["/api/media-sources", "get"], ["/api/media-sources", "post"], ["/api/media-sources/{id}/libraries/{libraryId}/scan", "post"], ["/api/media-sources/{mediaSourceId}/{libraryId}/status", "get"], ["/api/media-libraries/{libraryId}/programs", "get"]],
   channelCreate: [["/api/channels", "get"], ["/api/channels", "post"], ["/api/transcode_configs", "get"]],
   channelUpdate: [["/api/channels/{id}", "put"]],
-  programming: [["/api/channels/{id}/programming", "post"]]
+  programming: [["/api/channels/{id}/programming", "post"]],
+  // Only required when programmingOrder/aiProvider actually selects AI scheduling (checked separately
+  // in lib/tunarr/service.ts / lib/tunarr/channel-service.ts, not folded into the base "programming"
+  // requirement above, so a Tunarr server without Custom Shows can still publish ordinary lineups). The
+  // schedule-time-slots/schedule-slots preview endpoints are required too -- lib/programming/
+  // schedule-builder.ts dry-runs every AI-generated schedule through them before persisting.
+  aiScheduling: [
+    ["/api/custom-shows", "get"], ["/api/custom-shows", "post"], ["/api/custom-shows/{id}", "put"],
+    ["/api/channels/{channelId}/schedule-time-slots", "post"], ["/api/channels/{channelId}/schedule-slots", "post"]
+  ]
 } as const;
 
 function object(value: unknown): JsonObject | null {
@@ -32,12 +101,31 @@ function errorText(value: unknown) {
   return typeof candidate?.message === "string" ? candidate.message : "Tunarr returned an unexpected response.";
 }
 
+// Applied to the calls that replace a channel's live programming (create/update the channel itself,
+// then hand it a new lineup or schedule): observed once in the wild leaving a channel's remote lineup
+// empty -- Tunarr's request handler doesn't appear to treat "clear the old programming, write the new
+// programming" as one atomic step, so a client-side abort landing between those two halves (the default
+// 15s budget below is tight for a channel with a large lineup, or a Tunarr instance already under load)
+// can leave the channel published with zero programs. Tunarr then can't compute a real end time for that
+// channel's guide and free-spins trying to extend one that never advances, pegging its CPU and taking the
+// whole server down for every other channel too -- see the incident this timeout was widened after.
+// Giving these specific calls more room to finish doesn't fix that Tunarr-side atomicity gap (out of
+// reach here -- Tunarr is a separate app), but it does make TunarrTube less likely to be the one that
+// interrupts the request mid-write.
+const WRITE_TIMEOUT_MS = 60_000;
+
+// A healthy guide computation is near-instant (a couple of custom shows and a schedule, not a heavy
+// query) -- the failure this guards against (see verifyChannelGuide below) is an unbounded loop, not a
+// slow-but-finishing one, so this stays well under WRITE_TIMEOUT_MS: the point is to fail fast and
+// clearly rather than tie up a job attempt waiting out a hang that was never going to resolve.
+const GUIDE_VERIFY_TIMEOUT_MS = 20_000;
+
 export class TunarrApiClient {
   constructor(private readonly baseUrl: string, private readonly timeoutMs = 15_000) {}
 
-  private async request(path: string, init?: RequestInit, signal?: AbortSignal) {
+  private async request(path: string, init?: RequestInit, signal?: AbortSignal, timeoutMs = this.timeoutMs) {
     signal?.throwIfAborted();
-    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: Response;
     try {
@@ -111,7 +199,20 @@ export class TunarrApiClient {
     const body = object(await this.request("/api/media-sources", {
       method: "POST",
       body: JSON.stringify({ name, type: "local", mediaType: "other_videos", paths: [mediaDirectory], pathReplacements: [] })
-    }, signal));
+    }, signal, WRITE_TIMEOUT_MS));
+    if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a media source but did not return its ID.", 502);
+    return body.id;
+  }
+
+  // Sibling to createLocalMediaSource, not a change to it: the channel-generator publish path
+  // (lib/tunarr/channel-service.ts) needs Tunarr's "music_videos" scanner (which reads the Kodi
+  // <musicvideo> NFOs this app writes for rendered channel output, lib/sidecar/nfo.ts) instead of
+  // the "other_videos" scanner Sources use.
+  async createMusicVideoLocalMediaSource(name: string, mediaDirectory: string, signal?: AbortSignal) {
+    const body = object(await this.request("/api/media-sources", {
+      method: "POST",
+      body: JSON.stringify({ name, type: "local", mediaType: "music_videos", paths: [mediaDirectory], pathReplacements: [] })
+    }, signal, WRITE_TIMEOUT_MS));
     if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a media source but did not return its ID.", 502);
     return body.id;
   }
@@ -168,6 +269,28 @@ export class TunarrApiClient {
     });
   }
 
+  // Asks Tunarr to actually compute the near-term guide for one channel, right after publishing it --
+  // not because the caller wants the guide data, but because this is the exact computation that was
+  // observed hanging Tunarr's whole server: a channel whose schedule references a Custom Show program
+  // that Tunarr's guide-builder can't resolve sends it into an unbounded loop (see the incident notes on
+  // WRITE_TIMEOUT_MS above), and that loop runs for *every* channel during Tunarr's own periodic guide
+  // refresh -- one broken channel takes the entire server down for everyone, discovered only much later.
+  // Running the same computation here, under our own bounded timeout, right after publish, means a
+  // channel that would trigger that loop fails *this* request clearly and immediately (a normal,
+  // retryable job failure) instead of silently "succeeding" and taking Tunarr down for every channel on
+  // its next background refresh cycle. A short near-term window is enough -- if Tunarr can compute the
+  // next couple of hours without hanging, the schedule resolves the way the loop needs it to.
+  async verifyChannelGuide(channelId: string, signal?: AbortSignal) {
+    const from = new Date();
+    const to = new Date(from.getTime() + 2 * 60 * 60_000);
+    await this.request(
+      `/api/guide/channels/${encodeURIComponent(channelId)}?dateFrom=${encodeURIComponent(from.toISOString())}&dateTo=${encodeURIComponent(to.toISOString())}`,
+      undefined,
+      signal,
+      GUIDE_VERIFY_TIMEOUT_MS
+    );
+  }
+
   async getDefaultTranscodeConfigId(signal?: AbortSignal) {
     const body = await this.request("/api/transcode_configs", undefined, signal);
     if (!Array.isArray(body)) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned invalid transcode configuration data.", 502);
@@ -178,19 +301,110 @@ export class TunarrApiClient {
   }
 
   async createChannel(channel: JsonObject, signal?: AbortSignal) {
-    const body = object(await this.request("/api/channels", { method: "POST", body: JSON.stringify({ type: "new", channel }) }, signal));
+    const body = object(await this.request("/api/channels", { method: "POST", body: JSON.stringify({ type: "new", channel }) }, signal, WRITE_TIMEOUT_MS));
     if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a channel but did not return its ID.", 502);
     return body as TunarrChannel;
   }
 
   async updateChannel(channelId: string, channel: JsonObject, signal?: AbortSignal) {
-    await this.request(`/api/channels/${encodeURIComponent(channelId)}`, { method: "PUT", body: JSON.stringify(channel) }, signal);
+    await this.request(`/api/channels/${encodeURIComponent(channelId)}`, { method: "PUT", body: JSON.stringify(channel) }, signal, WRITE_TIMEOUT_MS);
   }
 
   async replaceProgramming(channelId: string, lineup: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
     await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
       method: "POST",
       body: JSON.stringify({ type: "manual", lineup, append: false })
-    }, signal);
+    }, signal, WRITE_TIMEOUT_MS);
+  }
+
+  // AI-scheduled programming (lib/programming/schedule-builder.ts) posts a "time" lineup instead of a
+  // flat "manual" one -- Tunarr materializes the actual repeating lineup server-side from the schedule.
+  // `programs` is the pool the schema requires alongside the schedule; every clip this app schedules
+  // lives inside a Custom Show rather than the top-level pool, so this is always sent empty -- kept as
+  // a parameter (not hardcoded) in case a future slot type needs it populated.
+  async replaceProgrammingWithSchedule(channelId: string, programs: string[], schedule: TunarrTimeSlotSchedule, signal?: AbortSignal) {
+    await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
+      method: "POST",
+      body: JSON.stringify({ type: "time", programs, schedule })
+    }, signal, WRITE_TIMEOUT_MS);
+  }
+
+  async listCustomShows(signal?: AbortSignal): Promise<TunarrCustomShow[]> {
+    const body = await this.request("/api/custom-shows", undefined, signal);
+    if (!Array.isArray(body)) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned invalid custom show data.", 502);
+    return body.flatMap((item) => {
+      const value = object(item);
+      return value && typeof value.id === "string" && typeof value.name === "string"
+        ? [{ id: value.id, name: value.name, contentCount: Number(value.contentCount ?? 0), totalDuration: Number(value.totalDuration ?? 0) }]
+        : [];
+    });
+  }
+
+  // AI-scheduled publishes (lib/programming/schedule-builder.ts) call these once per programming
+  // group/block -- a channel with several groups fires several of these in one publish, each its own
+  // request. Same WRITE_TIMEOUT_MS as the channel/programming writes above, for the same reason: a
+  // client-side abort here doesn't reliably stop Tunarr's side from finishing the write moments later,
+  // it just stops TunarrTube from getting the resulting id back -- a later step in the same publish then
+  // has nothing to reference (or references a show Tunarr is still mid-creating), which is exactly what
+  // surfaced as Tunarr logging "Program in lineup with ID ... not found in database" on repeat.
+  async createCustomShow(name: string, programs: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
+    const body = object(await this.request("/api/custom-shows", {
+      method: "POST",
+      body: JSON.stringify({ name, programs, syncMediaSourceId: null, syncMediaSourceType: null, syncExternalPlaylistId: null })
+    }, signal, WRITE_TIMEOUT_MS));
+    if (typeof body?.id !== "string") throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr created a custom show but did not return its ID.", 502);
+    return body.id;
+  }
+
+  async updateCustomShow(id: string, name: string, programs: Array<{ type: "content"; id: string; duration: number }>, signal?: AbortSignal) {
+    await this.request(`/api/custom-shows/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, programs, enableSync: false })
+    }, signal, WRITE_TIMEOUT_MS);
+  }
+
+  // The "random" counterpart to replaceProgrammingWithSchedule -- see TunarrRandomSlotSchedule.
+  async replaceProgrammingWithRandomSchedule(channelId: string, programs: string[], schedule: TunarrRandomSlotSchedule, signal?: AbortSignal) {
+    await this.request(`/api/channels/${encodeURIComponent(channelId)}/programming`, {
+      method: "POST",
+      body: JSON.stringify({ type: "random", programs, schedule })
+    }, signal, WRITE_TIMEOUT_MS);
+  }
+
+  private parseMaterializedLineup(body: unknown): TunarrMaterializedLineupEntry[] {
+    const value = object(body);
+    const lineup = Array.isArray(value?.lineup) ? value.lineup : null;
+    if (!lineup) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned an invalid schedule preview.", 502);
+    return lineup.map((item) => {
+      const entry = object(item);
+      const duration = typeof entry?.duration === "number" && Number.isFinite(entry.duration) ? entry.duration : null;
+      return { type: typeof entry?.type === "string" ? entry.type : "unknown", duration, customShowId: typeof entry?.customShowId === "string" ? entry.customShowId : undefined };
+    });
+  }
+
+  // Dry-runs a "time" schedule: materializes what the lineup would actually look like without
+  // persisting anything. lib/programming/schedule-builder.ts uses this to catch a degenerate schedule
+  // (a null/non-finite duration, or a slot the materializer never actually reaches) before publishing
+  // it -- exactly the failure mode a padMs/flexPreference mismatch produced when this was first tested
+  // live against Tunarr 1.3.14.
+  async previewTimeSlotSchedule(channelId: string, schedule: TunarrTimeSlotSchedule, signal?: AbortSignal): Promise<TunarrMaterializedLineupEntry[]> {
+    const body = await this.request(`/api/channels/${encodeURIComponent(channelId)}/schedule-time-slots`, { method: "POST", body: JSON.stringify({ schedule }) }, signal);
+    return this.parseMaterializedLineup(body);
+  }
+
+  // The "random" counterpart to previewTimeSlotSchedule.
+  async previewRandomSlotSchedule(channelId: string, schedule: TunarrRandomSlotSchedule, signal?: AbortSignal): Promise<TunarrMaterializedLineupEntry[]> {
+    const body = await this.request(`/api/channels/${encodeURIComponent(channelId)}/schedule-slots`, { method: "POST", body: JSON.stringify({ schedule }) }, signal);
+    return this.parseMaterializedLineup(body);
+  }
+
+  // Reads back whatever schedule config is currently persisted on a channel (not a materialized
+  // lineup) -- null for a channel with no schedule (e.g. a plain manual lineup, or nothing published
+  // yet). Used for status/reconciliation, not by the publish flow itself.
+  async getMaterializedSchedule(channelId: string, signal?: AbortSignal): Promise<TunarrTimeSlotSchedule | TunarrRandomSlotSchedule | null> {
+    const body = object(await this.request(`/api/channels/${encodeURIComponent(channelId)}/schedule`, undefined, signal));
+    const schedule = object(body?.schedule);
+    if (!schedule || (schedule.type !== "time" && schedule.type !== "random")) return null;
+    return schedule as unknown as TunarrTimeSlotSchedule | TunarrRandomSlotSchedule;
   }
 }

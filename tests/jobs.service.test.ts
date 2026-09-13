@@ -11,12 +11,14 @@ vi.mock("@/lib/jobs/runner", async (importOriginal) => {
   return { ...actual, kickWorker: vi.fn() };
 });
 
-const { cancelJob, postponeJob, retryJob, stopJob } = await import("@/lib/jobs/service");
+const { cancelJob, getJobsStatus, postponeJob, retryJob, stopJob } = await import("@/lib/jobs/service");
 
 describe("job cancel/retry", () => {
   const cleanupSourceIds: string[] = [];
   const cleanupVideoIds: string[] = [];
   const cleanupJobIds: string[] = [];
+  const cleanupChannelIds: string[] = [];
+  const cleanupTemplateIds: string[] = [];
 
   afterEach(async () => {
     // Source/Video deletion cascades to any Job row referencing them (see schema.prisma); jobs created
@@ -24,6 +26,8 @@ describe("job cancel/retry", () => {
     await db.source.deleteMany({ where: { id: { in: cleanupSourceIds.splice(0) } } });
     await db.video.deleteMany({ where: { id: { in: cleanupVideoIds.splice(0) } } });
     await db.job.deleteMany({ where: { id: { in: cleanupJobIds.splice(0) } } });
+    await db.channel.deleteMany({ where: { id: { in: cleanupChannelIds.splice(0) } } });
+    await db.overlayTemplate.deleteMany({ where: { id: { in: cleanupTemplateIds.splice(0) } } });
   });
 
   async function makeSourceVideo(downloadStatus = "queued") {
@@ -97,6 +101,27 @@ describe("job cancel/retry", () => {
     await expect(retryJob(job.id)).rejects.toMatchObject({ code: "JOB_NOT_RETRYABLE" });
   });
 
+  it("re-queues a failed channel_publish job without dropping its channelId", async () => {
+    // channel_publish/render/ingest_local_scan jobs are keyed by channelId/mediaItemId, not
+    // sourceId/videoId -- routing their retry through the source/video-only enqueueUniqueJob() (as
+    // opposed to enqueueChannelJob()) would silently produce a job with every id column null, which
+    // handleJob() (lib/jobs/runner.ts) immediately fails as "Invalid channel_publish job payload."
+    const template = await db.overlayTemplate.create({
+      data: { name: "Job test template", htmlTemplate: "<div></div>", bindingsJson: "[]", layersJson: "[]" }
+    });
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const channel = await db.channel.create({
+      data: { name: "Job test channel", slug: `job-test-channel-${suffix}`, templateId: template.id, storageDirectory: `/tmp/ytarr-job-test-channel-${suffix}` }
+    });
+    cleanupTemplateIds.push(template.id);
+    cleanupChannelIds.push(channel.id);
+    const job = await db.job.create({ data: { type: "channel_publish", channelId: channel.id, status: "failed", attempts: 3, error: "boom" } });
+
+    const fresh = await retryJob(job.id);
+    cleanupJobIds.push(job.id, fresh.id);
+    expect(fresh).toMatchObject({ type: "channel_publish", channelId: channel.id, status: "queued", attempts: 0 });
+  });
+
   it("postpones a queued job by pushing runAfter out without touching status or attempts", async () => {
     const job = await db.job.create({ data: { type: "sync", status: "queued", attempts: 1 } });
     cleanupJobIds.push(job.id);
@@ -147,5 +172,17 @@ describe("job cancel/retry", () => {
     expect(stopSpy).toHaveBeenCalledWith(job.id);
     expect(await db.job.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({ status: "cancelled", finishedAt: expect.any(Date) });
     stopSpy.mockRestore();
+  });
+
+  it("returns lightweight status for several jobs in one query", async () => {
+    const first = await db.job.create({ data: { type: "sync", status: "queued" } });
+    const second = await db.job.create({ data: { type: "sync", status: "failed", error: "boom", finishedAt: new Date() } });
+    cleanupJobIds.push(first.id, second.id);
+
+    const statuses = await getJobsStatus([first.id, second.id]);
+    expect(statuses).toHaveLength(2);
+    expect(statuses.find((job) => job.id === first.id)).toMatchObject({ status: "queued", error: null });
+    expect(statuses.find((job) => job.id === second.id)).toMatchObject({ status: "failed", error: "boom" });
+    expect(statuses[0]).not.toHaveProperty("payloadJson");
   });
 });

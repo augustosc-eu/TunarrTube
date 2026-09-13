@@ -6,6 +6,8 @@ type LogInput = {
   message: string;
   sourceId?: string;
   videoId?: string;
+  channelId?: string;
+  mediaItemId?: string;
   details?: unknown;
 };
 
@@ -23,6 +25,8 @@ export async function writeLog(input: LogInput) {
       message: sanitizeLogValue(input.message),
       sourceId: input.sourceId,
       videoId: input.videoId,
+      channelId: input.channelId,
+      mediaItemId: input.mediaItemId,
       details: input.details ? sanitizeLogValue(JSON.stringify(input.details)) : undefined
     }
   });

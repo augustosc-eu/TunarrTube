@@ -9,6 +9,12 @@ type RunOptions = {
   timeoutMs?: number;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  // Written to the child's stdin and closed immediately -- lets a caller (lib/ai/claude-code.ts) pass
+  // large text without putting it on argv, where it would count against the OS's process argument-size
+  // limit (a single argv string is capped well below 1MB on Linux, unlike stdin which has no such cap).
+  // Omitted (the default) means stdin is closed immediately (`stdio: "ignore"`), same as before this
+  // option existed.
+  stdin?: string;
 };
 
 export type ProcessResult = { stdout: string; stderr: string; code: number };
@@ -22,8 +28,11 @@ export async function runProcess(program: string, args: string[], options: RunOp
     const child = spawn(program, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: [options.stdin !== undefined ? "pipe" : "ignore", "pipe", "pipe"]
     });
+    if (options.stdin !== undefined) {
+      child.stdin!.end(options.stdin);
+    }
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -47,12 +56,15 @@ export async function runProcess(program: string, args: string[], options: RunOp
 
     if (options.signal?.aborted) abort();
     options.signal?.addEventListener("abort", abort, { once: true });
-    child.stdout.on("data", (data: Buffer) => {
+    // Non-null: stdio[1]/[2] are always the literal "pipe" above, but TypeScript can no longer narrow
+    // spawn()'s overload to a non-null ChildProcessByStdio once stdio[0] is a runtime-computed value
+    // (the stdin ternary) rather than every element being a literal.
+    child.stdout!.on("data", (data: Buffer) => {
       const chunk = data.toString();
       if (stdout.length + chunk.length <= maxOutput) stdout += chunk;
       options.onStdout?.(chunk);
     });
-    child.stderr.on("data", (data: Buffer) => {
+    child.stderr!.on("data", (data: Buffer) => {
       const chunk = data.toString();
       if (stderr.length + chunk.length <= maxOutput) stderr += chunk;
       options.onStderr?.(chunk);

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ListChecks, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Square, X } from "lucide-react";
+import { BulkBar } from "@/components/bulk-bar";
 
 type Job = {
   id: string;
@@ -20,7 +21,10 @@ type Job = {
   video: { id: string; title: string; youtubeId: string } | null;
 };
 
-type QueueData = { paused: boolean; running: Job[]; queued: Job[]; recent: Job[] };
+type QueueData = {
+  paused: boolean; running: Job[]; queued: Job[]; recent: Job[];
+  queuedPagination: { page: number; pageSize: number; total: number; totalPages: number };
+};
 type JobAction = "cancel" | "retry" | "stop" | "postpone";
 
 // Quick presets for "set aside for later" -- postponeJob() (lib/jobs/service.ts) accepts any minute
@@ -64,7 +68,11 @@ function Target({ job }: { job: Job }) {
   return <span className="muted">—</span>;
 }
 
-function Detail({ job, now }: { job: Job; now: number }) {
+function Detail({ job, now }: { job: Job; now: number | null }) {
+  // `now` is null until the client has mounted (see JobQueue) so this relative-time text is never
+  // computed from the server's clock during SSR, which would disagree with the client's clock on
+  // hydration and trigger a hydration mismatch.
+  if (now === null) return <span className="muted">—</span>;
   if (job.status === "running") return <span>Running for {formatDuration(now - new Date(job.startedAt ?? job.createdAt).getTime())}</span>;
   if (job.status === "queued") {
     const runAfter = new Date(job.runAfter).getTime();
@@ -107,33 +115,58 @@ function Actions({ job, busy, onAction }: { job: Job; busy: boolean; onAction: (
   return <span className="muted">—</span>;
 }
 
-function JobRows({ jobs, now, busyId, onAction }: { jobs: Job[]; now: number; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void }) {
+function JobRows({ jobs, now, busyId, onAction, selected, onToggle, eligible }: { jobs: Job[]; now: number | null; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void; selected?: Set<string>; onToggle?: (id: string) => void; eligible?: (job: Job) => boolean }) {
   return <>{jobs.map((job) => <tr key={job.id}>
-    <td>{typeLabel(job.type)}</td>
-    <td className="title-cell">{job.source ? <Link href={`/sources/${job.source.id}`}><Target job={job} /></Link> : <Target job={job} />}</td>
-    <td><span className={`badge ${job.status}`}>{job.status}</span></td>
-    <td><Detail job={job} now={now} /></td>
-    <td><Actions job={job} busy={busyId === job.id} onAction={onAction} /></td>
+    {selected ? <td data-label="Select"><input type="checkbox" disabled={eligible ? !eligible(job) : false} checked={selected.has(job.id)} onChange={() => onToggle?.(job.id)} aria-label={`Select ${typeLabel(job.type)} job`} /></td> : null}
+    <td data-label="Job">{typeLabel(job.type)}</td>
+    <td className="title-cell" data-label="Target">{job.source ? <Link href={`/sources/${job.source.id}`}><Target job={job} /></Link> : <Target job={job} />}</td>
+    <td data-label="Status"><span className={`badge ${job.status}`}>{job.status}</span></td>
+    <td data-label="Detail"><Detail job={job} now={now} /></td>
+    <td data-label="Actions"><Actions job={job} busy={busyId === job.id} onAction={onAction} /></td>
   </tr>)}</>;
 }
 
-function Section({ title, jobs, now, busyId, onAction }: { title: string; jobs: Job[]; now: number; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void }) {
+function Section({ title, jobs, now, busyId, onAction, bulk, total }: {
+  title: string; jobs: Job[]; now: number | null; busyId: string | null; onAction: (job: Job, action: JobAction, postponeMinutes?: number) => void;
+  total?: number;
+  bulk?: { label: string; icon: React.ReactNode; eligible: (job: Job) => boolean; selected: Set<string>; onToggle: (id: string) => void; onSelectAll: (ids: string[]) => void; onClear: () => void; busy: boolean; onRun: () => void };
+}) {
   if (!jobs.length) return null;
-  return <><h2>{title} <span className="muted">({jobs.length})</span></h2><div className="table-wrap" style={{ marginBottom: 24 }}><table><thead><tr><th>Job</th><th>Target</th><th>Status</th><th>Detail</th><th>Actions</th></tr></thead><tbody><JobRows jobs={jobs} now={now} busyId={busyId} onAction={onAction} /></tbody></table></div></>;
+  const eligibleIds = bulk ? jobs.filter(bulk.eligible).map((job) => job.id) : [];
+  return <>
+    <h2>{title} <span className="muted">({total ?? jobs.length})</span></h2>
+    {bulk ? <BulkBar selected={bulk.selected.size} eligible={eligibleIds.length} total={jobs.length} busy={bulk.busy}
+      onSelectAll={() => bulk.onSelectAll(eligibleIds)} onClear={bulk.onClear}>
+      <button className="button secondary" disabled={bulk.busy} onClick={bulk.onRun}>{bulk.icon} {bulk.label} ({bulk.selected.size})</button>
+    </BulkBar> : null}
+    <div className="table-wrap responsive-table" style={{ marginBottom: 24 }}>
+      <table>
+        <thead><tr>{bulk ? <th /> : null}<th>Job</th><th>Target</th><th>Status</th><th>Detail</th><th>Actions</th></tr></thead>
+        <tbody><JobRows jobs={jobs} now={now} busyId={busyId} onAction={onAction} selected={bulk?.selected} onToggle={bulk?.onToggle} eligible={bulk?.eligible} /></tbody>
+      </table>
+    </div>
+  </>;
 }
 
 export function JobQueue({ initial }: { initial: QueueData }) {
   const [data, setData] = useState<QueueData>(initial);
-  const [now, setNow] = useState(() => Date.now());
+  // Starts null so the server render and the client's pre-hydration render agree; the mount effect
+  // below fills in the real clock once it's safe to diverge from the server (see Detail).
+  const [now, setNow] = useState<number | null>(null);
   const [stale, setStale] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pauseBusy, setPauseBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queuedSelected, setQueuedSelected] = useState<Set<string>>(new Set());
+  const [recentSelected, setRecentSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const mounted = useRef(true);
+  const queuedPage = useRef(initial.queuedPagination.page);
+  const queuedPageSize = useRef(initial.queuedPagination.pageSize);
 
-  const refresh = async () => {
+  const refresh = async (page = queuedPage.current) => {
     try {
-      const response = await fetch("/api/jobs", { cache: "no-store" });
+      const response = await fetch(`/api/jobs?queuedPage=${page}&pageSize=${queuedPageSize.current}`, { cache: "no-store" });
       if (!response.ok) throw new Error("refresh failed");
       const body = await response.json();
       if (mounted.current) { setData(body.data); setStale(false); }
@@ -144,10 +177,24 @@ export function JobQueue({ initial }: { initial: QueueData }) {
 
   useEffect(() => {
     mounted.current = true;
+    setNow(Date.now());
     const tick = setInterval(() => setNow(Date.now()), 1000);
-    const poll = setInterval(refresh, 3000);
-    return () => { mounted.current = false; clearInterval(tick); clearInterval(poll); };
+    let poll: ReturnType<typeof setTimeout>;
+    const pollQueue = async () => {
+      if (!document.hidden) await refresh();
+      poll = setTimeout(pollQueue, 3000);
+    };
+    poll = setTimeout(pollQueue, 3000);
+    const onVisibility = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { mounted.current = false; clearInterval(tick); clearTimeout(poll); document.removeEventListener("visibilitychange", onVisibility); };
   }, []);
+
+  async function changeQueuedPage(page: number) {
+    queuedPage.current = page;
+    setQueuedSelected(new Set());
+    await refresh(page);
+  }
 
   async function onAction(job: Job, action: JobAction, postponeMinutes?: number) {
     setBusyId(job.id); setError(null);
@@ -160,6 +207,23 @@ export function JobQueue({ initial }: { initial: QueueData }) {
       setError(caught instanceof Error ? caught.message : `Could not ${action} job`);
     } finally {
       if (mounted.current) setBusyId(null);
+    }
+  }
+
+  function toggleInSet(setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) {
+    setter((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
+
+  async function bulkAction(ids: Set<string>, action: JobAction, clear: () => void) {
+    setBulkBusy(true); setError(null);
+    try {
+      const results = await Promise.allSettled([...ids].map((id) => fetch(`/api/jobs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) })));
+      const failures = results.filter((result) => result.status === "rejected");
+      clear();
+      if (failures.length) setError(`${failures.length} job${failures.length === 1 ? "" : "s"} could not be ${action === "cancel" ? "cancelled" : "retried"}.`);
+      await refresh();
+    } finally {
+      if (mounted.current) setBulkBusy(false);
     }
   }
 
@@ -177,7 +241,7 @@ export function JobQueue({ initial }: { initial: QueueData }) {
     }
   }
 
-  const isEmpty = !data.running.length && !data.queued.length && !data.recent.length;
+  const isEmpty = !data.running.length && data.queuedPagination.total === 0 && !data.recent.length;
 
   return <>
     <div className="toolbar">
@@ -194,8 +258,23 @@ export function JobQueue({ initial }: { initial: QueueData }) {
       ? <div className="empty"><ListChecks size={32} /><h2>No jobs</h2><p>Metadata, download, sync, and other background work will appear here while it runs.</p></div>
       : <>
         <Section title="Running" jobs={data.running} now={now} busyId={busyId} onAction={onAction} />
-        <Section title="Queued" jobs={data.queued} now={now} busyId={busyId} onAction={onAction} />
-        <Section title="Recent" jobs={data.recent} now={now} busyId={busyId} onAction={onAction} />
+        <Section title="Queued" jobs={data.queued} total={data.queuedPagination.total} now={now} busyId={busyId} onAction={onAction} bulk={{
+          label: "Cancel selected", icon: <X size={14} />, eligible: () => true,
+          selected: queuedSelected, onToggle: (id) => toggleInSet(setQueuedSelected, id),
+          onSelectAll: (ids) => setQueuedSelected(new Set(ids)), onClear: () => setQueuedSelected(new Set()),
+          busy: bulkBusy, onRun: () => bulkAction(queuedSelected, "cancel", () => setQueuedSelected(new Set()))
+        }} />
+        {data.queuedPagination.page > 1 || data.queuedPagination.totalPages > 1 ? <div className="toolbar" style={{ marginTop: -12, marginBottom: 24 }}>
+          <button className="button secondary" disabled={data.queuedPagination.page <= 1} onClick={() => changeQueuedPage(data.queuedPagination.page - 1)}>Previous</button>
+          <span className="muted">Queued page {data.queuedPagination.page} of {data.queuedPagination.totalPages}</span>
+          <button className="button secondary" disabled={data.queuedPagination.page >= data.queuedPagination.totalPages} onClick={() => changeQueuedPage(data.queuedPagination.page + 1)}>Next</button>
+        </div> : null}
+        <Section title="Recent" jobs={data.recent} now={now} busyId={busyId} onAction={onAction} bulk={{
+          label: "Retry selected", icon: <RotateCcw size={14} />, eligible: (job) => job.status === "failed" || job.status === "cancelled",
+          selected: recentSelected, onToggle: (id) => toggleInSet(setRecentSelected, id),
+          onSelectAll: (ids) => setRecentSelected(new Set(ids)), onClear: () => setRecentSelected(new Set()),
+          busy: bulkBusy, onRun: () => bulkAction(recentSelected, "retry", () => setRecentSelected(new Set()))
+        }} />
       </>}
   </>;
 }

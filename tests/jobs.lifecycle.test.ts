@@ -17,7 +17,7 @@ import { recoverJobs, kickWorker, requestJobStop, handleJobFailure } from "@/lib
 
 const state = globalThis as typeof globalThis & {
   ytarrRecovered?: boolean; ytarrRecovery?: Promise<void>;
-  ytarrWorker?: Promise<void>; ytarrControllers?: Map<string, AbortController>;
+  ytarrLanes?: Map<string, Promise<void>>; ytarrControllers?: Map<string, AbortController>;
 };
 
 function deferred<T>() {
@@ -39,17 +39,17 @@ beforeEach(() => {
 afterEach(() => {
   delete state.ytarrRecovered;
   delete state.ytarrRecovery;
-  delete state.ytarrWorker;
+  delete state.ytarrLanes;
   delete state.ytarrControllers;
 });
 
 describe("job lifecycle", () => {
-  it("makes concurrent callers wait until all recovery work finishes", async () => {
+  it("makes concurrent worker lanes wait until all recovery work finishes", async () => {
     const barrier = deferred<{ count: number }>();
-    mocks.sourceVideo.updateMany.mockReturnValue(barrier.promise);
+    mocks.cacheAsset.updateMany.mockReturnValue(barrier.promise);
     let finished = 0;
     const calls = [recoverJobs(), recoverJobs(), recoverJobs()].map((p) => p.then(() => finished++));
-    await vi.waitFor(() => expect(mocks.sourceVideo.updateMany).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mocks.cacheAsset.updateMany).toHaveBeenCalledTimes(1));
     expect(finished).toBe(0);
     barrier.resolve({ count: 0 });
     await Promise.all(calls);
@@ -116,12 +116,13 @@ describe("job lifecycle", () => {
     const started = deferred<void>();
     const result = deferred<void>();
     mocks.publish.mockImplementation(() => { started.resolve(); return result.promise; });
-    const worker = kickWorker();
+    kickWorker();
+    const lanes = [...state.ytarrLanes!.values()];
     await started.promise;
     expect(requestJobStop(job.id)).toBe(true);
     mocks.settings.mockResolvedValue({ jobsPaused: true });
     result.resolve();
-    await worker;
+    await Promise.all(lanes);
     expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "complete")).toBe(false);
     expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "cancelled")).toBe(true);
     expect(state.ytarrControllers!.size).toBe(0);

@@ -1,0 +1,275 @@
+// Publishes a curated, overlay-rendered Channel as its own Tunarr channel -- structurally the same
+// "register local media source -> scan -> match by filename -> order lineup -> create/update
+// channel -> replace programming" flow as lib/tunarr/service.ts:publishSourceToTunarr, but kept in
+// its own file with its own small copies of the matching/ordering helpers rather than exporting (and
+// so touching) that file's private ones. See lib/channels/materialize.ts for how a render gets onto
+// disk in the channel's storage directory before this runs.
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { AppError } from "@/lib/api";
+import { db } from "@/lib/db/client";
+import { writeLog } from "@/lib/logging/service";
+import { getSettings, translatePathForTunarr } from "@/lib/settings/service";
+import { materializeRenderForChannel } from "@/lib/channels/materialize";
+import { TunarrApiClient, type TunarrChannel, type TunarrProgram } from "@/lib/tunarr/client";
+import { ensureProgrammingPlan } from "@/lib/programming/ai-service";
+import { buildTunarrSchedule, buildTunarrRotationSchedule } from "@/lib/programming/schedule-builder";
+import { scheduleStyleToKind, type AiProviderSetting, type ScheduleStyle, type StoredProgrammingPlan } from "@/lib/programming/types";
+
+export type ChannelProgrammingOrder = "manual" | "oldest" | "newest" | "random" | "ai";
+
+function samePath(left: string, right: string) {
+  return path.resolve(left) === path.resolve(right);
+}
+
+async function ensureLocalMediaSource(client: TunarrApiClient, channel: { id: string; name: string; storageDirectory: string; tunarrMediaSourceId: string | null }, signal?: AbortSignal) {
+  const tunarrDirectory = await translatePathForTunarr(channel.storageDirectory);
+  let mediaSources = await client.listMediaSources(signal);
+  let mediaSource = mediaSources.find((candidate) => candidate.type === "local" && candidate.paths?.some((candidatePath) => samePath(candidatePath, tunarrDirectory)));
+  if (!mediaSource) {
+    const id = await client.createMusicVideoLocalMediaSource(`TunarrTube Channel - ${channel.name}`, tunarrDirectory, signal);
+    mediaSources = await client.listMediaSources(signal);
+    mediaSource = mediaSources.find((candidate) => candidate.id === id);
+  }
+  if (!mediaSource) throw new AppError("TUNARR_MEDIA_SOURCE_MISSING", "Tunarr did not return the newly created local media source.", 502);
+  const library = mediaSource.libraries.find((candidate) => candidate.enabled && (samePath(candidate.externalKey, tunarrDirectory) || candidate.mediaType === "music_videos")) ?? mediaSource.libraries[0];
+  if (!library) throw new AppError("TUNARR_LIBRARY_MISSING", "The Tunarr local media source has no library to scan.", 502);
+  await db.channel.update({ where: { id: channel.id }, data: { tunarrMediaSourceId: mediaSource.id, tunarrLibraryId: library.id } });
+  return { mediaSourceId: mediaSource.id, libraryId: library.id };
+}
+
+export function orderChannelItems<T extends { position: number }>(items: T[], order: ChannelProgrammingOrder) {
+  const sorted = [...items];
+  if (order === "manual") sorted.sort((a, b) => a.position - b.position);
+  if (order === "random") {
+    for (let index = sorted.length - 1; index > 0; index -= 1) {
+      const swap = Math.floor(Math.random() * (index + 1));
+      [sorted[index], sorted[swap]] = [sorted[swap], sorted[index]];
+    }
+  }
+  return sorted;
+}
+
+// Keyed by the MediaItem id basename lib/channels/materialize.ts writes files as (<mediaItemId>.mp4) --
+// shared by mapPrograms below and publishChannelToTunarr's "ai" branch, same split as
+// lib/tunarr/service.ts:indexProgramsByYoutubeId/mapPrograms.
+export function indexProgramsByMediaItemId(programs: TunarrProgram[]) {
+  const byBasename = new Map<string, TunarrProgram>();
+  for (const program of programs) {
+    const externalId = program.program?.externalId;
+    if (typeof externalId !== "string") continue;
+    byBasename.set(path.basename(externalId, path.extname(externalId)), program);
+  }
+  return byBasename;
+}
+
+export function mapPrograms(programs: TunarrProgram[], mediaItemIds: string[]) {
+  const byBasename = indexProgramsByMediaItemId(programs);
+  return mediaItemIds.flatMap((mediaItemId) => {
+    const program = byBasename.get(mediaItemId);
+    return program && program.duration > 0 ? [{ type: "content" as const, id: program.id, duration: program.duration }] : [];
+  });
+}
+
+function channelPayload(name: string, id: string, number: number, duration: number, transcodeConfigId: string, iconPath: string | null, existing?: TunarrChannel) {
+  return {
+    id,
+    name,
+    number,
+    duration,
+    startTime: typeof existing?.startTime === "number" ? existing.startTime : Math.floor(Date.now() / 60_000) * 60_000,
+    disableFillerOverlay: typeof existing?.disableFillerOverlay === "boolean" ? existing.disableFillerOverlay : false,
+    groupTitle: typeof existing?.groupTitle === "string" ? existing.groupTitle : "TunarrTube",
+    guideMinimumDuration: typeof existing?.guideMinimumDuration === "number" ? existing.guideMinimumDuration : 30_000,
+    stealth: typeof existing?.stealth === "boolean" ? existing.stealth : false,
+    streamMode: typeof existing?.streamMode === "string" ? existing.streamMode : "hls",
+    transcodeConfigId: typeof existing?.transcodeConfigId === "string" ? existing.transcodeConfigId : transcodeConfigId,
+    subtitlesEnabled: typeof existing?.subtitlesEnabled === "boolean" ? existing.subtitlesEnabled : false,
+    icon: existing?.icon ?? { path: iconPath ?? "", width: 0, duration: 0, position: "bottom-right" },
+    offline: existing?.offline ?? { mode: "pic" },
+    ...(Array.isArray(existing?.fillerCollections) ? { fillerCollections: existing.fillerCollections } : {}),
+    ...(typeof existing?.fillerRepeatCooldown === "number" ? { fillerRepeatCooldown: existing.fillerRepeatCooldown } : {}),
+    ...(typeof existing?.guideFlexTitle === "string" ? { guideFlexTitle: existing.guideFlexTitle } : {}),
+    // Deliberately never *constructed* here: Tunarr's watermark JSON shape isn't published, so the
+    // supported path is "set it once by hand in Tunarr's own channel-edit UI" -- this passthrough is
+    // what makes that survive every future publish untouched.
+    ...(existing?.watermark ? { watermark: existing.watermark } : {}),
+    ...(existing?.onDemand ? { onDemand: existing.onDemand } : {}),
+    ...(Array.isArray(existing?.subtitlePreferences) ? { subtitlePreferences: existing.subtitlePreferences } : {})
+  };
+}
+
+export async function publishChannelToTunarr(channelId: string, signal?: AbortSignal) {
+  const channel = await db.channel.findUnique({
+    where: { id: channelId },
+    include: { items: { orderBy: { position: "asc" }, include: { mediaItem: true } }, template: true }
+  });
+  if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
+  if (!channel.items.length) throw new AppError("TUNARR_NO_MEDIA", "Add at least one media item to this channel before publishing.", 422);
+
+  const renders = await db.renderedAsset.findMany({
+    where: { templateId: channel.templateId, mediaItemId: { in: channel.items.map((item) => item.mediaItemId) } }
+  });
+  const renderByMediaItem = new Map(renders.map((render) => [render.mediaItemId, render]));
+  const unrendered = channel.items.filter((item) => renderByMediaItem.get(item.mediaItemId)?.status !== "complete");
+  if (unrendered.length) {
+    throw new AppError(
+      "TUNARR_UNRENDERED_ITEMS",
+      `Render these items with the channel's template before publishing: ${unrendered.map((item) => item.mediaItem.title).join(", ")}.`,
+      422
+    );
+  }
+
+  const ordered = orderChannelItems(channel.items, channel.programmingOrder as ChannelProgrammingOrder);
+  for (const item of ordered) {
+    const render = renderByMediaItem.get(item.mediaItemId)!;
+    await materializeRenderForChannel(channel.storageDirectory, item.mediaItem, render);
+  }
+
+  const settings = await getSettings();
+  const client = new TunarrApiClient(settings.tunarrUrl);
+  const discovery = await client.discover(signal);
+  const isAi = channel.programmingOrder === "ai";
+  // See the matching comment in lib/tunarr/service.ts:publishSourceToTunarr -- aiScheduling is only
+  // required when this channel is actually AI-scheduled.
+  const missing = Object.entries(discovery.capabilities).filter(([name, supported]) => !supported && (isAi || name !== "aiScheduling")).map(([name]) => name);
+  if (missing.length) throw new AppError("TUNARR_UNSUPPORTED_API", `Tunarr ${discovery.openApiVersion ?? "server"} is missing required API capabilities: ${missing.join(", ")}.`, 422);
+
+  const local = await ensureLocalMediaSource(client, channel, signal);
+  const mediaItemIds = ordered.map((item) => item.mediaItemId);
+  await client.scanLibrary(local.mediaSourceId, local.libraryId, signal);
+  await client.waitForLibraryScan(local.mediaSourceId, local.libraryId, signal, async () => {
+    const indexedPrograms = await client.listLibraryPrograms(local.libraryId, signal);
+    return mapPrograms(indexedPrograms, mediaItemIds).length === mediaItemIds.length;
+  });
+  const programs = await client.listLibraryPrograms(local.libraryId, signal);
+  const programIndex = indexProgramsByMediaItemId(programs);
+
+  let lineup: Array<{ type: "content"; id: string; duration: number }> = [];
+  if (!isAi) {
+    lineup = mapPrograms(programs, mediaItemIds);
+    if (!lineup.length) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "Tunarr completed its scan but did not find any of this channel's rendered videos.", 422);
+  }
+
+  const [channels, transcodeConfigId] = await Promise.all([client.listChannels(signal), client.getDefaultTranscodeConfigId(signal)]);
+  const existing = channel.tunarrChannelId ? channels.find((candidate) => candidate.id === channel.tunarrChannelId) : undefined;
+  const occupied = new Set(channels.filter((candidate) => candidate.id !== existing?.id).map((candidate) => candidate.number));
+  const number = channel.tunarrRequestedChannelNumber ?? existing?.number ?? Math.max(0, ...channels.map((candidate) => candidate.number)) + 1;
+  if (occupied.has(number)) throw new AppError("TUNARR_CHANNEL_NUMBER_EXISTS", `Tunarr channel number ${number} is already in use.`, 409);
+
+  let channelIdOnTunarr = existing?.id ?? channel.tunarrChannelId ?? randomUUID();
+  const duration = isAi ? [...programIndex.values()].reduce((total, program) => total + program.duration, 0) : lineup.reduce((total, program) => total + program.duration, 0);
+  const payload = channelPayload(channel.name, channelIdOnTunarr, number, duration, transcodeConfigId, channel.logoAssetPath, existing);
+
+  // Resolved (created/updated) *before and immediately after* createChannel, and *before* building an
+  // AI schedule -- matching publishSourceToTunarr in lib/tunarr/service.ts. Two independent reasons:
+  // (1) if replaceProgramming (or anything else below) fails after Tunarr has already created the
+  // remote channel, a retry needs to find it via `existing` above and update it, not generate a fresh
+  // randomUUID() and create a second, orphaned duplicate; (2) the schedule-time-slots/schedule-slots
+  // dry-run preview needs a real, already-existing Tunarr channel id -- Tunarr 404s a preview request
+  // for a channel it doesn't know about yet, exactly the case on a channel's very first AI publish.
+  if (existing) {
+    await client.updateChannel(channelIdOnTunarr, payload, signal);
+  } else {
+    await db.channel.update({ where: { id: channel.id }, data: { tunarrChannelId: channelIdOnTunarr, tunarrChannelNumber: number } });
+    const created = await client.createChannel(payload, signal);
+    channelIdOnTunarr = created.id;
+    await db.channel.update({ where: { id: channel.id }, data: { tunarrChannelId: channelIdOnTunarr } });
+  }
+
+  let programCount = 0;
+  if (isAi) {
+    const candidates = channel.items.flatMap((item) => {
+      const durationMs = programIndex.get(item.mediaItemId)?.duration ?? (item.mediaItem.durationSeconds ?? 0) * 1000;
+      return durationMs > 0
+        ? [{ id: item.mediaItemId, title: item.mediaItem.title, artist: item.mediaItem.artist, album: item.mediaItem.album, genre: item.mediaItem.genre, durationMs, uploadDate: item.mediaItem.releaseDate?.toISOString() ?? null }]
+        : [];
+    });
+    const cached = channel.aiProgrammingPlanJson ? (JSON.parse(channel.aiProgrammingPlanJson) as StoredProgrammingPlan) : null;
+    const style = scheduleStyleToKind((channel.aiScheduleStyle as ScheduleStyle | null) ?? "daily-dayparts");
+    const ensured = await ensureProgrammingPlan({
+      cached, candidates, instructions: channel.aiProgrammingInstructions, kind: style.kind, period: style.period,
+      providerOverride: channel.aiProvider, globalProviderSetting: settings.aiProvider as AiProviderSetting, signal
+    });
+    if (ensured.plan.kind === "rotation") {
+      programCount = ensured.plan.groups.reduce((total, group) => total + group.itemIds.length, 0);
+      // Checked before the Tunarr write below, same as the non-AI lineup guard above: a schedule with
+      // zero items is a valid-looking request Tunarr will happily accept and apply, leaving the channel
+      // published with no programming at all. Tunarr can't compute a real guide end time for a channel
+      // in that state and free-spins trying to extend one that never advances -- see WRITE_TIMEOUT_MS's
+      // comment in lib/tunarr/client.ts for the incident this was found from.
+      if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- render this channel's items (or wait for Tunarr's scan to catch up) before publishing.", 422);
+      const persistProgress = (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) =>
+        db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr } satisfies StoredProgrammingPlan) } }).then(() => undefined);
+      const built = await buildTunarrRotationSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal, onProgress: persistProgress });
+      await persistProgress(built.tunarr);
+      await client.replaceProgrammingWithRandomSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
+    } else {
+      programCount = ensured.plan.blocks.reduce((total, block) => total + block.itemIds.length, 0);
+      if (!programCount) throw new AppError("TUNARR_NO_SCANNED_MEDIA", "The AI schedule has no eligible items to program -- render this channel's items (or wait for Tunarr's scan to catch up) before publishing.", 422);
+      const persistProgress = (tunarr: NonNullable<StoredProgrammingPlan["tunarr"]>) =>
+        db.channel.update({ where: { id: channel.id }, data: { aiProgrammingPlanJson: JSON.stringify({ ...ensured, tunarr } satisfies StoredProgrammingPlan) } }).then(() => undefined);
+      const built = await buildTunarrSchedule({ client, plan: ensured.plan, programIndex, namePrefix: channel.name, previous: ensured.tunarr, channelId: channelIdOnTunarr, signal, onProgress: persistProgress });
+      await persistProgress(built.tunarr);
+      await client.replaceProgrammingWithSchedule(channelIdOnTunarr, built.programs, built.schedule, signal);
+    }
+  } else {
+    await client.replaceProgramming(channelIdOnTunarr, lineup, signal);
+    programCount = lineup.length;
+  }
+
+  // Ask Tunarr to actually compute this channel's near-term guide before calling the publish done --
+  // see verifyChannelGuide's own comment. A channel that would hang Tunarr's next background guide
+  // refresh (and take every other channel down with it) fails *this* request instead, cleanly and
+  // immediately, as a normal retryable job failure.
+  try {
+    await client.verifyChannelGuide(channelIdOnTunarr, signal);
+  } catch (error) {
+    throw new AppError("TUNARR_GUIDE_VERIFICATION_FAILED", `Tunarr accepted this channel's programming but could not compute its guide (${error instanceof Error ? error.message : String(error)}). Publishing was not completed to avoid leaving Tunarr in a state that could hang on its next guide refresh -- try again.`, 502);
+  }
+
+  const publishedAt = new Date();
+  await db.channel.update({
+    where: { id: channel.id },
+    data: { tunarrChannelId: channelIdOnTunarr, tunarrChannelNumber: number, tunarrChannelName: channel.name, tunarrLastPublishedAt: publishedAt }
+  });
+  await writeLog({ category: "tunarr", channelId: channel.id, message: `${existing ? "Updated" : "Created"} Tunarr channel "${channel.name}" (${number}) with ${programCount} program${programCount === 1 ? "" : "s"}.` });
+  return { channelId: channelIdOnTunarr, channelNumber: number, programCount, mediaSourceId: local.mediaSourceId, libraryId: local.libraryId, publishedAt };
+}
+
+export async function channelTunarrLinkStatus(channelId: string, signal?: AbortSignal) {
+  const channel = await db.channel.findUnique({ where: { id: channelId } });
+  if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
+  const client = new TunarrApiClient((await getSettings()).tunarrUrl);
+  const [mediaSources, channels] = await Promise.all([client.listMediaSources(signal), client.listChannels(signal)]);
+  const directory = await translatePathForTunarr(channel.storageDirectory);
+  const mediaSource = mediaSources.find((item) => item.id === channel.tunarrMediaSourceId) ?? mediaSources.find((item) => item.type === "local" && item.paths?.some((value) => samePath(value, directory)));
+  const tunarrChannel = channels.find((item) => item.id === channel.tunarrChannelId);
+  return {
+    linked: Boolean(channel.tunarrChannelId),
+    mediaSourceFound: Boolean(mediaSource),
+    libraryFound: Boolean(mediaSource?.libraries.some((item) => item.id === channel.tunarrLibraryId)),
+    channelFound: Boolean(tunarrChannel),
+    channel: tunarrChannel,
+    candidates: channels.map((item) => ({ id: item.id, name: item.name, number: item.number })),
+    // `linked` alone only means a publish attempt got far enough to create/find the remote channel --
+    // tunarrChannelId is persisted right after that first step specifically so a retry can find it (see
+    // publishChannelToTunarr's own comment), well before the programming/schedule write or the guide
+    // verification that follows it. tunarrLastPublishedAt is only ever set at the very end, once, after
+    // that verification passes -- so its presence is what actually distinguishes "this channel is live
+    // and Tunarr can serve its guide" from "a publish was started but never finished" (the exact silent
+    // half-published state this field was added to stop being invisible in the UI).
+    lastPublishedAt: channel.tunarrLastPublishedAt
+  };
+}
+
+export async function unlinkChannelFromTunarr(channelId: string) {
+  const channel = await db.channel.findUnique({ where: { id: channelId } });
+  if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
+  await db.channel.update({
+    where: { id: channelId },
+    data: { tunarrMediaSourceId: null, tunarrLibraryId: null, tunarrChannelId: null, tunarrChannelNumber: null, tunarrLastPublishedAt: null, tunarrChannelName: null }
+  });
+  await writeLog({ category: "tunarr", channelId, message: "Unlinked Tunarr without deleting remote objects." });
+  return { unlinked: true };
+}

@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Download, LoaderCircle, Play, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, LoaderCircle, Play, Trash2, X } from "lucide-react";
 
 type Row = { membershipId: string; videoId: string; youtubeId: string; title: string; uploader: string | null; durationSeconds: number | null; playlistIndex: number | null; metadataStatus: string; availability: string; availabilityReason: string | null; membershipStatus: string; downloadStatus: string };
 
@@ -12,14 +13,55 @@ function duration(seconds: number | null) {
   return `${hours ? `${hours}:` : ""}${hours ? String(minutes).padStart(2, "0") : minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
-export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows: Row[] }) {
+type SortKey = "index" | "title" | "duration" | "status";
+// Order matches the actual cell order below (# / Video / Duration / ... / Download).
+const SORT_COLUMNS: Array<{ key: SortKey; label: string }> = [
+  { key: "index", label: "#" }, { key: "title", label: "Video" }, { key: "duration", label: "Duration" }
+];
+const STATUS_SORT_COLUMN: { key: SortKey; label: string } = { key: "status", label: "Download" };
+
+type Filters = { query: string; sort: SortKey; order: "asc" | "desc" };
+type Pagination = { page: number; pageSize: number; total: number; totalPages: number; sourceTotal: number };
+
+// Rows are filtered, sorted, and paginated by the Server Component. The client owns only controls and
+// mutations, keeping large sources out of both the database result and the RSC payload.
+export function VideoSelectionTable({ sourceId, rows, filters, pagination, downloadableCount }: {
+  sourceId: string; rows: Row[]; filters: Filters; pagination: Pagination; downloadableCount: number;
+}) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState<Row | null>(null);
   const [preparing, setPreparing] = useState<string | null>(null);
-  const downloadable = rows.filter((row) => row.downloadStatus !== "complete" && row.membershipStatus === "present");
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [bulkRemoving, setBulkRemoving] = useState(false);
+  const [search, setSearch] = useState(filters.query);
+  const visible = rows;
+
+  useEffect(() => setSearch(filters.query), [filters.query]);
+
+  function navigate(values: Record<string, string | number>) {
+    const query = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(values)) query.set(key, String(value));
+    router.push(`/sources/${sourceId}?${query.toString()}`);
+  }
+
+  function toggleSort(key: SortKey) {
+    navigate({ sort: key, order: filters.sort === key && filters.order === "asc" ? "desc" : "asc", page: 1 });
+  }
+  function sortHeader(column: { key: SortKey; label: string }) {
+    return <div className="video-grid-cell" key={column.key} role="columnheader">
+      <button type="button" className="sort-header" onClick={() => toggleSort(column.key)} aria-label={`Sort by ${column.label}`}>
+        {column.label} {filters.sort === column.key ? (filters.order === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="muted" />}
+      </button>
+    </div>;
+  }
+
+  // "Select all" scopes to the current server-filtered page, not the full source -- searching for
+  // "live" and selecting all should only select matching rows on this page, not everything.
+  const visibleDownloadable = visible.filter((row) => row.downloadStatus !== "complete" && row.membershipStatus === "present");
+  const removableSelected = rows.filter((row) => selected.has(row.videoId) && (row.downloadStatus === "unavailable" || row.downloadStatus === "failed"));
   function toggle(id: string) { setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
 
   async function download() {
@@ -27,18 +69,41 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     try {
       const response = await fetch("/api/downloads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [...selected].map((videoId) => ({ sourceId, videoId })) }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error?.message ?? "Queueing failed");
-      setSelected(new Set()); router.refresh();
-      const ids = body.data.map((job: { id: string }) => job.id);
-      while (ids.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1800));
-        const states = await Promise.all(ids.map(async (id: string) => (await (await fetch(`/api/jobs/${id}`, { cache: "no-store" })).json()).data));
-        if (states.every((job) => ["complete", "failed", "cancelled"].includes(job.status))) {
-          const failures = states.filter((job) => job.status === "failed");
-          if (failures.length) setError(failures.map((job) => job.error ?? "Download failed").join("\n"));
-          break;
+      setSelected(new Set());
+      const jobs = body.data as Array<{ id: string; status: string }>;
+      const pending = new Set(jobs.filter((job) => !["complete", "failed", "cancelled"].includes(job.status)).map((job) => job.id));
+      const previous = new Map(jobs.map((job) => [job.id, job.status]));
+      const failures: string[] = [];
+      router.refresh();
+      while (pending.size) {
+        if (document.hidden) {
+          await new Promise<void>((resolve) => {
+            const resume = () => { if (!document.hidden) { document.removeEventListener("visibilitychange", resume); resolve(); } };
+            document.addEventListener("visibilitychange", resume);
+          });
         }
-        router.refresh();
+        await new Promise((resolve) => setTimeout(resolve, 1800));
+        if (document.hidden) continue;
+        const statusResponse = await fetch("/api/jobs/status", {
+          method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [...pending] })
+        });
+        const statusBody = await statusResponse.json();
+        if (!statusResponse.ok) throw new Error(statusBody.error?.message ?? "Status refresh failed");
+        const states = new Map((statusBody.data as Array<{ id: string; status: string; error: string | null }>).map((job) => [job.id, job]));
+        let relevantChange = false;
+        for (const id of [...pending]) {
+          const job = states.get(id);
+          if (!job) { pending.delete(id); relevantChange = true; continue; }
+          if (previous.get(id) !== job.status) { previous.set(id, job.status); relevantChange = true; }
+          if (["complete", "failed", "cancelled"].includes(job.status)) {
+            pending.delete(id);
+            if (job.status === "failed") failures.push(job.error ?? "Download failed");
+          }
+        }
+        if (relevantChange) router.refresh();
       }
+      if (failures.length) setError(failures.join("\n"));
       router.refresh();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Download failed"); }
     finally { setBusy(false); }
@@ -58,18 +123,147 @@ export function VideoSelectionTable({ sourceId, rows }: { sourceId: string; rows
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Playback failed"); } finally { setPreparing(null); }
   }
 
+  // Offered for a video downloadVideo() gave up on (lib/downloads/service.ts) -- "unavailable" won't be
+  // retried automatically, and "failed" has exhausted its automatic retries too, so removing it here is
+  // the other half of "retry or remove": Retry lives on the Jobs page for the underlying job.
+  async function remove(row: Row) {
+    if (!confirm(`Remove "${row.title}" from this source? This can't be undone.`)) return;
+    setRemoving(row.videoId); setError(null);
+    try {
+      const response = await fetch(`/api/sources/${sourceId}/videos/${row.videoId}`, { method: "DELETE" });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error?.message ?? "Removal failed");
+      router.refresh();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Removal failed"); }
+    finally { setRemoving(null); }
+  }
+
+  async function bulkRemove() {
+    if (!removableSelected.length) return;
+    if (!window.confirm(`Remove ${removableSelected.length} video${removableSelected.length === 1 ? "" : "s"} from this source? This can't be undone.`)) return;
+    setBulkRemoving(true); setError(null);
+    try {
+      const results = await Promise.allSettled(removableSelected.map((row) => fetch(`/api/sources/${sourceId}/videos/${row.videoId}`, { method: "DELETE" })));
+      const failures = results.filter((result) => result.status === "rejected");
+      setSelected(new Set());
+      if (failures.length) setError(`${failures.length} video${failures.length === 1 ? "" : "s"} could not be removed.`);
+      router.refresh();
+    } finally { setBulkRemoving(false); }
+  }
+
+  function row(item: Row) {
+    return <>
+      <div className="video-grid-cell" data-label="Select"><input type="checkbox" disabled={item.downloadStatus === "complete" || (item.membershipStatus !== "present" && item.downloadStatus !== "unavailable" && item.downloadStatus !== "failed")} checked={selected.has(item.videoId)} onChange={() => toggle(item.videoId)} aria-label={`Select ${item.title}`} /></div>
+      <div className="video-grid-cell" data-label="#">{item.playlistIndex ?? "—"}</div>
+      <div className="video-grid-cell title-cell" data-label="Video"><strong>{item.title}</strong><span className="meta">{item.uploader ?? item.youtubeId}{item.membershipStatus === "missing" ? " · Missing from source" : ""}</span></div>
+      <div className="video-grid-cell" data-label="Duration">{duration(item.durationSeconds)}</div>
+      <div className="video-grid-cell" data-label="Metadata"><span className={`badge ${item.availability === "unavailable" ? "unavailable" : item.metadataStatus}`}>{item.availability === "unavailable" ? "unavailable" : item.metadataStatus}</span>{item.availabilityReason ? <span className="availability-reason">{item.availabilityReason}</span> : null}</div>
+      <div className="video-grid-cell" data-label="Download"><span className={`badge ${item.downloadStatus}`}>{item.downloadStatus.replaceAll("_", " ")}</span></div>
+      <div className="video-grid-cell" data-label="Play"><button className="button secondary" aria-label={`Play ${item.title}`} disabled={preparing === item.videoId || item.membershipStatus !== "present"} onClick={() => play(item)}>{preparing === item.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Play size={14}/>}</button></div>
+      <div className="video-grid-cell" data-label="Remove">{item.downloadStatus === "unavailable" || item.downloadStatus === "failed"
+        ? <button className="button secondary" aria-label={`Remove ${item.title}`} disabled={removing === item.videoId} onClick={() => remove(item)}>{removing === item.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Trash2 size={14}/>}</button>
+        : null}</div>
+    </>;
+  }
+
+  const selectAllHeader = <div className="video-grid-cell" role="columnheader"><input type="checkbox" aria-label="Select all visible downloadable videos" checked={visibleDownloadable.length > 0 && visibleDownloadable.every((item) => selected.has(item.videoId))} onChange={(event) => setSelected((current) => {
+    const next = new Set(current);
+    for (const item of visibleDownloadable) event.target.checked ? next.add(item.videoId) : next.delete(item.videoId);
+    return next;
+  })} /></div>;
+
   return <>
     {playing ? <div className="card player"><div className="toolbar"><strong>{playing.title}</strong><span className="spacer"/><button className="button secondary" onClick={() => setPlaying(null)} aria-label="Close player"><X size={15}/></button></div><video controls autoPlay src={`/api/playback/${sourceId}/${playing.videoId}`} /></div> : null}
-    <div className="toolbar"><button className="button" disabled={busy || selected.size === 0} onClick={download}><Download size={15} /> Download selected ({selected.size})</button><span className="muted">{downloadable.length} available to download</span></div>
+    <div className="toolbar">
+      <button className="button" disabled={busy || selected.size === 0} onClick={download}><Download size={15} /> Download selected ({selected.size})</button>
+      {removableSelected.length > 0 ? <button className="button secondary" disabled={bulkRemoving} onClick={bulkRemove}><Trash2 size={15} /> Remove selected ({removableSelected.length})</button> : null}
+      <form onSubmit={(event) => { event.preventDefault(); navigate({ query: search.trim(), page: 1 }); }} style={{ display: "flex", gap: 8 }}>
+        <input className="input" type="search" placeholder="Search by title, uploader, or ID…" value={search} onChange={(event) => setSearch(event.target.value)} style={{ maxWidth: 280 }} aria-label="Search videos" />
+        <button className="button secondary" type="submit">Search</button>
+      </form>
+      <span className="muted">{filters.query ? `${pagination.total} of ${pagination.sourceTotal} videos` : `${pagination.sourceTotal} video${pagination.sourceTotal === 1 ? "" : "s"}`} · {downloadableCount} available to download</span>
+    </div>
     {error ? <div className="error">{error}</div> : null}
-    <div className="table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="Select all downloadable videos" checked={downloadable.length > 0 && downloadable.every((row) => selected.has(row.videoId))} onChange={(event) => setSelected(event.target.checked ? new Set(downloadable.map((row) => row.videoId)) : new Set())} /></th><th>#</th><th>Video</th><th>Duration</th><th>Metadata</th><th>Download</th><th>Play</th></tr></thead><tbody>{rows.map((row) => <tr key={row.membershipId}>
-      <td><input type="checkbox" disabled={row.downloadStatus === "complete" || row.membershipStatus !== "present"} checked={selected.has(row.videoId)} onChange={() => toggle(row.videoId)} aria-label={`Select ${row.title}`} /></td>
-      <td>{row.playlistIndex ?? "—"}</td>
-      <td className="title-cell"><strong>{row.title}</strong><span className="meta">{row.uploader ?? row.youtubeId}{row.membershipStatus === "missing" ? " · Missing from source" : ""}</span></td>
-      <td>{duration(row.durationSeconds)}</td>
-      <td><span className={`badge ${row.availability === "unavailable" ? "unavailable" : row.metadataStatus}`}>{row.availability === "unavailable" ? "unavailable" : row.metadataStatus}</span>{row.availabilityReason ? <span className="availability-reason">{row.availabilityReason}</span> : null}</td>
-      <td><span className={`badge ${row.downloadStatus}`}>{row.downloadStatus.replaceAll("_", " ")}</span></td>
-      <td><button className="button secondary" aria-label={`Play ${row.title}`} disabled={preparing === row.videoId || row.membershipStatus !== "present"} onClick={() => play(row)}>{preparing === row.videoId ? <LoaderCircle size={14} className="animate-spin"/> : <Play size={14}/>}</button></td>
-    </tr>)}</tbody></table></div>
+    <VirtualizedRows visible={visible} selectAllHeader={selectAllHeader} sortHeader={sortHeader} row={row} />
+    <div className="toolbar" style={{ marginTop: 12 }}>
+      <button className="button secondary" disabled={pagination.page <= 1} onClick={() => navigate({ page: pagination.page - 1 })}>Previous</button>
+      <span className="muted">Page {pagination.page} of {pagination.totalPages} · {pagination.total} matching</span>
+      <button className="button secondary" disabled={pagination.page >= pagination.totalPages} onClick={() => navigate({ page: pagination.page + 1 })}>Next</button>
+      <span className="spacer" />
+      <select className="input" aria-label="Videos per page" value={pagination.pageSize} onChange={(event) => navigate({ pageSize: Number(event.target.value), page: 1 })} style={{ width: "auto" }}>
+        {[25, 50, 100].map((size) => <option key={size} value={size}>{size} per page</option>)}
+      </select>
+    </div>
   </>;
+}
+
+// Split out so the virtualizer (a browser-only concern -- it measures real DOM elements) only ever runs
+// once mounted on the client, and so the desktop grid/mobile-card branch below stays readable next to
+// the row-rendering logic it wraps.
+function VirtualizedRows({ visible, selectAllHeader, sortHeader, row }: {
+  visible: Row[];
+  selectAllHeader: React.ReactNode;
+  sortHeader: (column: { key: SortKey; label: string }) => React.ReactNode;
+  row: (item: Row) => React.ReactNode;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  // Below 640px this same table becomes a stack of label/value cards (see .video-grid-row's mobile
+  // rules in app/globals.css) -- variable, often multi-line height per card, on a surface people rarely
+  // scrub thousands of rows on. Virtualizing there would need a real scroll container height fight with
+  // the page's own scroll, for little benefit, so it's simplest and safest to keep that layout exactly
+  // as it always rendered (every row mounted) and only virtualize the dense desktop table.
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 641px)");
+    setIsDesktop(query.matches);
+    const listener = (event: MediaQueryListEvent) => setIsDesktop(event.matches);
+    query.addEventListener("change", listener);
+    return () => query.removeEventListener("change", listener);
+  }, []);
+
+  const virtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 49,
+    overscan: 12,
+    enabled: isDesktop
+  });
+
+  const header = <div className="video-grid-row video-grid-header" role="row">
+    {selectAllHeader}
+    {SORT_COLUMNS.map((column) => sortHeader(column))}
+    <div className="video-grid-cell" role="columnheader">Metadata</div>
+    {sortHeader(STATUS_SORT_COLUMN)}
+    <div className="video-grid-cell" role="columnheader">Play</div>
+    <div className="video-grid-cell" role="columnheader" />
+  </div>;
+
+  if (!isDesktop) {
+    return <div className="table-wrap responsive-table video-grid" role="table" aria-label="Videos">
+      {header}
+      <div role="rowgroup">
+        {visible.map((item) => <div className="video-grid-row" role="row" key={item.membershipId}>{row(item)}</div>)}
+      </div>
+    </div>;
+  }
+
+  return <div className="table-wrap video-grid" role="table" aria-label="Videos">
+    {header}
+    <div className="video-grid-body" ref={parentRef} role="rowgroup">
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const item = visible[virtualRow.index];
+          return <div
+            key={item.membershipId}
+            ref={virtualizer.measureElement}
+            data-index={virtualRow.index}
+            role="row"
+            className="video-grid-row"
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualRow.start}px)` }}
+          >
+            {row(item)}
+          </div>;
+        })}
+      </div>
+    </div>
+  </div>;
 }

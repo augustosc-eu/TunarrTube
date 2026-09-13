@@ -13,6 +13,8 @@ export async function enrichVideo(videoId: string, signal?: AbortSignal) {
         title: metadata.title,
         description: metadata.description,
         uploader: metadata.uploader,
+        artist: metadata.artist,
+        album: metadata.album,
         durationSeconds: metadata.durationSeconds,
         uploadDate: metadata.uploadDate,
         thumbnailUrl: metadata.thumbnailUrl,

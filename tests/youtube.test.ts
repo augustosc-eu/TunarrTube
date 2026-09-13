@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePlaylist, parseUploadDate } from "@/lib/youtube/normalize";
+import { normalizeEntry, normalizePlaylist, parseUploadDate } from "@/lib/youtube/normalize";
 import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
 import { extractAvailabilityReason, isSignInRequiredError, isUnavailableVideoError } from "@/lib/youtube/ytdlp";
 
@@ -64,6 +64,21 @@ describe("yt-dlp normalization", () => {
       .toThrow(/detected 21 playlist items/);
   });
   it("parses yt-dlp upload dates in UTC", () => expect(parseUploadDate("20250131")?.toISOString()).toBe("2025-01-31T00:00:00.000Z"));
+
+  it("captures artist/album from a full yt-dlp fetch when present", () => {
+    const entry = normalizeEntry({ id: "abc12345678", title: "Song (Official Video)", artist: "Some Artist", album: "Some Album" });
+    expect(entry).toMatchObject({ artist: "Some Artist", album: "Some Album" });
+  });
+
+  it("falls back to creator when yt-dlp has no dedicated artist field", () => {
+    const entry = normalizeEntry({ id: "abc12345678", title: "Song", creator: "Some Creator" });
+    expect(entry?.artist).toBe("Some Creator");
+  });
+
+  it("leaves artist/album null for an ordinary (non-music) video, e.g. under --flat-playlist", () => {
+    const entry = normalizeEntry({ id: "abc12345678", title: "Just a video" });
+    expect(entry).toMatchObject({ artist: null, album: null });
+  });
 });
 
 describe("YouTube availability reasons", () => {

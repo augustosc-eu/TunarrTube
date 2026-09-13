@@ -49,6 +49,7 @@ describe("Tunarr publish pipeline", () => {
         programmingPayload = JSON.parse(String(init?.body));
         return Response.json({});
       }
+      if (url.pathname.startsWith("/api/guide/channels/")) return Response.json([]);
       return Response.json({ message: `Unexpected ${method} ${url.pathname}` }, { status: 404 });
     }));
 
@@ -96,6 +97,7 @@ describe("Tunarr publish pipeline", () => {
         return Response.json({});
       }
       if (url.pathname.endsWith("/programming") && method === "POST") return Response.json({});
+      if (url.pathname.startsWith("/api/guide/channels/")) return Response.json([]);
       return Response.json({ message: `Unexpected ${method} ${url.pathname}` }, { status: 404 });
     }));
 

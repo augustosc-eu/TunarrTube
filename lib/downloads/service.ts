@@ -3,6 +3,7 @@ import { access, copyFile, link, mkdir, readdir, rename, rm, stat, writeFile } f
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
+import { withDownloadPermit } from "@/lib/downloads/limiter";
 import { requireFfmpeg } from "@/lib/ffmpeg/service";
 import { writeLog } from "@/lib/logging/service";
 import { assignEpisodeNumber, resolveVideoPaths, seasonNumberFor, type NamingScheme, type ResolvedVideoPaths } from "@/lib/naming/service";
@@ -10,6 +11,16 @@ import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
 import { cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
+
+// Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means
+// retrying automatically will never succeed: the video is gone for good (deleted/private/region-blocked/
+// etc.), or it's age-restricted/bot-checked and TunarrTube has no (or no working) cookies configured for
+// it (see isSignInRequiredError, lib/youtube/ytdlp.ts) -- by the time this is thrown, the Video/
+// SourceVideo rows are already updated to record that. handleJobFailure()
+// (lib/jobs/runner.ts) recognizes this type and fails the job immediately instead of retrying it, since
+// retrying will never succeed; publishSourceToTunarr()'s prefetch loop (lib/tunarr/service.ts) catches it
+// per-video so one dead video doesn't block prefetching the rest of a source's lineup.
+export class VideoUnavailableError extends Error {}
 
 type MembershipVideo = { youtubeId: string; title: string; description: string | null; uploader: string | null; uploadDate: Date | null; thumbnailPath: string | null };
 type MembershipSource = { name: string; mediaDirectory: string; namingScheme: string | null; filenameTemplate: string | null };
@@ -157,30 +168,32 @@ async function writeSidecarsAndArt(
 }
 
 async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string, quality: VideoQuality, signal?: AbortSignal) {
-  const targetDirectory = path.dirname(target);
-  await mkdir(targetDirectory, { recursive: true });
-  const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
-  await mkdir(tempRoot, { recursive: true });
-  const tempDirectory = path.join(tempRoot, `${youtubeId}-${Date.now()}-${process.pid}`);
-  await mkdir(tempDirectory, { recursive: false });
-  try {
-    const ytdlp = await getYtDlpPath();
-    const ffmpeg = await requireFfmpeg();
-    await runProcess(ytdlp, [
-      "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
-      "--ffmpeg-location", path.dirname(ffmpeg),
-      "-f", downloadFormatSelector(quality),
-      "--concurrent-fragments", "4",
-      "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
-      "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
-    ], { timeoutMs: 12 * 60 * 60_000, signal });
-    const files = await readdir(tempDirectory);
-    const output = files.find((file) => file === `${youtubeId}.mp4`);
-    if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);
-    if (!(await exists(target))) await rename(path.join(/* turbopackIgnore: true */ tempDirectory, output), target);
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true });
-  }
+  return withDownloadPermit(async () => {
+    const targetDirectory = path.dirname(target);
+    await mkdir(targetDirectory, { recursive: true });
+    const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
+    await mkdir(tempRoot, { recursive: true });
+    const tempDirectory = path.join(tempRoot, `${youtubeId}-${Date.now()}-${process.pid}`);
+    await mkdir(tempDirectory, { recursive: false });
+    try {
+      const ytdlp = await getYtDlpPath();
+      const ffmpeg = await requireFfmpeg();
+      await runProcess(ytdlp, [
+        "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
+        "--ffmpeg-location", path.dirname(ffmpeg),
+        "-f", downloadFormatSelector(quality),
+        "--concurrent-fragments", "4",
+        "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
+        "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
+      ], { timeoutMs: 12 * 60 * 60_000, signal });
+      const files = await readdir(tempDirectory);
+      const output = files.find((file) => file === `${youtubeId}.mp4`);
+      if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);
+      if (!(await exists(target))) await rename(path.join(/* turbopackIgnore: true */ tempDirectory, output), target);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  }, signal);
 }
 
 async function reuseExistingAsset(sourceId: string, videoId: string, target: string) {
@@ -238,16 +251,20 @@ export async function downloadVideo(sourceId: string, videoId: string, signal?: 
     // runProcess() reject here -- record it as "cancelled" rather than "failed" so it reads like the
     // queued-cancellation case instead of a real error, and so automatic re-enqueue paths leave it alone.
     const message = error instanceof Error ? error.message : String(error);
-    // Video is gone for good, or -- see isSignInRequiredError -- gated behind a sign-in TunarrTube isn't
-    // authenticated for. Either way it's not a transient failure, so record it on the Video (every source
-    // sharing it, and the UI, can see why) before letting the ordinary retry/fail path run its course --
-    // once attempts are exhausted the failure sticks until a manual Retry (e.g. after configuring cookies).
-    if (!signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message))) {
+    const unavailable = !signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message));
+    if (unavailable) {
+      // Gone for good (or -- see isSignInRequiredError -- gated behind a sign-in TunarrTube isn't
+      // authenticated for), not a transient failure -- record it on the Video so every source sharing it
+      // (and the UI) can see why, and mark this membership distinctly from an ordinary "failed" so
+      // syncSource (lib/sources/service.ts) stops re-queuing a fresh download attempt on every future
+      // sync. The user can still retry it from the Jobs page (e.g. after configuring cookies), or remove
+      // it from the source.
       const reason = await unavailabilityReason(membership.video.youtubeUrl, message);
       await db.video.update({ where: { id: membership.video.id }, data: { availability: "unavailable", availabilityReason: reason } });
+      await writeLog({ level: "warn", category: "download", sourceId, videoId, message: `${membership.video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
     }
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: signal?.aborted ? "cancelled" : "failed" } });
-    throw error;
+    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: unavailable ? "unavailable" : signal?.aborted ? "cancelled" : "failed" } });
+    throw unavailable ? new VideoUnavailableError(message) : error;
   }
 }
 
@@ -317,19 +334,20 @@ export async function cacheVideo(videoId: string, sourceId?: string, signal?: Ab
     await enforceCachePolicy();
     return complete;
   } catch (error) {
-    // See the matching comments in downloadVideo() above: a stop request aborts `signal`, and that should
-    // read as "cancelled" rather than a real failure; an unavailable/sign-in-required video gets recorded
-    // on the Video row before the ordinary retry/fail path runs its course.
+    // See the matching comment in downloadVideo() above: a stop request aborts `signal`, and that should
+    // read as "cancelled" rather than a real failure.
     const message = error instanceof Error ? error.message : String(error);
-    if (!signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message))) {
+    const unavailable = !signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message));
+    if (unavailable) {
       const reason = await unavailabilityReason(video.youtubeUrl, message);
       await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason } });
+      await writeLog({ level: "warn", category: "cache", videoId, message: `${video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
     }
     await db.cacheAsset.update({
       where: { id: asset.id },
       data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: message.slice(-2000) }
     });
-    throw error;
+    throw unavailable ? new VideoUnavailableError(message) : error;
   }
 }
 
@@ -347,6 +365,9 @@ export async function materializeForTunarr(sourceId: string, videoId: string, si
   // A user-cancelled cache job must stay cancelled through automatic Tunarr publish/refresh prefetching --
   // leave this video out of the lineup (same as one that was never cached) until an explicit retry.
   if (membership.video.cacheAsset?.status === "cancelled") return null;
+  // Likewise for a video already recorded as permanently unavailable (see cacheVideo()'s catch above) --
+  // without this, every automatic Tunarr refresh would call cacheVideo() again and immediately re-fail.
+  if (membership.video.availability === "unavailable") return null;
   const asset = await cacheVideo(videoId, sourceId, signal);
   signal?.throwIfAborted();
   if (!asset.localPath) throw new AppError("CACHE_OUTPUT_MISSING", "The cached file is unavailable.", 500);

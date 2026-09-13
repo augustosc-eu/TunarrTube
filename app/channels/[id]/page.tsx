@@ -1,0 +1,47 @@
+import { getChannel } from "@/lib/channels/service";
+import { PageHeader } from "@/components/page-header";
+import { AddChannelItemsForm } from "@/components/add-channel-items-form";
+import { AiContentSelectForm } from "@/components/ai-content-select-form";
+import { ChannelItemTable } from "@/components/channel-item-table";
+import { ChannelTunarrPublishForm } from "@/components/channel-tunarr-publish-form";
+
+export const dynamic = "force-dynamic";
+
+export default async function ChannelDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const channel = await getChannel(id);
+  // Same check publishChannelToTunarr enforces server-side (lib/tunarr/channel-service.ts) -- computed
+  // here too so the Publish panel can warn/disable up front instead of the user finding out only after
+  // "Publish to Tunarr" comes back with a wall of unrendered titles.
+  const unrenderedCount = channel.items.filter((item) => !item.mediaItem.renders.some((render) => render.templateId === channel.templateId && render.status === "complete")).length;
+
+  return <div className="channel-detail">
+    <PageHeader eyebrow={`${channel.channelType.replace("_", " ")} · ${channel.template.name}`} title={channel.name} />
+    <AddChannelItemsForm channelId={channel.id} />
+    <AiContentSelectForm channelId={channel.id} />
+    <ChannelItemTable
+      channelId={channel.id}
+      templateId={channel.templateId}
+      items={channel.items.map((item) => ({
+        mediaItemId: item.mediaItemId,
+        mediaItem: {
+          id: item.mediaItem.id,
+          title: item.mediaItem.title,
+          artist: item.mediaItem.artist,
+          album: item.mediaItem.album,
+          metadataStatus: item.mediaItem.metadataStatus,
+          originType: item.mediaItem.originType,
+          originLocalPath: item.mediaItem.originLocalPath,
+          downloadStatus: item.mediaItem.sourceVideo?.downloadStatus ?? null,
+          renders: item.mediaItem.renders.map((render) => ({
+            id: render.id,
+            templateId: render.templateId,
+            status: render.status,
+            hasThumbnail: Boolean(render.thumbnailPath)
+          }))
+        }
+      }))}
+    />
+    <ChannelTunarrPublishForm channelId={channel.id} initialProgrammingOrder={channel.programmingOrder} initialAiInstructions={channel.aiProgrammingInstructions} initialAiProvider={channel.aiProvider} initialAiScheduleStyle={channel.aiScheduleStyle} unrenderedCount={unrenderedCount} />
+  </div>;
+}

@@ -1,6 +1,6 @@
 {
   "name": "tunarrtube",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -16,19 +16,23 @@
     "start": "next start --hostname 127.0.0.1",
     "start:lan": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/prepare-test-db.mjs",
     "test": "vitest run",
+    "pretest:watch": "node scripts/prepare-test-db.mjs",
     "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@prisma/adapter-better-sqlite3": "7.10.0",
-    "@prisma/client": "7.10.0",
-    "better-sqlite3": "12.11.1",
+    "@anthropic-ai/sdk": "0.124.0",
+    "@prisma/client": "6.19.3",
+    "@tanstack/react-virtual": "^3.14.12",
     "clsx": "2.1.1",
     "lucide-react": "1.42.0",
     "next": "16.3.4",
+    "openai": "7.10.0",
+    "puppeteer": "24.15.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "4.5.4"
@@ -38,9 +42,9 @@
     "@types/node": "26.5.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
-    "prisma": "7.10.0",
+    "prisma": "6.19.3",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "vitest": "5.0.0"
+    "vitest": "4.1.11"
   }
 }

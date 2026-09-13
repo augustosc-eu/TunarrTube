@@ -2,7 +2,9 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
+import { enqueueActiveJob, enqueueActiveJobs } from "@/lib/jobs/enqueue";
 import { writeLog } from "@/lib/logging/service";
+import { sidecarPathsFor } from "@/lib/naming/service";
 import { getSettings } from "@/lib/settings/service";
 import { analyzeSource, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
 import { validateVideoUrl } from "@/lib/youtube/url";
@@ -21,6 +23,12 @@ function storeEntries(entries: PlaylistEntry[]): StoredEntry[] {
 
 function restoreEntries(json: string): PlaylistEntry[] {
   return (JSON.parse(json) as StoredEntry[]).map((entry) => ({ ...entry, uploadDate: entry.uploadDate ? new Date(entry.uploadDate) : null }));
+}
+
+async function awaitInBatches(operations: Array<PromiseLike<unknown>>, batchSize = 100) {
+  for (let start = 0; start < operations.length; start += batchSize) {
+    await Promise.all(operations.slice(start, start + batchSize));
+  }
 }
 
 export async function analyzeAndStoreDraft(url: string, options: AnalyzeSourceOptions = {}, signal?: AbortSignal) {
@@ -82,7 +90,7 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
         update: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined, availability: entry.availability },
-        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability }
+        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability, artist: entry.artist, album: entry.album }
       });
       await tx.sourceVideo.upsert({
         where: { sourceId_videoId: { sourceId: created.id, videoId: video.id } },
@@ -94,11 +102,18 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
     return created;
   });
   const videos = await db.video.findMany({ where: { youtubeId: { in: entries.map((entry) => entry.youtubeId) } }, select: { id: true } });
-  for (const video of videos) await enqueueUniqueJob("metadata", source.id, video.id);
-  await enqueueUniqueJob("thumbnail", source.id);
-  if (playbackMode === "download") for (const video of videos) {
-    await enqueueUniqueJob("download", source.id, video.id, { target: "permanent" });
-    await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } }, data: { downloadStatus: "queued" } });
+  await enqueueActiveJobs([
+    ...videos.map((video) => ({ type: "metadata", sourceId: source.id, videoId: video.id })),
+    { type: "thumbnail", sourceId: source.id },
+    ...(playbackMode === "download"
+      ? videos.map((video) => ({ type: "download", sourceId: source.id, videoId: video.id, payload: { target: "permanent" } }))
+      : [])
+  ]);
+  if (playbackMode === "download" && videos.length) {
+    await db.sourceVideo.updateMany({
+      where: { sourceId: source.id, videoId: { in: videos.map((video) => video.id) } },
+      data: { downloadStatus: "queued" }
+    });
   }
   await writeLog({ category: "source", sourceId: source.id, message: `Added ${source.name} with ${entries.length} videos.` });
   const { kickWorker } = await import("@/lib/jobs/runner");
@@ -129,57 +144,109 @@ export async function syncSource(sourceId: string, signal?: AbortSignal) {
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   if (source.sourceType === "collection") throw new AppError("COLLECTION_SYNC_UNSUPPORTED", "Curated video collections are updated by adding individual videos.", 422);
   const analysis = await analyzeSource(source.url, { feedType: source.feedType === "playlist" ? undefined : source.feedType as "videos" | "shorts" | "live" | "all", historyLimit: source.historyLimit }, signal);
+  signal?.throwIfAborted();
+  // A playlist can contain the same video more than once. SourceVideo is unique by source/video, so
+  // keep the last occurrence (matching createSourceFromDraft's upsert behavior) before batching work.
+  const entries = [...new Map(analysis.entries.map((entry) => [entry.youtubeId, entry])).values()];
   const seenAt = new Date();
   let newCount = 0;
   const metadataVideoIds: string[] = [];
   await db.$transaction(async (tx) => {
-    if (!(source.sourceType === "channel" && source.historyLimit !== null)) {
-      await tx.sourceVideo.updateMany({ where: { sourceId }, data: { membershipStatus: "missing" } });
+    signal?.throwIfAborted();
+    const youtubeIds = entries.map((entry) => entry.youtubeId);
+    const existingVideos = await tx.video.findMany({ where: { youtubeId: { in: youtubeIds } } });
+    const existingByYoutubeId = new Map(existingVideos.map((video) => [video.youtubeId, video]));
+    const missingEntries = entries.filter((entry) => !existingByYoutubeId.has(entry.youtubeId));
+
+    if (missingEntries.length) {
+      await tx.video.createMany({ data: missingEntries.map((entry) => ({
+        youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl,
+        thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds,
+        uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability,
+        artist: entry.artist, album: entry.album
+      })) });
     }
-    for (const entry of analysis.entries) {
-      const existing = await tx.video.findUnique({ where: { youtubeId: entry.youtubeId } });
-      const video = await tx.video.upsert({
-        where: { youtubeId: entry.youtubeId },
-        update: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined },
-        create: { youtubeId: entry.youtubeId, title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, description: entry.description, availability: entry.availability }
+
+    const videos = await tx.video.findMany({ where: { youtubeId: { in: youtubeIds } } });
+    const byYoutubeId = new Map(videos.map((video) => [video.youtubeId, video]));
+    const existingMemberships = await tx.sourceVideo.findMany({
+      where: { sourceId, videoId: { in: videos.map((video) => video.id) } },
+      select: { id: true, videoId: true, playlistIndex: true }
+    });
+    const membershipByVideoId = new Map(existingMemberships.map((membership) => [membership.videoId, membership]));
+
+    const videoUpdates = entries.flatMap((entry) => {
+      const existing = existingByYoutubeId.get(entry.youtubeId);
+      if (!existing) return [];
+      const thumbnailChanged = entry.thumbnailUrl != null && entry.thumbnailUrl !== existing.thumbnailUrl;
+      if (existing.title === entry.title && existing.youtubeUrl === entry.youtubeUrl && !thumbnailChanged) return [];
+      return [tx.video.update({
+        where: { id: existing.id },
+        data: { title: entry.title, youtubeUrl: entry.youtubeUrl, thumbnailUrl: entry.thumbnailUrl ?? undefined }
+      })];
+    });
+    await awaitInBatches(videoUpdates);
+
+    const newMemberships: Array<{ sourceId: string; videoId: string; playlistIndex: number | null; lastSeenAt: Date }> = [];
+    const playlistUpdates = [];
+    for (const entry of entries) {
+      const video = byYoutubeId.get(entry.youtubeId)!;
+      const membership = membershipByVideoId.get(video.id);
+      if (!membership) {
+        newMemberships.push({ sourceId, videoId: video.id, playlistIndex: entry.playlistIndex, lastSeenAt: seenAt });
+        newCount += 1;
+      } else if (membership.playlistIndex !== entry.playlistIndex) {
+        playlistUpdates.push(tx.sourceVideo.update({ where: { id: membership.id }, data: { playlistIndex: entry.playlistIndex } }));
+      }
+      if (!existingByYoutubeId.has(entry.youtubeId) || video.metadataStatus !== "complete") metadataVideoIds.push(video.id);
+    }
+    if (newMemberships.length) await tx.sourceVideo.createMany({ data: newMemberships });
+    if (existingMemberships.length) {
+      await tx.sourceVideo.updateMany({
+        where: { id: { in: existingMemberships.map((membership) => membership.id) } },
+        data: { membershipStatus: "present", lastSeenAt: seenAt }
       });
-      const existingMembership = existing
-        ? await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: existing.id } }, select: { id: true } })
-        : null;
-      if (!existingMembership) newCount += 1;
-      await tx.sourceVideo.upsert({
-        where: { sourceId_videoId: { sourceId, videoId: video.id } },
-        update: { playlistIndex: entry.playlistIndex, membershipStatus: "present", lastSeenAt: seenAt },
-        create: { sourceId, videoId: video.id, playlistIndex: entry.playlistIndex, lastSeenAt: seenAt }
+    }
+    await awaitInBatches(playlistUpdates);
+
+    if (!(source.sourceType === "channel" && source.historyLimit !== null)) {
+      await tx.sourceVideo.updateMany({
+        where: { sourceId, videoId: { notIn: videos.map((video) => video.id) } },
+        data: { membershipStatus: "missing" }
       });
-      if (!existing || existing.metadataStatus !== "complete") metadataVideoIds.push(video.id);
     }
     await tx.source.update({ where: { id: sourceId }, data: { uploaderName: analysis.uploaderName, thumbnailUrl: analysis.thumbnailUrl, lastSyncedAt: seenAt, lastSyncStatus: "complete", nextSyncAt: source.syncEnabled ? new Date(seenAt.getTime() + source.syncIntervalMinutes * 60_000) : null } });
   });
-  for (const videoId of metadataVideoIds) await enqueueUniqueJob("metadata", sourceId, videoId);
-  await enqueueUniqueJob("thumbnail", sourceId);
+  const jobs = [
+    ...metadataVideoIds.map((videoId) => ({ type: "metadata", sourceId, videoId })),
+    { type: "thumbnail", sourceId }
+  ];
   if (source.playbackMode === "download") {
-    // Excludes "cancelled" as well as "complete" -- a user-cancelled download must stay cancelled through
-    // automatic syncs; only the explicit retry action (lib/jobs/service.ts) brings it back. Also excludes
-    // a Video already recorded `availability: "unavailable"` (permanently gone, or sign-in-required --
-    // see isUnavailableVideoError/isSignInRequiredError in lib/youtube/ytdlp.ts) so a dead video doesn't
-    // get a fresh download job -- and a fresh yt-dlp failure in the logs -- on every future sync; the user
-    // can still retry it explicitly (lib/jobs/service.ts) once fixed (e.g. cookies configured).
-    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled"] }, video: { availability: { not: "unavailable" } } }, select: { videoId: true } });
-    for (const item of fresh) {
-      await enqueueUniqueJob("download", sourceId, item.videoId, { target: "permanent" });
-      await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId, videoId: item.videoId } }, data: { downloadStatus: "queued" } });
+    // Excludes "cancelled" and "unavailable" as well as "complete" -- a user-cancelled download must stay
+    // cancelled through automatic syncs, and a video downloadVideo() already recorded as permanently gone
+    // (lib/downloads/service.ts) would otherwise get a fresh download job queued -- and fail again -- on
+    // every single sync forever. Only the explicit retry action (lib/jobs/service.ts) brings either back.
+    // Also excludes by the shared Video.availability, not just this membership's own downloadStatus:
+    // Video is deduplicated across sources (unique on youtubeId), so a video already marked unavailable
+    // via one source's download attempt should stay excluded for every other source referencing the same
+    // video too, even for a membership whose own downloadStatus hasn't independently been marked yet.
+    const fresh = await db.sourceVideo.findMany({ where: { sourceId, membershipStatus: "present", downloadStatus: { notIn: ["complete", "cancelled", "unavailable"] }, video: { availability: { not: "unavailable" } } }, select: { videoId: true } });
+    jobs.push(...fresh.map((item) => ({ type: "download", sourceId, videoId: item.videoId, payload: { target: "permanent" } })));
+    if (fresh.length) {
+      await db.sourceVideo.updateMany({
+        where: { sourceId, videoId: { in: fresh.map((item) => item.videoId) } },
+        data: { downloadStatus: "queued" }
+      });
     }
   }
-  if (source.tunarrChannelId && source.tunarrChannelName) await enqueueUniqueJob("tunarr_refresh", sourceId);
+  if (source.tunarrChannelId && source.tunarrChannelName) jobs.push({ type: "tunarr_refresh", sourceId });
+  await enqueueActiveJobs(jobs);
   await writeLog({ category: "sync", sourceId, message: `Synced ${source.name}. Found ${newCount} new video${newCount === 1 ? "" : "s"}.` });
   return { newCount, totalCount: analysis.entries.length, syncedAt: seenAt };
 }
 
 export async function enqueueUniqueJob(type: string, sourceId?: string, videoId?: string, payload?: unknown) {
-  const existing = await db.job.findFirst({ where: { type, sourceId, videoId, status: { in: ["queued", "running"] } } });
-  if (existing) return existing;
-  return db.job.create({ data: { type, sourceId, videoId, payloadJson: payload ? JSON.stringify(payload) : undefined, maxAttempts: type === "tunarr_refresh" ? 100 : 3 } });
+  return enqueueActiveJob({ type, sourceId, videoId, payload });
 }
 
 export async function enqueueMetadataRepair() {
@@ -215,7 +282,7 @@ export async function deleteSource(id: string) {
   const { removeSourceThumbnail } = await import("@/lib/thumbnails/service");
   await removeSourceThumbnail(id);
   await db.$transaction([
-    db.job.updateMany({ where: { sourceId: id, status: "queued" }, data: { status: "cancelled", finishedAt: new Date() } }),
+    db.job.updateMany({ where: { sourceId: id, status: "queued" }, data: { status: "cancelled", activeKey: null, finishedAt: new Date() } }),
     db.source.delete({ where: { id } })
   ]);
   const orphaned = await db.video.findMany({ where: { id: { in: source.videos.map((item) => item.videoId) }, sources: { none: {} } }, include: { cacheAsset: true } });
@@ -226,6 +293,38 @@ export async function deleteSource(id: string) {
   }
   if (orphaned.length) await db.video.deleteMany({ where: { id: { in: orphaned.map((video) => video.id) } } });
   return { deleted: true, preservedMediaDirectory: source.mediaDirectory };
+}
+
+// Drops one video from a source -- e.g. after downloadVideo() (lib/downloads/service.ts) records it
+// "unavailable" and the user decides it's not coming back, rather than leaving it queued for a retry
+// they'll never take. Removes the membership only; the Video row (and any file it owns) is cleaned up
+// too, but only once nothing else references it -- the same video can be a member of multiple sources.
+export async function removeVideoFromSource(sourceId: string, videoId: string) {
+  const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { video: true } });
+  if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
+  const activeJob = await db.job.findFirst({ where: { sourceId, videoId, status: { in: ["queued", "running"] } }, select: { id: true } });
+  if (activeJob) throw new AppError("VIDEO_BUSY", "Wait for (or cancel/stop) the video's active job before removing it.", 409);
+  const { rm } = await import("node:fs/promises");
+  if (membership.localPath) {
+    // Mirrors unlinkTunarr()'s cleanup (lib/tunarr/service.ts): the sidecar/NFO/poster files this source
+    // wrote alongside the video (see lib/downloads/service.ts) share its basename, so pick them up the
+    // same way regardless of which naming scheme wrote them.
+    await rm(membership.localPath, { force: true });
+    for (const sidecar of sidecarPathsFor(membership.localPath)) await rm(sidecar, { force: true });
+  }
+  await db.sourceVideo.delete({ where: { id: membership.id } });
+  // Logged with videoId while the Video row is still guaranteed to exist -- the orphan cleanup below may
+  // delete it, and LogEntry.videoId is a foreign key, so writing this any later could fail the same way
+  // the removal we're logging just succeeded.
+  await writeLog({ category: "source", sourceId, videoId, message: `Removed ${membership.video.youtubeId} from the source.` });
+  const stillReferenced = await db.sourceVideo.findFirst({ where: { videoId }, select: { id: true } });
+  if (!stillReferenced) {
+    const video = await db.video.findUnique({ where: { id: videoId }, include: { cacheAsset: true } });
+    if (video?.thumbnailPath) await rm(video.thumbnailPath, { force: true });
+    if (video?.cacheAsset?.localPath) await rm(video.cacheAsset.localPath, { force: true });
+    await db.video.delete({ where: { id: videoId } }).catch(() => undefined);
+  }
+  return { removed: true };
 }
 
 export async function addVideosToCollection(sourceId: string, inputs: string[], signal?: AbortSignal) {
@@ -243,8 +342,8 @@ export async function addVideosToCollection(sourceId: string, inputs: string[], 
     for (const entry of entries) {
       const video = await tx.video.upsert({
         where: { youtubeId: entry.youtubeId },
-        update: { title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, availabilityReason: null, metadataStatus: "complete" },
-        create: { youtubeId: entry.youtubeId, title: entry.title, description: entry.description, uploader: entry.uploader, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" }
+        update: { title: entry.title, description: entry.description, uploader: entry.uploader, artist: entry.artist, album: entry.album, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, availabilityReason: null, metadataStatus: "complete" },
+        create: { youtubeId: entry.youtubeId, title: entry.title, description: entry.description, uploader: entry.uploader, artist: entry.artist, album: entry.album, durationSeconds: entry.durationSeconds, uploadDate: entry.uploadDate, thumbnailUrl: entry.thumbnailUrl, youtubeUrl: entry.youtubeUrl, availability: entry.availability === "unknown" ? "available" : entry.availability, metadataStatus: "complete" }
       });
       const membership = await tx.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId: video.id } } });
       if (membership?.membershipStatus === "present") { duplicateCount += 1; continue; }

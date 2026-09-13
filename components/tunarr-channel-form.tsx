@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Clapperboard, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { DEFAULT_SCHEDULE_STYLE, SCHEDULE_STYLE_OPTIONS, type ConceptPreset } from "@/components/ai-programming-presets";
+import { ConceptPresetPicker } from "@/components/concept-preset-picker";
 
 type Props = {
   sourceId: string;
@@ -14,6 +16,9 @@ type Props = {
   lastPublishedLabel: string | null;
   initialChannelName: string | null;
   initialOrder: string;
+  initialAiInstructions: string | null;
+  initialAiProvider: string | null;
+  initialAiScheduleStyle: string | null;
 };
 
 async function responseData(response: Response) {
@@ -22,25 +27,39 @@ async function responseData(response: Response) {
   return body.data;
 }
 
-export function TunarrChannelForm({ sourceId, sourceName, downloadedCount, playbackMode, channelId, channelNumber, lastPublishedLabel, initialChannelName, initialOrder }: Props) {
+export function TunarrChannelForm({ sourceId, sourceName, downloadedCount, playbackMode, channelId, channelNumber, lastPublishedLabel, initialChannelName, initialOrder, initialAiInstructions, initialAiProvider, initialAiScheduleStyle }: Props) {
   const router = useRouter();
   const [name, setName] = useState(initialChannelName ?? sourceName);
   const [number, setNumber] = useState(channelNumber?.toString() ?? "");
   const [order, setOrder] = useState(initialOrder);
+  const [aiInstructions, setAiInstructions] = useState(initialAiInstructions ?? "");
+  const [aiProvider, setAiProvider] = useState(initialAiProvider ?? "");
+  const [aiScheduleStyle, setAiScheduleStyle] = useState(initialAiScheduleStyle ?? DEFAULT_SCHEDULE_STYLE);
+  const [conceptPreset, setConceptPreset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [candidates, setCandidates] = useState<Array<{ id: string; name: string; number: number }>>([]);
   const [channelChoice, setChannelChoice] = useState("");
   const isLinked = Boolean(channelId);
+  const isAi = order === "ai";
+
+  function selectPreset(index: number, preset: ConceptPreset) {
+    setConceptPreset(index);
+    setAiInstructions(preset.instructions);
+    if (preset.recommendedScheduleStyle) setAiScheduleStyle(preset.recommendedScheduleStyle);
+  }
 
   async function publish() {
-    setBusy(true); setFailed(false); setMessage("Preparing Tunarr local media…");
+    setBusy(true); setFailed(false); setMessage(isAi ? "Asking the AI provider for a schedule…" : "Preparing Tunarr local media…");
     try {
       const job = await responseData(await fetch(`/api/sources/${sourceId}/tunarr`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channelName: name, channelNumber: number ? Number(number) : undefined, programmingOrder: order })
+        body: JSON.stringify({
+          channelName: name, channelNumber: number ? Number(number) : undefined, programmingOrder: order,
+          ...(isAi ? { aiInstructions: aiInstructions.trim() || null, aiProvider: aiProvider || null, aiScheduleStyle } : {})
+        })
       }));
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -67,12 +86,26 @@ export function TunarrChannelForm({ sourceId, sourceName, downloadedCount, playb
     <div className="form-grid">
       <div className="field"><label htmlFor="tunarr-channel-name">Channel name</label><input className="input" id="tunarr-channel-name" value={name} maxLength={160} onChange={(event) => setName(event.target.value)} /></div>
       <div className="field"><label htmlFor="tunarr-channel-number">Channel number</label><input className="input" id="tunarr-channel-number" type="number" min="1" placeholder="Next available" value={number} onChange={(event) => setNumber(event.target.value)} /></div>
-      <div className="field"><label htmlFor="tunarr-programming-order">Programming order</label><select className="input" id="tunarr-programming-order" value={order} onChange={(event) => setOrder(event.target.value)}><option value="playlist">Playlist order</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="random">Random</option></select></div>
+      <div className="field"><label htmlFor="tunarr-programming-order">Programming order</label><select className="input" id="tunarr-programming-order" value={order} onChange={(event) => setOrder(event.target.value)}><option value="playlist">Playlist order</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="random">Random</option><option value="ai">AI Programming</option></select></div>
     </div>
+    {isAi ? <>
+      <div className="form-grid">
+        <div className="field"><label htmlFor="tunarr-schedule-style">Schedule style</label><select className="input" id="tunarr-schedule-style" value={aiScheduleStyle} onChange={(event) => setAiScheduleStyle(event.target.value)}>{SCHEDULE_STYLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><span className="meta">{SCHEDULE_STYLE_OPTIONS.find((option) => option.value === aiScheduleStyle)?.description}</span></div>
+        <div className="field"><label htmlFor="tunarr-ai-provider">AI provider</label><select className="input" id="tunarr-ai-provider" value={aiProvider} onChange={(event) => setAiProvider(event.target.value)}><option value="">Use global default (Settings)</option><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option><option value="claude-code">Claude Code (Local)</option></select></div>
+      </div>
+      <div className="field"><label htmlFor="tunarr-concept-preset">Channel style template</label><ConceptPresetPicker idPrefix="tunarr" selectedIndex={conceptPreset} onSelect={selectPreset} /></div>
+      <div className="field"><label htmlFor="tunarr-ai-instructions">Instructions for the AI (optional)</label><textarea className="input" id="tunarr-ai-instructions" rows={3} maxLength={4000} placeholder="e.g. mornings should be calmer clips, evenings more upbeat" value={aiInstructions} onChange={(event) => setAiInstructions(event.target.value)} /></div>
+    </> : null}
     <div className="toolbar"><button className="button" disabled={busy || (playbackMode === "download" && downloadedCount === 0) || !name.trim()} onClick={publish}>{busy ? <LoaderCircle size={15} className="animate-spin" /> : <Clapperboard size={15} />} {isLinked ? "Update Tunarr Channel" : "Create Tunarr Channel"}</button>{isLinked ? <><button className="button secondary" disabled={busy} onClick={reconcile}>Reconcile</button><button className="button secondary" disabled={busy} onClick={unlink}>Unlink</button></> : null}<span className="muted">{downloadedCount} local video{downloadedCount === 1 ? "" : "s"} ready</span></div>
     {playbackMode === "download" && downloadedCount === 0 ? <div className="error">Wait for or download at least one video before creating a channel.</div> : null}
     {message && <p className={failed ? "error" : "success"}>{message}</p>}
     {candidates.length ? <div className="toolbar"><select className="input" aria-label="Existing Tunarr channel" value={channelChoice} onChange={(event) => setChannelChoice(event.target.value)}><option value="">Choose an existing channel</option>{candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.number} · {candidate.name}</option>)}</select><button className="button secondary" disabled={!channelChoice || busy} onClick={reconcile}>Relink selected</button></div> : null}
-    {isLinked && <div className="meta"><span>Channel {channelNumber ?? "—"}</span><span>·</span><span className="code">{channelId}</span><span>·</span><span>Published {lastPublishedLabel}</span></div>}
+    {/* lastPublishedLabel is null whenever a publish was started (channelId got persisted) but the
+        programming/schedule write or its guide-verification never completed successfully -- see the
+        matching comment on lib/tunarr/channel-service.ts:channelTunarrLinkStatus. Called out as
+        "incomplete" rather than silently rendering "Published" with nothing after it. */}
+    {isLinked && <div className="meta"><span>Channel {channelNumber ?? "—"}</span><span>·</span><span className="code">{channelId}</span><span>·</span>
+      {lastPublishedLabel ? <span className="badge complete">Published {lastPublishedLabel}</span> : <span className="badge pending">Publish incomplete — click Update Tunarr Channel to retry</span>}
+    </div>}
   </section>;
 }

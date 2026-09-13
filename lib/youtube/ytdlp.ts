@@ -16,10 +16,10 @@ async function executable() {
 // Appended to every yt-dlp invocation below (and to downloadMp4 in lib/downloads/service.ts) when the
 // operator has pointed AppSettings.ytdlpCookiesPath at a Netscape-format cookies.txt file. Lets
 // age-restricted/bot-checked videos ("Sign in to confirm your age/you're not a bot", see
-// isSignInRequiredError below) authenticate instead of permanently failing. Unset by default -- file-path-
-// only and opt-in, never accepting credentials through the app itself. safeCommand()/sanitizeLogValue
-// (lib/logging/service.ts, lib/system/process.ts) already redact the path out of any logged command line
-// or yt-dlp error text the same way they redact `--cookies-from-browser`.
+// isSignInRequiredError below) authenticate instead of permanently failing. Unset by default -- see
+// AGENTS.md's stance on cookie-based auth for why this is opt-in and file-path-based rather than
+// accepting credentials directly. safeCommand()/sanitizeLogValue (lib/logging/service.ts, lib/system/
+// process.ts) already redact the path itself out of any logged command line or yt-dlp error text.
 export async function cookiesArgs() {
   const settings = await getSettings();
   return settings.ytdlpCookiesPath ? ["--cookies", settings.ytdlpCookiesPath] : [];

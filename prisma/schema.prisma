@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model Source {
@@ -21,6 +22,10 @@ model Source {
   historyLimit                 Int?
   directoryName                String
   mediaDirectory               String
+  // Per-Source override of AppSettings.defaultNamingScheme/defaultFilenameTemplate -- null on either
+  // means "inherit the global default", same convention as videoQuality above. See lib/naming/service.ts.
+  namingScheme                 String?
+  filenameTemplate             String?
   syncEnabled                  Boolean       @default(false)
   syncIntervalMinutes          Int           @default(360)
   nextSyncAt                   DateTime?
@@ -34,10 +39,16 @@ model Source {
   tunarrChannelName            String?
   tunarrRequestedChannelNumber Int?
   tunarrProgrammingOrder       String        @default("playlist")
-  // Per-Source override of AppSettings.defaultNamingScheme/defaultFilenameTemplate -- null on either
-  // means "inherit the global default", same convention as videoQuality above. See lib/naming/service.ts.
-  namingScheme                 String?
-  filenameTemplate             String?
+  // AI programming (see lib/programming/): null aiProvider falls back to AppSettings.aiProvider.
+  // aiScheduleStyle is a ScheduleStyle key (lib/programming/types.ts) -- null means "daily-dayparts".
+  // aiProgrammingPlanJson caches the last generated schedule (block/group layout + Tunarr Custom
+  // Show/slot IDs) so a republish updates the same Custom Shows/slots in place instead of duplicating
+  // them, and so a plan is only regenerated (an external AI call) when instructions, the schedule
+  // style, or the candidate set change.
+  aiProvider                   String?
+  aiScheduleStyle               String?
+  aiProgrammingInstructions    String?
+  aiProgrammingPlanJson        String?
   createdAt                    DateTime      @default(now())
   updatedAt                    DateTime      @updatedAt
   videos                       SourceVideo[]
@@ -50,50 +61,63 @@ model Source {
 }
 
 model Video {
-  id              String        @id @default(cuid())
-  youtubeId       String        @unique
-  title           String
-  description     String?
-  uploader        String?
-  durationSeconds Int?
-  uploadDate      DateTime?
-  thumbnailUrl    String?
-  thumbnailPath   String?
-  youtubeUrl      String
-  availability    String        @default("unknown")
+  id                 String        @id @default(cuid())
+  youtubeId          String        @unique
+  title              String
+  description        String?
+  uploader           String?
+  // Populated only when yt-dlp's full (non-flat-playlist) metadata fetch reports them -- YouTube
+  // exposes these for videos it has tagged as official music content. Flat-playlist sync entries never
+  // carry them; they're filled in once the "metadata" job (lib/metadata/service.ts:enrichVideo) runs its
+  // full per-video fetch. See lib/channels/service.ts:attachExistingVideo, the first place that reads
+  // them onto a MediaItem.
+  artist             String?
+  album              String?
+  durationSeconds    Int?
+  uploadDate         DateTime?
+  thumbnailUrl       String?
+  thumbnailPath      String?
+  youtubeUrl         String
+  availability       String        @default("unknown")
   availabilityReason String?
-  metadataStatus  String        @default("pending")
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  sources         SourceVideo[]
-  jobs            Job[]
-  logs            LogEntry[]
-  cacheAsset      CacheAsset?
+  metadataStatus     String        @default("pending")
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  sources            SourceVideo[]
+  jobs               Job[]
+  logs               LogEntry[]
+  cacheAsset         CacheAsset?
 
   @@index([createdAt])
 }
 
 model SourceVideo {
-  id               String   @id @default(cuid())
+  id               String     @id @default(cuid())
   sourceId         String
   videoId          String
   playlistIndex    Int?
-  membershipStatus String   @default("present")
-  lastSeenAt       DateTime @default(now())
+  membershipStatus String     @default("present")
+  lastSeenAt       DateTime   @default(now())
   localPath        String?
-  downloadStatus   String   @default("not_downloaded")
+  downloadStatus   String     @default("not_downloaded")
   fileSize         BigInt?
-  retentionOrigin  String   @default("none")
+  retentionOrigin  String     @default("none")
   // Assigned once, lazily, the first time this membership is resolved under the "tvshow" naming
   // scheme (see lib/naming/service.ts:assignEpisodeNumber) -- season is the upload year, episode is a
   // per-(source, season) monotonic counter. Never recomputed afterward, so switching naming schemes or
   // discovering older videos later never renumbers/renames anything already on disk.
   seasonNumber     Int?
   episodeNumber    Int?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  source           Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  video            Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  // Stamped by lib/channels/service.ts:attachExistingVideo every time this video is attached to any
+  // Channel (AI content selection, heuristic Smart selection, or manual add) -- the closest proxy this
+  // app has for "recently watched"/"unwatched", since Tunarr (not TunarrTube) actually plays content
+  // and no playback telemetry flows back here. Null means "never selected onto a channel".
+  lastSelectedAt   DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  source           Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  video            Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  mediaItem        MediaItem?
 
   @@unique([sourceId, videoId])
   @@index([sourceId, playlistIndex])
@@ -120,44 +144,77 @@ model ImportDraft {
 }
 
 model Job {
-  id          String    @id @default(cuid())
+  id          String     @id @default(cuid())
+  // Non-null only while a job is queued/running. The unique constraint makes active-job
+  // deduplication atomic; terminal transitions clear it so the same work can be queued again.
+  activeKey   String?    @unique
   type        String
-  status      String    @default("queued")
+  status      String     @default("queued")
   sourceId    String?
   videoId     String?
+  channelId   String?
+  mediaItemId String?
   payloadJson String?
-  attempts    Int       @default(0)
-  maxAttempts Int       @default(3)
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(3)
   error       String?
-  runAfter    DateTime  @default(now())
-  createdAt   DateTime  @default(now())
+  runAfter    DateTime   @default(now())
+  createdAt   DateTime   @default(now())
   startedAt   DateTime?
   finishedAt  DateTime?
-  updatedAt   DateTime  @updatedAt
-  source      Source?   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  video       Video?    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  updatedAt   DateTime   @updatedAt
+  source      Source?    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  video       Video?     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  channel     Channel?   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  mediaItem   MediaItem? @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
 
   @@index([status, runAfter, createdAt])
   @@index([sourceId, type, status])
   @@index([videoId, type, status])
+  @@index([channelId, type, status])
+  @@index([mediaItemId, type, status])
 }
 
 model AppSettings {
-  id                  Int      @id @default(1)
-  mediaBaseDirectory  String
-  tunarrUrl           String   @default("http://127.0.0.1:8000")
-  cacheMaxMegabytes   Int      @default(20480)
-  cacheMaxAgeDays     Int      @default(30)
-  logRetentionDays    Int      @default(30)
-  defaultVideoQuality String   @default("best")
-  jobsPaused          Boolean  @default(false)
+  id                      Int      @id @default(1)
+  mediaBaseDirectory      String
+  tunarrUrl               String   @default("http://127.0.0.1:8000")
+  cacheMaxMegabytes       Int      @default(20480)
+  cacheMaxAgeDays         Int      @default(30)
+  logRetentionDays        Int      @default(30)
+  defaultVideoQuality     String   @default("best")
+  jobsPaused              Boolean  @default(false)
+  musicbrainzContactEmail String?
   // Absolute path to a Netscape-format cookies.txt file yt-dlp should authenticate with (passed as
   // `--cookies <path>` -- see lib/youtube/ytdlp.ts's cookiesArgs). Lets age-restricted/bot-checked videos
   // ("Sign in to confirm your age/you're not a bot") download instead of permanently failing. This is a
   // path to a file the operator manages and mounts into the container (e.g. a docker-compose bind mount)
   // -- TunarrTube never uploads, generates, or displays its contents, only ever passes the path through to
-  // yt-dlp. Null means unauthenticated (the default).
-  ytdlpCookiesPath    String?
+  // yt-dlp. Null means unauthenticated (the MVP default; see AGENTS.md's stance on cookie-based auth).
+  ytdlpCookiesPath        String?
+  // Per-provider on/off switches for lib/metadata-lookup/'s MusicBrainz/iTunes search, plus the score
+  // (0-100, same scale both providers now return -- see lib/metadata-lookup/itunes.ts's similarity
+  // scorer) a candidate needs to be applied automatically by lib/metadata-lookup/service.ts:autoApplyMetadata,
+  // the "metadata_lookup" job queued by attachExistingVideo/scanLocalFolder when a new MediaItem has no
+  // artist. Below the threshold, the item is left for the user's manual Search in the media item editor.
+  metadataMusicbrainzEnabled  Boolean @default(true)
+  metadataItunesEnabled       Boolean @default(true)
+  metadataAutoApplyThreshold  Int     @default(80)
+  // Global default for lib/programming/'s AI provider selection ("auto" | "anthropic" | "openai" |
+  // "claude-code"); "auto" picks whichever of ANTHROPIC_API_KEY/OPENAI_API_KEY is set in the
+  // environment (never "claude-code" -- see lib/programming/provider.ts's comment on why). A Source
+  // or Channel's own aiProvider column overrides this per-entity.
+  aiProvider              String   @default("auto")
+  // Local Claude Code CLI integration (lib/ai/) -- an alternative to the ANTHROPIC_API_KEY/OPENAI_API_KEY
+  // providers above that shells out to an already-authenticated `claude` CLI instead of calling an API
+  // with a key. Off by default (aiClaudeCodeEnabled) so installing this app never starts invoking a local
+  // binary without the operator opting in, even if one happens to be on PATH. aiClaudeCodePath is an
+  // optional override for when auto-detection (PATH lookup) is unreliable -- null means auto-detect, same
+  // convention as ytdlpCookiesPath above. aiClaudeCodeTimeoutSeconds bounds how long TunarrTube waits for
+  // one `claude` invocation before killing it.
+  aiClaudeCodeEnabled     Boolean  @default(false)
+  aiClaudeCodePath        String?
+  aiClaudeCodeTimeoutSeconds Int   @default(120)
   // Global default for a downloaded video's on-disk filename/folder layout -- "id" (today's
   // <youtubeId>.mp4, flat, unchanged default), "template" (defaultFilenameTemplate applied flat), or
   // "tvshow" (Emby/Plex/Jellyfin- and Tunarr-Shows-compatible Show/Season <year>/S<year>E<nnn> layout).
@@ -165,8 +222,8 @@ model AppSettings {
   // lib/naming/service.ts.
   defaultNamingScheme     String   @default("id")
   defaultFilenameTemplate String   @default("{title}")
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 model CacheAsset {
@@ -201,17 +258,163 @@ model TunarrPathMapping {
 }
 
 model LogEntry {
-  id        String   @id @default(cuid())
-  level     String   @default("info")
-  category  String
-  message   String
-  details   String?
-  sourceId  String?
-  videoId   String?
-  createdAt DateTime @default(now())
-  source    Source?  @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  video     Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  id          String     @id @default(cuid())
+  level       String     @default("info")
+  category    String
+  message     String
+  details     String?
+  sourceId    String?
+  videoId     String?
+  channelId   String?
+  mediaItemId String?
+  createdAt   DateTime   @default(now())
+  source      Source?    @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  video       Video?     @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  channel     Channel?   @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  mediaItem   MediaItem? @relation(fields: [mediaItemId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([category, createdAt])
+}
+
+// --- Channel-generator domain: curated, overlay-rendered channels ---------------------------------
+// A Channel groups an ordered list of MediaItems behind one overlay template and, once published, one
+// Tunarr channel -- distinct from a Source's own 1:1 Tunarr channel. channelType exists so a future
+// "news" (or other) template category can reuse every model below without a schema migration -- only
+// "music_video" ships in this pass. intakeSourceId points at a companion Source (sourceType:
+// "collection") this Channel owns for videos added by pasting a YouTube URL directly onto it -- see
+// lib/channels/service.ts:addYoutubeUrlToChannel, which reuses the existing collection pipeline
+// (lib/sources/service.ts:addVideosToCollection) rather than a second YouTube-download implementation.
+model Channel {
+  id                           String    @id @default(cuid())
+  name                         String
+  channelType                  String    @default("music_video")
+  slug                         String    @unique
+  templateId                   String
+  storageDirectory             String
+  logoAssetPath                String?
+  programmingOrder             String    @default("manual") // manual | oldest | newest | random | ai
+  intakeSourceId               String?
+  tunarrMediaSourceId          String?
+  tunarrLibraryId              String?
+  tunarrChannelId              String?
+  tunarrChannelNumber          Int?
+  tunarrChannelName            String?
+  tunarrRequestedChannelNumber Int?
+  tunarrLastPublishedAt        DateTime?
+  // See the matching fields on Source above -- same AI-programming cache/override convention.
+  aiProvider                   String?
+  aiScheduleStyle               String?
+  aiProgrammingInstructions    String?
+  aiProgrammingPlanJson        String?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  template OverlayTemplate @relation(fields: [templateId], references: [id])
+  items    ChannelItem[]
+  jobs     Job[]
+  logs     LogEntry[]
+
+  @@index([templateId])
+}
+
+// A clip curated onto one or more Channels -- either a video already downloaded through the normal
+// Source/Video/SourceVideo pipeline (originType "sourceVideo"), or a local file added by folder scan
+// (originType "local"). Deliberately does NOT duplicate YouTube metadata/download logic: a
+// "sourceVideo"-origin MediaItem is a thin pointer at a SourceVideo TunarrTube already manages.
+model MediaItem {
+  id                     String    @id @default(cuid())
+  originType             String // sourceVideo | local
+  sourceVideoId          String?   @unique
+  originLocalPath        String?
+  title                  String
+  artist                 String?
+  album                  String?
+  year                   Int?
+  genre                  String?
+  releaseDate            DateTime?
+  durationSeconds        Int?
+  sourceThumbnailUrl     String?
+  sourceThumbnailPath    String?
+  metadataStatus         String    @default("pending") // pending | manual | matched | failed
+  metadataLookupProvider String? // musicbrainz | itunes
+  metadataLookupId       String?
+  metadataLookupJson     String?
+  customFieldsJson       String? // arbitrary string->string overrides, keyed by an OverlayTemplate binding key --
+  // lets templates outside the built-in title/artist/album shape (e.g. a news template's
+  // "ticker" field) carry real per-item text. See lib/overlay/service.ts:resolveBindingValues.
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  sourceVideo  SourceVideo?    @relation(fields: [sourceVideoId], references: [id], onDelete: SetNull)
+  channelItems ChannelItem[]
+  renders      RenderedAsset[]
+  jobs         Job[]
+  logs         LogEntry[]
+
+  @@index([createdAt])
+}
+
+// Thin ordering join table between a Channel and the MediaItems curated onto it.
+model ChannelItem {
+  id          String   @id @default(cuid())
+  channelId   String
+  mediaItemId String
+  position    Int
+  addedAt     DateTime @default(now())
+
+  channel   Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  mediaItem MediaItem @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, mediaItemId])
+  @@index([channelId, position])
+}
+
+// A reusable overlay design: HTML/CSS with {{binding}} placeholders, plus the field list that drives
+// the editor form/live-preview sample data, plus one or more timed layers. The persistent corner logo
+// bug is deliberately NOT a layer here -- it's set once as Tunarr's own native channel watermark and
+// never burned in.
+model OverlayTemplate {
+  id               String   @id @default(cuid())
+  name             String
+  channelType      String   @default("music_video")
+  description      String?
+  htmlTemplate     String
+  bindingsJson     String // BindingField[]
+  layersJson       String // OverlayLayer[]
+  // Present only for templates authored (or still editable) via the visual drag-and-drop builder --
+  // lib/overlay/visual.ts generates htmlTemplate/bindingsJson from this. Null means "code-only": either
+  // hand-written from the start, or detached by a direct HTML edit past what the builder can represent.
+  visualLayoutJson String? // VisualLayout | null
+  isBuiltIn        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  channels Channel[]
+  renders  RenderedAsset[]
+}
+
+// One burned-in render of a MediaItem with a specific OverlayTemplate. Keyed by the pair (not by
+// channel) because the same rendered file can be reused across every channel that shares both the clip
+// and the template -- a different template always forces a new render.
+model RenderedAsset {
+  id                    String    @id @default(cuid())
+  mediaItemId           String
+  templateId            String
+  status                String    @default("pending") // pending | rendering | complete | failed
+  outputPath            String?
+  outputDurationSeconds Int?
+  outputFileSize        BigInt?
+  thumbnailPath         String?
+  overlayPngPaths       String? // JSON string[]
+  ffmpegLog             String?
+  error                 String?
+  renderedAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  mediaItem MediaItem       @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
+  template  OverlayTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([mediaItemId, templateId])
 }

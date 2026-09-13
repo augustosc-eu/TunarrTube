@@ -27,7 +27,7 @@ export async function PATCH(request: Request, { params }: Context) {
       : input.syncEnabled === false ? null : undefined;
     const source = await db.source.update({ where: { id }, data: { ...input, nextSyncAt } });
     if (input.playbackMode === "download") {
-      const memberships = await db.sourceVideo.findMany({ where: { sourceId: id, membershipStatus: "present", downloadStatus: { not: "complete" } }, select: { videoId: true } });
+      const memberships = await db.sourceVideo.findMany({ where: { sourceId: id, membershipStatus: "present", downloadStatus: { notIn: ["complete", "unavailable"] } }, select: { videoId: true } });
       const { enqueueUniqueJob } = await import("@/lib/sources/service");
       for (const membership of memberships) await enqueueUniqueJob("download", id, membership.videoId, { target: "permanent" });
       const { kickWorker } = await import("@/lib/jobs/runner"); kickWorker();
