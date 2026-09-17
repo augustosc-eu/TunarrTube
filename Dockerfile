@@ -31,8 +31,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 tunarrtube \
   && useradd --system --uid 1001 --gid tunarrtube --create-home tunarrtube \
-  && mkdir -p /config/thumbnails /media \
-  && chown -R tunarrtube:tunarrtube /config /media /home/tunarrtube
+  && mkdir -p /config/thumbnails /media /app/storage \
+  && chown -R tunarrtube:tunarrtube /config /media /app/storage /home/tunarrtube
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/.next/standalone ./
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/.next/static ./.next/static
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/prisma ./prisma

@@ -96,7 +96,13 @@ The supplied Compose file persists:
 |---|---|---|
 | SQLite database and thumbnails | `/config` | `ytarr-config` |
 | Downloaded and cached media | `/media` | `ytarr-media` |
+| Channels overlay render cache and staged renders | `/app/storage` | `ytarr-storage` |
 | Optional Tunarr configuration | `/config/tunarr` | `tunarr-config` |
+
+`/app/storage` is a rebuildable cache (Channels overlay screenshots and staged render outputs) rather
+than primary media, but the database keeps referencing paths under it until a render is republished to
+a channel, so it's still persisted by default to avoid needlessly re-rendering after a container
+recreation.
 
 The `ytarr-*` volume names and `/config/ytarr.db` filename are legacy identifiers intentionally retained so upgrades continue using existing data.
 

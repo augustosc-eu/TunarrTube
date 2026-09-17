@@ -65,7 +65,7 @@ Edit `prisma/schema.prisma`, then run `npm run db:migrate` to generate a migrati
 If a change alters routing, data flow, an external integration, the schema, or the build/deploy model, update `docs/ARCHITECTURE.md` in the same change. If it changes a user-facing workflow, update `README.md` and, if relevant, `docs/PRODUCT.md`. Don't let these drift from the code.
 
 
-## vexp - Context-Aware AI Coding <!-- vexp v3.1.1 -->
+## vexp - Context-Aware AI Coding <!-- vexp v3.1.3 -->
 
 ### Context strategy: call run_pipeline ONCE at task start
 If the task already names the files/symbols to touch, SKIP vexp. Otherwise one

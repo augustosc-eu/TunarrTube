@@ -17,6 +17,11 @@ services:
     volumes:
       - ytarr-config:/config
       - ytarr-media:/media
+      # /app/storage holds the render-cache and staged Channels-overlay render outputs
+      # (lib/constants.ts's RENDER_CACHE_ROOT/RENDERS_ROOT) -- freely rebuildable, but RenderedAsset
+      # rows in the database keep pointing at paths under it until a render is republished, so losing
+      # it on every container recreation needlessly breaks in-progress/unpublished renders.
+      - ytarr-storage:/app/storage
       # - ./cookies.txt:/config/cookies.txt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -45,3 +50,4 @@ volumes:
   ytarr-config:
   ytarr-media:
   tunarr-config:
+  ytarr-storage:
