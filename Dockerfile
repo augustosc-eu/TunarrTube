@@ -25,9 +25,13 @@ ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 # YTARR_PUPPETEER_EXECUTABLE_PATH points the Channels overlay-render feature (lib/overlay/puppeteer.ts)
 # at Debian's own chromium package -- see the deps-stage PUPPETEER_SKIP_DOWNLOAD comment above.
 ENV YTARR_PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# yt-dlp needs a JavaScript runtime to solve YouTube's player challenges (without one, formats go missing
+# and downloads fail with HTTP 403/500). It only auto-enables deno, so /etc/yt-dlp.conf points it at the
+# image's own Node.js; "yt-dlp[default]" pulls in yt-dlp-ejs, the challenge-solver scripts it runs there.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip ca-certificates chromium \
-  && pip3 install --break-system-packages --no-cache-dir yt-dlp \
+  && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default]" \
+  && echo "--js-runtimes node" > /etc/yt-dlp.conf \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 tunarrtube \
   && useradd --system --uid 1001 --gid tunarrtube --create-home tunarrtube \
