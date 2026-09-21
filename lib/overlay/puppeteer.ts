@@ -45,7 +45,8 @@ export async function renderHtmlToPng(html: string, opts: { width: number; heigh
       style.textContent = "html, body { background: transparent !important; margin: 0; padding: 0; }";
       document.documentElement.appendChild(style);
     });
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    // "load" waits for the template's <img> elements; Puppeteer 25 no longer accepts "networkidle*" here.
+    await page.setContent(html, { waitUntil: "load" });
     const screenshot = await page.screenshot({ type: "png", omitBackground: true });
     return Buffer.from(screenshot);
   } finally {
