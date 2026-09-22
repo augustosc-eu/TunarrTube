@@ -96,7 +96,13 @@ The supplied Compose file persists:
 |---|---|---|
 | SQLite database and thumbnails | `/config` | `ytarr-config` |
 | Downloaded and cached media | `/media` | `ytarr-media` |
+| Channels overlay render cache and staged renders | `/app/storage` | `ytarr-storage` |
 | Optional Tunarr configuration | `/config/tunarr` | `tunarr-config` |
+
+`/app/storage` is a rebuildable cache (Channels overlay screenshots and staged render outputs) rather
+than primary media, but the database keeps referencing paths under it until a render is republished to
+a channel, so it's still persisted by default to avoid needlessly re-rendering after a container
+recreation.
 
 The `ytarr-*` volume names and `/config/ytarr.db` filename are legacy identifiers intentionally retained so upgrades continue using existing data.
 
@@ -348,6 +354,10 @@ Downloads are written to temporary paths and renamed into place only after `yt-d
 ### `yt-dlp` or FFmpeg is not found
 
 Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_PATH` or `TUNARRTUBE_FFMPEG_PATH` to `.env` if automatic discovery fails, then restart TunarrTube.
+
+### Downloads fail with "No supported JavaScript runtime" or HTTP 403/500
+
+Current `yt-dlp` needs a JavaScript runtime (plus its `yt-dlp-ejs` solver scripts) to extract YouTube formats; without one, downloads fail with the warning above followed by HTTP errors. The Docker image is already configured for this (`yt-dlp[default]` plus `--js-runtimes node` in `/etc/yt-dlp.conf`) — rebuild and redeploy it if you see this on an older image. For a host install, install [Deno](https://deno.com) (auto-detected), or add `--js-runtimes node` to a `yt-dlp.conf` and install with `pip install "yt-dlp[default]"`. See the [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 
 ### A YouTube URL cannot be analyzed
 

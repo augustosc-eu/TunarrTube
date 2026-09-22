@@ -1,7 +1,6 @@
 import path from "node:path";
 import { mkdir, realpath, access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { Prisma } from "@prisma/client";
 import { AppError } from "@/lib/api";
 import { DEFAULT_MEDIA_ROOT } from "@/lib/constants";
 import { db } from "@/lib/db/client";
@@ -57,17 +56,12 @@ export async function getSettings() {
   const tunarrUrl = normalizeTunarrUrl(process.env.TUNARRTUBE_TUNARR_URL ?? process.env.YTARR_TUNARR_URL ?? "http://127.0.0.1:8000");
   // Not validated here (unlike mediaBaseDirectory/tunarrUrl above) -- see validateCookiesPath's comment.
   const ytdlpCookiesPath = process.env.TUNARRTUBE_YTDLP_COOKIES ?? process.env.YTARR_YTDLP_COOKIES ?? null;
-  try {
-    return await db.appSettings.create({ data: { id: 1, mediaBaseDirectory, tunarrUrl, ytdlpCookiesPath } });
-  } catch (error) {
-    // Another process/worker can win the create race between our findUnique and create (tests run
-    // several files concurrently against the same SQLite file, and multiple app instances could too).
-    // Fall back to reading what the winner just inserted instead of failing the request.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      return reconcileMediaDirectory(await db.appSettings.findUniqueOrThrow({ where: { id: 1 } }));
-    }
-    throw error;
-  }
+  // Atomic create-or-fetch: concurrent callers (instrumentation.ts's kickWorker()/startScheduler(), plus
+  // any early request) can all reach this branch together at startup, before any row exists. upsert with
+  // a no-op `update` resolves that race at the DB layer -- every loser gets the winner's row back --
+  // instead of racing appSettings.create() and having Prisma log a unique-constraint error per loser.
+  const settings = await db.appSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1, mediaBaseDirectory, tunarrUrl, ytdlpCookiesPath } });
+  return reconcileMediaDirectory(settings);
 }
 
 async function reconcileMediaDirectory(settings: Awaited<ReturnType<typeof db.appSettings.findUniqueOrThrow>>) {
