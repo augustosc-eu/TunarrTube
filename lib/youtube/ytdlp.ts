@@ -1,4 +1,6 @@
+import { mkdir } from "node:fs/promises";
 import { AppError } from "@/lib/api";
+import { YTDLP_CACHE_ROOT } from "@/lib/constants";
 import { getSettings } from "@/lib/settings/service";
 import { discoverBinary } from "@/lib/system/binaries";
 import { runProcess } from "@/lib/system/process";
@@ -25,11 +27,37 @@ export async function cookiesArgs() {
   return settings.ytdlpCookiesPath ? ["--cookies", settings.ytdlpCookiesPath] : [];
 }
 
+// yt-dlp only auto-enables the `deno` JS runtime for solving YouTube's player challenges; without one
+// (deno or otherwise), YouTube intermittently serves "The page needs to be reloaded" instead of a playable
+// format. This app always runs on Node.js, so it tells yt-dlp to use that runtime directly rather than
+// relying on an operator to install Deno or hand-configure a yt-dlp.conf (see the README's "No supported
+// JavaScript runtime" troubleshooting entry -- Docker's own /etc/yt-dlp.conf sets the same flags as a
+// system-wide fallback, but isn't load-bearing once these are always passed here). --remote-components
+// ejs:github is required for the `node` runtime to actually download the yt-dlp-ejs challenge-solver
+// script it runs -- without it, yt-dlp just warns the script "was skipped" and the runtime above does
+// nothing. Appended to every yt-dlp invocation below, and to downloadMp4 in lib/downloads/service.ts.
+const CHALLENGE_SOLVER_ARGS = ["--js-runtimes", "node", "--remote-components", "ejs:github"];
+
+export function challengeSolverArgs() {
+  return CHALLENGE_SOLVER_ARGS;
+}
+
+// The challenge solver above downloads its script on first use and yt-dlp caches it (plus other data)
+// under XDG_CACHE_HOME, which defaults to ~/.cache -- not guaranteed to exist, be writable, or persist
+// across restarts/container recreations. Point it at this app's own persisted storage instead (see
+// YTDLP_CACHE_ROOT, lib/constants.ts) so the download happens once and survives like RENDER_CACHE_ROOT
+// does. Exported so downloadMp4 (lib/downloads/service.ts) can pass the same env.
+export async function challengeSolverEnv(): Promise<NodeJS.ProcessEnv> {
+  await mkdir(YTDLP_CACHE_ROOT, { recursive: true });
+  return { ...process.env, XDG_CACHE_HOME: YTDLP_CACHE_ROOT };
+}
+
 export async function analyzePlaylist(input: string, signal?: AbortSignal): Promise<PlaylistAnalysis> {
   const url = validatePlaylistUrl(input);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...await cookiesArgs(), "--", url], {
+  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...challengeSolverArgs(), ...await cookiesArgs(), "--", url], {
     signal,
-    timeoutMs: 10 * 60_000
+    timeoutMs: 10 * 60_000,
+    env: await challengeSolverEnv()
   });
   try {
     return normalizePlaylist(JSON.parse(result.stdout) as Record<string, unknown>, url);
@@ -45,10 +73,10 @@ function channelFeedUrl(base: string, feed: Exclude<ChannelFeed, "all">) {
 
 async function analyzeChannelFeed(base: string, feed: Exclude<ChannelFeed, "all">, historyLimit: number | null, signal?: AbortSignal) {
   const url = channelFeedUrl(base, feed);
-  const args = ["--dump-single-json", "--flat-playlist", "--no-warnings"];
+  const args = ["--dump-single-json", "--flat-playlist", "--no-warnings", ...challengeSolverArgs()];
   if (historyLimit !== null) args.push("--playlist-end", String(historyLimit));
   args.push(...await cookiesArgs(), "--", url);
-  const result = await runProcess(await executable(), args, { signal, timeoutMs: 10 * 60_000 });
+  const result = await runProcess(await executable(), args, { signal, timeoutMs: 10 * 60_000, env: await challengeSolverEnv() });
   try {
     return normalizeChannel(JSON.parse(result.stdout) as Record<string, unknown>, base, feed, historyLimit);
   } catch (error) {
@@ -91,9 +119,10 @@ export async function analyzeSource(input: string, options: AnalyzeSourceOptions
 
 export async function fetchVideoMetadata(youtubeUrl: string, signal?: AbortSignal): Promise<PlaylistEntry> {
   const url = validateVideoUrl(youtubeUrl);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", ...await cookiesArgs(), "--", url], {
+  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", ...challengeSolverArgs(), ...await cookiesArgs(), "--", url], {
     signal,
-    timeoutMs: 5 * 60_000
+    timeoutMs: 5 * 60_000,
+    env: await challengeSolverEnv()
   });
   try {
     const raw = JSON.parse(result.stdout) as Record<string, unknown>;
@@ -221,9 +250,10 @@ export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality
   const result = await runProcess(await executable(), [
     "--get-url", "--no-playlist", "--no-warnings",
     "-f", streamFormatSelector(quality),
+    ...challengeSolverArgs(),
     ...await cookiesArgs(),
     "--", youtubeUrl
-  ], { signal, timeoutMs: 2 * 60_000 });
+  ], { signal, timeoutMs: 2 * 60_000, env: await challengeSolverEnv() });
   const value = result.stdout.trim().split(/\r?\n/)[0];
   if (!value) throw new AppError("STREAM_URL_MISSING", "YouTube did not return a playable stream URL.", 502);
   const url = new URL(value);

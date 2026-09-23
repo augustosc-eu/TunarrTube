@@ -26,12 +26,20 @@ ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 # at Debian's own chromium package -- see the deps-stage PUPPETEER_SKIP_DOWNLOAD comment above.
 ENV YTARR_PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # yt-dlp needs a JavaScript runtime to solve YouTube's player challenges (without one, formats go missing
-# and downloads fail with HTTP 403/500). It only auto-enables deno, so /etc/yt-dlp.conf points it at the
-# image's own Node.js; "yt-dlp[default]" pulls in yt-dlp-ejs, the challenge-solver scripts it runs there.
+# and extraction intermittently fails with "The page needs to be reloaded"/HTTP 403/500). It only
+# auto-enables deno, so /etc/yt-dlp.conf points it at the image's own Node.js as a system-wide default
+# (useful for e.g. `docker exec ... yt-dlp ...` debugging); the app itself passes the equivalent flags on
+# every invocation regardless of deployment (`lib/youtube/ytdlp.ts`'s CHALLENGE_SOLVER_ARGS), so this isn't
+# load-bearing for normal operation. "yt-dlp[default]" pulls in yt-dlp-ejs, and --remote-components
+# ejs:github lets it fetch the actual challenge-solver script it runs there (without this, yt-dlp skips the
+# solver and only warns, defeating --js-runtimes node above). yt-dlp caches that download under
+# XDG_CACHE_HOME (`lib/youtube/ytdlp.ts` points it at storage/yt-dlp-cache, alongside RENDER_CACHE_ROOT --
+# see lib/constants.ts -- so it lands on the ytarr-storage volume mounted at /app/storage below, same as a
+# native install persists it under its own project directory).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip ca-certificates chromium \
   && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default]" \
-  && echo "--js-runtimes node" > /etc/yt-dlp.conf \
+  && printf '%s\n' "--js-runtimes node" "--remote-components ejs:github" > /etc/yt-dlp.conf \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 tunarrtube \
   && useradd --system --uid 1001 --gid tunarrtube --create-home tunarrtube \
