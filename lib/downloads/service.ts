@@ -10,7 +10,7 @@ import { assignEpisodeNumber, resolveVideoPaths, seasonNumberFor, type NamingSch
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
-import { cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
+import { challengeSolverArgs, challengeSolverEnv, cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
 
 // Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means
 // retrying automatically will never succeed: the video is gone for good (deleted/private/region-blocked/
@@ -184,8 +184,9 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
         "-f", downloadFormatSelector(quality),
         "--concurrent-fragments", "4",
         "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
+        ...challengeSolverArgs(),
         "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
-      ], { timeoutMs: 12 * 60 * 60_000, signal });
+      ], { timeoutMs: 12 * 60 * 60_000, signal, env: await challengeSolverEnv() });
       const files = await readdir(tempDirectory);
       const output = files.find((file) => file === `${youtubeId}.mp4`);
       if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);
