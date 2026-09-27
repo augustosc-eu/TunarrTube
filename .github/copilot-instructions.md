@@ -1,4 +1,4 @@
-## vexp <!-- vexp v3.1.3 -->
+## vexp <!-- vexp v3.2.5 -->
 
 ### Context strategy: call run_pipeline ONCE at task start
 If the task already names the files/symbols to touch, SKIP vexp. Otherwise one
