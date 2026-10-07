@@ -343,7 +343,12 @@ export function kickWorker() {
   if (globalWorker.ytarrWakeTimer) { clearTimeout(globalWorker.ytarrWakeTimer); globalWorker.ytarrWakeTimer = undefined; }
   for (const id of LANE_IDS) {
     if (lanes().has(id)) continue;
-    const promise = work(laneKind(id)).finally(() => {
+    // A throw out of work() (e.g. a DB error outside handleJobFailure's guarded updates) would otherwise
+    // surface as an unhandled rejection and take down the process or silently kill the lane.
+    const promise = work(laneKind(id)).catch((error) => writeLog({
+      level: "error", category: "job",
+      message: `Job worker lane ${id} crashed: ${sanitizeLogValue(error instanceof Error ? error.message : String(error))}`
+    }).catch(() => undefined)).finally(() => {
       lanes().delete(id);
       void scheduleWakeIfIdle();
     });
