@@ -204,6 +204,15 @@ export function isRateLimitedError(message: string) {
   return RATE_LIMIT_SIGNAL.test(message);
 }
 
+// yt-dlp's wording when YouTube's CDN drops or stalls a connection mid-download (typically a short
+// throttling window on the client IP). Unlike a 429 this doesn't mean "stop everything", but retrying
+// within seconds just hits the same window, so callers back off for minutes instead.
+const TRANSIENT_NETWORK_SIGNAL = /Connection aborted|RemoteDisconnected|Connection reset|\d+ bytes read, \d+ more expected|IncompleteRead|Read timed out|timed out/i;
+
+export function isTransientNetworkError(message: string) {
+  return TRANSIENT_NETWORK_SIGNAL.test(message);
+}
+
 // yt-dlp's message for a video that's gone for good -- deleted, made private, taken down, region/
 // copyright blocked -- as opposed to a transient failure. Retrying this exact video will never succeed,
 // so callers (enrichVideo in lib/metadata/service.ts, downloadVideo/cacheVideo in

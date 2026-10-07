@@ -14,6 +14,27 @@ describe("download queue rate-limit handling", () => {
     await db.job.deleteMany({ where: { id: { in: cleanupJobIds.splice(0) } } });
   });
 
+  it("backs off for minutes (counting the attempt, without pausing other jobs) when YouTube's CDN drops the connection", async () => {
+    const jobA = await db.job.create({ data: { type: "download", attempts: 1, status: "running" } });
+    const jobB = await db.job.create({ data: { type: "download", attempts: 0, status: "queued" } });
+    cleanupJobIds.push(jobA.id, jobB.id);
+
+    const before = Date.now();
+    await handleJobFailure(jobA, new Error("yt-dlp failed: ERROR: [download] Got error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')). Giving up after 10 retries"));
+
+    const [refreshedA, refreshedB] = await Promise.all([
+      db.job.findUniqueOrThrow({ where: { id: jobA.id } }),
+      db.job.findUniqueOrThrow({ where: { id: jobB.id } })
+    ]);
+
+    // Still counted (bounded retries), but delayed ~5 minutes rather than the ordinary 4s.
+    expect(refreshedA.status).toBe("queued");
+    expect(refreshedA.attempts).toBe(1);
+    expect(refreshedA.runAfter.getTime()).toBeGreaterThanOrEqual(before + 290_000);
+    // Unlike a 429, the rest of the queue is left alone.
+    expect(refreshedB.runAfter.getTime()).toBeLessThan(before + 60_000);
+  });
+
   it("pauses every queued download job (not just the failing one) on a YouTube 429, without burning an attempt", async () => {
     // attempts: 1 simulates the state right after claimJob()'s atomic increment on the job that's about
     // to fail; jobB simulates a second, not-yet-claimed download job still waiting in the queue.

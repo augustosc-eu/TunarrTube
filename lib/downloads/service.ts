@@ -183,6 +183,9 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
         "--ffmpeg-location", path.dirname(ffmpeg),
         "-f", downloadFormatSelector(quality),
         "--concurrent-fragments", "4",
+        // Space out yt-dlp's own HTTP/fragment retries (1s, 2s, 4s ... capped at 30s) so its 10 retries
+        // span a throttling window instead of all burning within seconds.
+        "--retry-sleep", "http:exp=1:30", "--retry-sleep", "fragment:exp=1:30",
         "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
         ...challengeSolverArgs(),
         "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
