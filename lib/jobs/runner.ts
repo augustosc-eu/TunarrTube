@@ -7,7 +7,7 @@ import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
 import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
-import { isRateLimitedError } from "@/lib/youtube/ytdlp";
+import { isRateLimitedError, isTransientNetworkError } from "@/lib/youtube/ytdlp";
 import { enqueueChannelJob, runChannelBrief, runContentSelection, runHeuristicSelection } from "@/lib/channels/service";
 import { scanLocalFolder } from "@/lib/ingest/local-scan";
 import { renderMediaItem } from "@/lib/renders/service";
@@ -260,7 +260,12 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     return;
   }
   const retry = job.attempts < job.maxAttempts;
-  const delaySeconds = Math.min(60, 2 ** job.attempts * 2);
+  // Dropped connections to YouTube's CDN usually clear within minutes, so wait that long rather than
+  // the 4s/8s ordinary backoff -- still counted against maxAttempts, so a permanently broken video
+  // can't retry forever.
+  const delaySeconds = RATE_LIMITED_JOB_TYPES.includes(job.type) && isTransientNetworkError(message)
+    ? Math.min(30 * 60, 300 * job.attempts)
+    : Math.min(60, 2 ** job.attempts * 2);
   await db.job.updateMany({
     where: { id: job.id, status: "running" },
     data: { status: retry ? "queued" : "failed", activeKey: retry ? undefined : null, error: message.slice(-2000), runAfter: new Date(Date.now() + delaySeconds * 1000), finishedAt: retry ? null : new Date() }
