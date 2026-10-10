@@ -23,7 +23,10 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "/*": ["./storage/**/*", "./prisma/*.db", "./prisma/*.db-*", "./.next/cache/**/*"]
   },
-  serverExternalPackages: ["@prisma/client"],
+  // Prisma's client and SQLite adapter retain runtime state that must not be rewritten into the
+  // Server Component bundle. Bundling the adapter under Next 16.4 drops its connection config and
+  // makes every query fail when the adapter tries to open an undefined URL.
+  serverExternalPackages: ["@prisma/client", "@prisma/adapter-better-sqlite3"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "i.ytimg.com" },
