@@ -57,12 +57,12 @@ async function makeTemplate() {
 async function makeDownloadedSourceVideo() {
   const suffix = `${Date.now()}-${Math.random()}`;
   const source = await db.source.create({
-    data: { name: "Brief test source", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `brief-test-${suffix}`, mediaDirectory: `/tmp/ytarr-brief-test-${suffix}` }
+    data: { name: "Brief test source", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `brief-test-${suffix}`, mediaDirectory: `/tmp/tunarrtube-brief-test-${suffix}` }
   });
   const video = await db.video.create({
     data: { youtubeId: `video-${suffix}`, title: "Brief test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`, durationSeconds: 180 }
   });
-  const sourceVideo = await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, downloadStatus: "complete", localPath: `/tmp/ytarr-brief-test-${suffix}/${video.youtubeId}.mp4` } });
+  const sourceVideo = await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, downloadStatus: "complete", localPath: `/tmp/tunarrtube-brief-test-${suffix}/${video.youtubeId}.mp4` } });
   cleanupSourceIds.push(source.id);
   cleanupVideoIds.push(video.id);
   return { source, video, sourceVideo };

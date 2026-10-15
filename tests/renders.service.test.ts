@@ -29,7 +29,7 @@ async function makeTemplate() {
 
 describe("renderMediaItem", () => {
   it("returns the existing RenderedAsset without re-rendering when one is already complete on disk", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-render-dedup-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-render-dedup-test-"));
     cleanupDirs.push(root);
     const outputPath = path.join(root, "already-rendered.mp4");
     await writeFile(outputPath, "fake-rendered-mp4");
@@ -48,7 +48,7 @@ describe("renderMediaItem", () => {
   it("refuses to render a sourceVideo-origin item whose download has not finished", async () => {
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
-      data: { name: "Render test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `render-test-${suffix}`, mediaDirectory: `/tmp/ytarr-render-test-${suffix}` }
+      data: { name: "Render test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `render-test-${suffix}`, mediaDirectory: `/tmp/tunarrtube-render-test-${suffix}` }
     });
     const video = await db.video.create({
       data: { youtubeId: `video-${suffix}`, title: "Render test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }

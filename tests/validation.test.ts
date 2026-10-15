@@ -61,3 +61,21 @@ describe("Phase 2 validation", () => {
     expect(() => sourceVideosQuerySchema.parse({ pageSize: "500" })).toThrow();
   });
 });
+
+describe("preview and job payload schemas", () => {
+  it("validates settings preview bodies", async () => {
+    const { namingPreviewSchema, pathPreviewSchema } = await import("@/lib/validation");
+    expect(namingPreviewSchema.parse({ scheme: "tvshow" })).toEqual({ scheme: "tvshow" });
+    expect(() => namingPreviewSchema.parse({ scheme: "bogus" })).toThrow();
+    expect(pathPreviewSchema.parse({ path: "/media/a.mp4", mappings: [{ tunarrtubePrefix: "/media", tunarrPrefix: "/data" }] }).mappings).toHaveLength(1);
+    expect(() => pathPreviewSchema.parse({ path: "/media/a.mp4", mappings: [{ tunarrtubePrefix: "/media" }] })).toThrow();
+  });
+
+  it("validates job payloads before dispatch", async () => {
+    const { contentSelectJobPayloadSchema, renderJobPayloadSchema, tunarrPublishJobPayloadSchema } = await import("@/lib/validation");
+    expect(renderJobPayloadSchema.parse({ templateId: "t1" })).toEqual({ templateId: "t1" });
+    expect(() => renderJobPayloadSchema.parse({})).toThrow();
+    expect(contentSelectJobPayloadSchema.parse({ method: "heuristic", sourceIds: ["s1"], providerOverride: null }).sourceIds).toEqual(["s1"]);
+    expect(tunarrPublishJobPayloadSchema.parse({ channelName: "News", programmingOrder: "newest", prefetch: false })).toMatchObject({ prefetch: false });
+  });
+});

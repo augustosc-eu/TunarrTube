@@ -1,6 +1,7 @@
 import path from "node:path";
-import { AppError, ok, toErrorResponse } from "@/lib/api";
-import { NAMING_SCHEMES, resolveVideoPaths, type NamingScheme } from "@/lib/naming/service";
+import { ok, toErrorResponse } from "@/lib/api";
+import { resolveVideoPaths } from "@/lib/naming/service";
+import { namingPreviewSchema } from "@/lib/validation";
 
 // Sample (source, video) pair used to preview a naming scheme/template against, purely a display aid --
 // no DB/fs access, same shape as /api/settings/path-preview. Mirrors what a real "template"/"tvshow"
@@ -13,12 +14,9 @@ const SAMPLE_VIDEO = { youtubeId: "dQw4w9WgXcQ", title: "Sample Video Title", up
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { scheme?: unknown; template?: unknown };
-    if (typeof body.scheme !== "string" || !(NAMING_SCHEMES as readonly string[]).includes(body.scheme)) {
-      throw new AppError("INVALID_NAMING_SCHEME", "scheme must be one of: id, template, tvshow.", 400);
-    }
-    const scheme = body.scheme as NamingScheme;
-    const template = typeof body.template === "string" && body.template.trim() ? body.template : "{title}";
+    const body = namingPreviewSchema.parse(await request.json());
+    const scheme = body.scheme;
+    const template = body.template?.trim() ? body.template : "{title}";
     const resolved = resolveVideoPaths({
       mediaDirectory: MEDIA_ROOT_PLACEHOLDER,
       scheme,

@@ -1,3 +1,32 @@
+# Unreleased
+
+## Breaking changes
+
+- **API field rename:** path mappings in `GET/PATCH /api/settings` and `POST /api/settings/path-preview` use `tunarrtubePrefix` instead of `ytarrPrefix`. Update any scripts or integrations that send or read it.
+
+## Upgrading
+
+Existing data moves to the new names automatically on first start. Back up your database and media directory first, as with any upgrade.
+
+Once upgraded, an older version can no longer read the renamed database. To go back, restore the backup you took before upgrading.
+
+- The SQLite file `ytarr.db` is renamed to `tunarrtube.db` (Docker: `/config/tunarrtube.db`). If you set `DATABASE_URL` yourself and it names `ytarr.db`, it keeps working unchanged; to adopt the new name, point it at `tunarrtube.db` in the same folder and the file is renamed on the next start.
+- The hidden `._ytarr-cache` folder in your media directory becomes `._tunarrtube-cache`, and leftover `._ytarr-tmp` folders are removed.
+- Docker Compose keeps using your existing volumes: the volume keys are renamed, but `name:` points them at the volumes they were created as. Don't edit those lines.
+- A saved light/dark theme choice carries over.
+- `YTARR_*` environment variables (and `YTARR_PORT` in Compose) keep working but are deprecated. TunarrTube logs a warning at startup naming each one, so you can rename it to its `TUNARRTUBE_*` equivalent (for example `YTARR_YTDLP_PATH` → `TUNARRTUBE_YTDLP_PATH`).
+- If Docker Compose ever refuses to start with "Docker Compose did not set COMPOSE_PROJECT_NAME", upgrade Compose or set `COMPOSE_PROJECT_NAME` to the name your stack already used (usually the folder name). This guard stops Compose from attaching new, empty volumes.
+
+## Also in this release
+
+- **Ready-made Docker images.** Releases are now published to `ghcr.io/augustosc-eu/tunarrtube` for `linux/amd64` and `linux/arm64`, so you can run TunarrTube without building it. See README's "Published images".
+- Optional password protection (`TUNARRTUBE_AUTH_PASSWORD`) for installs reachable from other machines, and stricter blocking of browser requests from other sites, including other ports on the same host.
+- The Docker image runs Node.js 24 and ships a self-updating yt-dlp, so **Update** in Settings now works in the container.
+- The Docker image now builds on linux/arm64 (Apple Silicon, Raspberry Pi), where v0.2.0's build failed because `better-sqlite3` had to be compiled with no compiler available.
+- AI Programming defaults to `claude-opus-5-5` (new `TUNARRTUBE_ANTHROPIC_MODEL` override) and `gpt-5`.
+- Unexpected server errors no longer return internal details in API responses.
+- Delayed downloads resume on time even while another long job is running.
+
 # TunarrTube Extended v0.2.0
 
 A major feature release on top of v0.1.0: a whole second publishing surface (curated, overlay-rendered **Channels**), AI-driven scheduling across three providers, and a set of reliability fixes for Tunarr publishing found and closed out during real-world use — including one bug in Tunarr itself, reported upstream.

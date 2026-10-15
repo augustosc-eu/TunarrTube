@@ -79,10 +79,10 @@ const SELECTION_JSON_SCHEMA = {
   }
 } as const;
 
-// Not user-selectable beyond this env override -- unlike the Anthropic side (pinned to claude-opus-5),
-// OpenAI's current recommended model at the time this was written may no longer be current by the time
-// you read this; confirm against OpenAI's own model documentation before relying on the default.
-const MODEL = process.env.TUNARRTUBE_OPENAI_MODEL ?? "gpt-4o";
+// Overridable via TUNARRTUBE_OPENAI_MODEL, same as the Anthropic side's TUNARRTUBE_ANTHROPIC_MODEL. The
+// default must support Chat Completions structured outputs (json_schema, strict) -- confirm against
+// OpenAI's model documentation before changing it.
+const MODEL = process.env.TUNARRTUBE_OPENAI_MODEL?.trim() || "gpt-5";
 
 export const openaiProvider: AiProvider = {
   name: "openai",

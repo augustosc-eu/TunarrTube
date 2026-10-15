@@ -5,7 +5,8 @@ import { db } from "@/lib/db/client";
 import { enqueueActiveJob, enqueueActiveJobs } from "@/lib/jobs/enqueue";
 import { writeLog } from "@/lib/logging/service";
 import { sidecarPathsFor } from "@/lib/naming/service";
-import { getSettings } from "@/lib/settings/service";
+import { getSettings, removeWithinDirectory } from "@/lib/settings/service";
+import { removeCacheFile } from "@/lib/cache/service";
 import { analyzeSource, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
 import { validateVideoUrl } from "@/lib/youtube/url";
 import type { AnalyzeSourceOptions, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
@@ -279,17 +280,16 @@ export async function deleteSource(id: string) {
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   const runningJob = await db.job.findFirst({ where: { sourceId: id, status: "running" }, select: { id: true } });
   if (runningJob) throw new AppError("SOURCE_BUSY", "Wait for the active source job to finish before removing it.", 409);
-  const { removeSourceThumbnail } = await import("@/lib/thumbnails/service");
+  const { removeSourceThumbnail, removeThumbnailFile } = await import("@/lib/thumbnails/service");
   await removeSourceThumbnail(id);
   await db.$transaction([
     db.job.updateMany({ where: { sourceId: id, status: "queued" }, data: { status: "cancelled", activeKey: null, finishedAt: new Date() } }),
     db.source.delete({ where: { id } })
   ]);
   const orphaned = await db.video.findMany({ where: { id: { in: source.videos.map((item) => item.videoId) }, sources: { none: {} } }, include: { cacheAsset: true } });
-  const { rm } = await import("node:fs/promises");
   for (const video of orphaned) {
-    if (video.thumbnailPath) await rm(video.thumbnailPath, { force: true });
-    if (video.cacheAsset?.localPath) await rm(video.cacheAsset.localPath, { force: true });
+    await removeThumbnailFile(video.thumbnailPath);
+    await removeCacheFile(video.cacheAsset?.localPath);
   }
   if (orphaned.length) await db.video.deleteMany({ where: { id: { in: orphaned.map((video) => video.id) } } });
   return { deleted: true, preservedMediaDirectory: source.mediaDirectory };
@@ -300,17 +300,16 @@ export async function deleteSource(id: string) {
 // they'll never take. Removes the membership only; the Video row (and any file it owns) is cleaned up
 // too, but only once nothing else references it -- the same video can be a member of multiple sources.
 export async function removeVideoFromSource(sourceId: string, videoId: string) {
-  const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { video: true } });
+  const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { video: true, source: { select: { mediaDirectory: true } } } });
   if (!membership) throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not part of this source.", 404);
   const activeJob = await db.job.findFirst({ where: { sourceId, videoId, status: { in: ["queued", "running"] } }, select: { id: true } });
   if (activeJob) throw new AppError("VIDEO_BUSY", "Wait for (or cancel/stop) the video's active job before removing it.", 409);
-  const { rm } = await import("node:fs/promises");
   if (membership.localPath) {
     // Mirrors unlinkTunarr()'s cleanup (lib/tunarr/service.ts): the sidecar/NFO/poster files this source
     // wrote alongside the video (see lib/downloads/service.ts) share its basename, so pick them up the
     // same way regardless of which naming scheme wrote them.
-    await rm(membership.localPath, { force: true });
-    for (const sidecar of sidecarPathsFor(membership.localPath)) await rm(sidecar, { force: true });
+    await removeWithinDirectory(membership.source.mediaDirectory, membership.localPath);
+    for (const sidecar of sidecarPathsFor(membership.localPath)) await removeWithinDirectory(membership.source.mediaDirectory, sidecar);
   }
   await db.sourceVideo.delete({ where: { id: membership.id } });
   // Logged with videoId while the Video row is still guaranteed to exist -- the orphan cleanup below may
@@ -320,8 +319,9 @@ export async function removeVideoFromSource(sourceId: string, videoId: string) {
   const stillReferenced = await db.sourceVideo.findFirst({ where: { videoId }, select: { id: true } });
   if (!stillReferenced) {
     const video = await db.video.findUnique({ where: { id: videoId }, include: { cacheAsset: true } });
-    if (video?.thumbnailPath) await rm(video.thumbnailPath, { force: true });
-    if (video?.cacheAsset?.localPath) await rm(video.cacheAsset.localPath, { force: true });
+    const { removeThumbnailFile } = await import("@/lib/thumbnails/service");
+    await removeThumbnailFile(video?.thumbnailPath);
+    await removeCacheFile(video?.cacheAsset?.localPath);
     await db.video.delete({ where: { id: videoId } }).catch(() => undefined);
   }
   return { removed: true };

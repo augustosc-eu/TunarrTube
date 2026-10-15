@@ -16,8 +16,8 @@ vi.mock("@/lib/logging/service", () => ({ writeLog: mocks.log, sanitizeLogValue:
 import { recoverJobs, kickWorker, requestJobStop, handleJobFailure } from "@/lib/jobs/runner";
 
 const state = globalThis as typeof globalThis & {
-  ytarrRecovered?: boolean; ytarrRecovery?: Promise<void>;
-  ytarrLanes?: Map<string, Promise<void>>; ytarrControllers?: Map<string, AbortController>;
+  tunarrtubeRecovered?: boolean; tunarrtubeRecovery?: Promise<void>;
+  tunarrtubeLanes?: Map<string, Promise<void>>; tunarrtubeControllers?: Map<string, AbortController>;
 };
 
 function deferred<T>() {
@@ -28,8 +28,8 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  delete state.ytarrRecovered;
-  delete state.ytarrRecovery;
+  delete state.tunarrtubeRecovered;
+  delete state.tunarrtubeRecovery;
   mocks.job.findMany.mockResolvedValue([]);
   mocks.job.updateMany.mockResolvedValue({ count: 1 });
   mocks.sourceVideo.updateMany.mockResolvedValue({ count: 0 });
@@ -37,10 +37,10 @@ beforeEach(() => {
   mocks.log.mockResolvedValue(undefined);
 });
 afterEach(() => {
-  delete state.ytarrRecovered;
-  delete state.ytarrRecovery;
-  delete state.ytarrLanes;
-  delete state.ytarrControllers;
+  delete state.tunarrtubeRecovered;
+  delete state.tunarrtubeRecovery;
+  delete state.tunarrtubeLanes;
+  delete state.tunarrtubeControllers;
 });
 
 describe("job lifecycle", () => {
@@ -60,9 +60,9 @@ describe("job lifecycle", () => {
   it("allows another recovery pass after a database error", async () => {
     mocks.job.findMany.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(recoverJobs()).rejects.toThrow("database unavailable");
-    expect(state.ytarrRecovered).not.toBe(true);
+    expect(state.tunarrtubeRecovered).not.toBe(true);
     await recoverJobs();
-    expect(state.ytarrRecovered).toBe(true);
+    expect(state.tunarrtubeRecovered).toBe(true);
   });
 
   it("fails interrupted jobs at their retry limit and only requeues attempts below it", async () => {
@@ -104,12 +104,12 @@ describe("job lifecycle", () => {
   });
 
   it("does not complete a stopped publish even when its handler resolves successfully", async () => {
-    state.ytarrRecovered = true;
-    const job = { id: "publish", type: "tunarr_publish", status: "running", sourceId: "source", payloadJson: "{}" };
+    state.tunarrtubeRecovered = true;
+    const job = { id: "publish", type: "tunarr_publish", status: "running", sourceId: "source", payloadJson: JSON.stringify({ channelName: "News", programmingOrder: "playlist" }) };
     let claimed = false;
     mocks.settings.mockResolvedValue({ jobsPaused: false });
     mocks.job.findFirst.mockImplementation(async ({ where }) => {
-      if (!claimed && where.type.notIn) { claimed = true; return job; }
+      if (!claimed && where.type?.notIn) { claimed = true; return job; }
       return null;
     });
     mocks.job.findUnique.mockResolvedValue(job);
@@ -117,7 +117,7 @@ describe("job lifecycle", () => {
     const result = deferred<void>();
     mocks.publish.mockImplementation(() => { started.resolve(); return result.promise; });
     kickWorker();
-    const lanes = [...state.ytarrLanes!.values()];
+    const lanes = [...state.tunarrtubeLanes!.values()];
     await started.promise;
     expect(requestJobStop(job.id)).toBe(true);
     mocks.settings.mockResolvedValue({ jobsPaused: true });
@@ -125,6 +125,6 @@ describe("job lifecycle", () => {
     await Promise.all(lanes);
     expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "complete")).toBe(false);
     expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "cancelled")).toBe(true);
-    expect(state.ytarrControllers!.size).toBe(0);
+    expect(state.tunarrtubeControllers!.size).toBe(0);
   });
 });

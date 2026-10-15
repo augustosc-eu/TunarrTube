@@ -33,7 +33,7 @@ describe("job cancel/retry", () => {
   async function makeSourceVideo(downloadStatus = "queued") {
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
-      data: { name: "Job test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `job-test-${suffix}`, mediaDirectory: `/tmp/ytarr-job-test-${suffix}` }
+      data: { name: "Job test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `job-test-${suffix}`, mediaDirectory: `/tmp/tunarrtube-job-test-${suffix}` }
     });
     const video = await db.video.create({
       data: { youtubeId: `video-${suffix}`, title: "Job test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
@@ -111,7 +111,7 @@ describe("job cancel/retry", () => {
     });
     const suffix = `${Date.now()}-${Math.random()}`;
     const channel = await db.channel.create({
-      data: { name: "Job test channel", slug: `job-test-channel-${suffix}`, templateId: template.id, storageDirectory: `/tmp/ytarr-job-test-channel-${suffix}` }
+      data: { name: "Job test channel", slug: `job-test-channel-${suffix}`, templateId: template.id, storageDirectory: `/tmp/tunarrtube-job-test-channel-${suffix}` }
     });
     cleanupTemplateIds.push(template.id);
     cleanupChannelIds.push(channel.id);

@@ -27,6 +27,16 @@ Keep API routes thin, validate request bodies in `lib/validation.ts`, and put be
 
 Update `README.md` for user-facing behavior and `docs/ARCHITECTURE.md` for changes to routing, integrations, persistence, schema, or deployment. Add a committed Prisma migration for schema changes.
 
+## Releasing (maintainers)
+
+1. Make sure `main` is green in CI.
+2. Set `version` in `package.json` and rename the `# Unreleased` heading in `RELEASE_NOTES.md` to the new version, then commit.
+3. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`. A pre-release uses a suffix, such as `v0.3.0-rc.1`.
+4. The **Docker image** workflow builds `linux/amd64` and `linux/arm64` and publishes `ghcr.io/augustosc-eu/tunarrtube` with the tags described in README's "Published images". Check its run summary for the pull command.
+5. Create the GitHub Release from the tag, using the release-notes section as its description.
+
+The first time an image is published, check the package's visibility under the repository's **Packages** settings; it may need to be made public before others can pull it.
+
 ## Security and privacy
 
 Read [SECURITY.md](SECURITY.md). Do not include credentials, signed video URLs, personal media, databases, or logs containing private data in an issue or pull request.

@@ -7,9 +7,9 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     // Dedicated SQLite file (see scripts/prepare-test-db.mjs's "pretest" hook, which migrates it) so
     // integration tests -- real Prisma client, only fetch/child_process stubbed -- never write into the
-    // same prisma/ytarr.db the dev server uses. Set here rather than left to lib/db/client.ts's own
-    // fallback, since that fallback is literally "file:./ytarr.db", the dev database.
-    env: { DATABASE_URL: "file:./ytarr.test.db" },
+    // same prisma/tunarrtube.db the dev server uses. Set here rather than left to lib/db/client.ts's own
+    // fallback, since that fallback is literally "file:./tunarrtube.db", the dev database.
+    env: { DATABASE_URL: "file:./tunarrtube.test.db" },
     // Two independent reasons to serialize test files, not just one: (1) vitest's default pool runs
     // files in parallel worker processes, each opening its own PrismaClient against this one dedicated
     // SQLite file -- small and freshly created, so the resulting writer-lock contention lands squarely

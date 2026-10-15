@@ -45,7 +45,7 @@ model Source {
   // them, and so a plan is only regenerated (an external AI call) when instructions, the schedule
   // style, or the candidate set change.
   aiProvider                   String?
-  aiScheduleStyle               String?
+  aiScheduleStyle              String?
   aiProgrammingInstructions    String?
   aiProgrammingPlanJson        String?
   createdAt                    DateTime      @default(now())
@@ -175,35 +175,35 @@ model Job {
 }
 
 model AppSettings {
-  id                      Int      @id @default(1)
-  mediaBaseDirectory      String
-  tunarrUrl               String   @default("http://127.0.0.1:8000")
-  cacheMaxMegabytes       Int      @default(20480)
-  cacheMaxAgeDays         Int      @default(30)
-  logRetentionDays        Int      @default(30)
-  defaultVideoQuality     String   @default("best")
-  jobsPaused              Boolean  @default(false)
-  musicbrainzContactEmail String?
+  id                         Int      @id @default(1)
+  mediaBaseDirectory         String
+  tunarrUrl                  String   @default("http://127.0.0.1:8000")
+  cacheMaxMegabytes          Int      @default(20480)
+  cacheMaxAgeDays            Int      @default(30)
+  logRetentionDays           Int      @default(30)
+  defaultVideoQuality        String   @default("best")
+  jobsPaused                 Boolean  @default(false)
+  musicbrainzContactEmail    String?
   // Absolute path to a Netscape-format cookies.txt file yt-dlp should authenticate with (passed as
   // `--cookies <path>` -- see lib/youtube/ytdlp.ts's cookiesArgs). Lets age-restricted/bot-checked videos
   // ("Sign in to confirm your age/you're not a bot") download instead of permanently failing. This is a
   // path to a file the operator manages and mounts into the container (e.g. a docker-compose bind mount)
   // -- TunarrTube never uploads, generates, or displays its contents, only ever passes the path through to
   // yt-dlp. Null means unauthenticated (the MVP default; see AGENTS.md's stance on cookie-based auth).
-  ytdlpCookiesPath        String?
+  ytdlpCookiesPath           String?
   // Per-provider on/off switches for lib/metadata-lookup/'s MusicBrainz/iTunes search, plus the score
   // (0-100, same scale both providers now return -- see lib/metadata-lookup/itunes.ts's similarity
   // scorer) a candidate needs to be applied automatically by lib/metadata-lookup/service.ts:autoApplyMetadata,
   // the "metadata_lookup" job queued by attachExistingVideo/scanLocalFolder when a new MediaItem has no
   // artist. Below the threshold, the item is left for the user's manual Search in the media item editor.
-  metadataMusicbrainzEnabled  Boolean @default(true)
-  metadataItunesEnabled       Boolean @default(true)
-  metadataAutoApplyThreshold  Int     @default(80)
+  metadataMusicbrainzEnabled Boolean  @default(true)
+  metadataItunesEnabled      Boolean  @default(true)
+  metadataAutoApplyThreshold Int      @default(80)
   // Global default for lib/programming/'s AI provider selection ("auto" | "anthropic" | "openai" |
   // "claude-code"); "auto" picks whichever of ANTHROPIC_API_KEY/OPENAI_API_KEY is set in the
   // environment (never "claude-code" -- see lib/programming/provider.ts's comment on why). A Source
   // or Channel's own aiProvider column overrides this per-entity.
-  aiProvider              String   @default("auto")
+  aiProvider                 String   @default("auto")
   // Local Claude Code CLI integration (lib/ai/) -- an alternative to the ANTHROPIC_API_KEY/OPENAI_API_KEY
   // providers above that shells out to an already-authenticated `claude` CLI instead of calling an API
   // with a key. Off by default (aiClaudeCodeEnabled) so installing this app never starts invoking a local
@@ -211,18 +211,18 @@ model AppSettings {
   // optional override for when auto-detection (PATH lookup) is unreliable -- null means auto-detect, same
   // convention as ytdlpCookiesPath above. aiClaudeCodeTimeoutSeconds bounds how long TunarrTube waits for
   // one `claude` invocation before killing it.
-  aiClaudeCodeEnabled     Boolean  @default(false)
-  aiClaudeCodePath        String?
-  aiClaudeCodeTimeoutSeconds Int   @default(120)
+  aiClaudeCodeEnabled        Boolean  @default(false)
+  aiClaudeCodePath           String?
+  aiClaudeCodeTimeoutSeconds Int      @default(120)
   // Global default for a downloaded video's on-disk filename/folder layout -- "id" (today's
   // <youtubeId>.mp4, flat, unchanged default), "template" (defaultFilenameTemplate applied flat), or
   // "tvshow" (Emby/Plex/Jellyfin- and Tunarr-Shows-compatible Show/Season <year>/S<year>E<nnn> layout).
   // A Source's own namingScheme/filenameTemplate columns override this per-Source. See
   // lib/naming/service.ts.
-  defaultNamingScheme     String   @default("id")
-  defaultFilenameTemplate String   @default("{title}")
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  defaultNamingScheme        String   @default("id")
+  defaultFilenameTemplate    String   @default("{title}")
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 }
 
 model CacheAsset {
@@ -245,14 +245,14 @@ model CacheAsset {
 }
 
 model TunarrPathMapping {
-  id           String   @id @default(cuid())
-  ytarrPrefix  String
-  tunarrPrefix String
-  position     Int
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id               String   @id @default(cuid())
+  tunarrtubePrefix String
+  tunarrPrefix     String
+  position         Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  @@unique([ytarrPrefix])
+  @@unique([tunarrtubePrefix])
   @@index([position])
 }
 
@@ -303,7 +303,7 @@ model Channel {
   tunarrLastPublishedAt        DateTime?
   // See the matching fields on Source above -- same AI-programming cache/override convention.
   aiProvider                   String?
-  aiScheduleStyle               String?
+  aiScheduleStyle              String?
   aiProgrammingInstructions    String?
   aiProgrammingPlanJson        String?
   createdAt                    DateTime  @default(now())

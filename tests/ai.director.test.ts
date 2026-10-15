@@ -26,7 +26,7 @@ async function makeChannelWithItems(items: Array<{ title: string; durationSecond
   cleanupTemplateIds.push(template.id);
   const suffix = `${Date.now()}-${Math.random()}`;
   const channel = await db.channel.create({
-    data: { name: `Director Test ${suffix}`, slug: `director-test-${suffix}`, templateId: template.id, storageDirectory: `/tmp/ytarr-director-test-${suffix}` }
+    data: { name: `Director Test ${suffix}`, slug: `director-test-${suffix}`, templateId: template.id, storageDirectory: `/tmp/tunarrtube-director-test-${suffix}` }
   });
   cleanupChannelIds.push(channel.id);
   cleanupDirs.push(channel.storageDirectory);

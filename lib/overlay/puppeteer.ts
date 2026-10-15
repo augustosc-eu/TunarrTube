@@ -1,14 +1,15 @@
 import type { Browser } from "puppeteer";
+import { readEnv } from "@/lib/config/env";
 
 // Lazy-launch singleton, kept on globalThis so Next.js dev's module-reload doesn't leak a new
 // Chromium process on every file save (same rationale as lib/db/client.ts's Prisma singleton).
-const globalForPuppeteer = globalThis as unknown as { ytarrOverlayBrowser?: Promise<Browser> };
+const globalForPuppeteer = globalThis as unknown as { tunarrtubeOverlayBrowser?: Promise<Browser> };
 
 async function launchBrowser(): Promise<Browser> {
   const puppeteer = await import("puppeteer");
   return puppeteer.default.launch({
     headless: true,
-    executablePath: process.env.YTARR_PUPPETEER_EXECUTABLE_PATH || undefined,
+    executablePath: readEnv("PUPPETEER_EXECUTABLE_PATH") || undefined,
     // --disable-dev-shm-usage: Docker's default /dev/shm is only 64MB, which Chrome can exceed
     // and crash against even for a single-page screenshot; using /tmp instead costs nothing here.
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
@@ -16,18 +17,18 @@ async function launchBrowser(): Promise<Browser> {
 }
 
 export async function getBrowser(): Promise<Browser> {
-  if (!globalForPuppeteer.ytarrOverlayBrowser) {
+  if (!globalForPuppeteer.tunarrtubeOverlayBrowser) {
     // If launch() rejects, this catch clears the cached promise before the rejection propagates --
     // otherwise a single failed launch (e.g. a broken/incomplete Chromium install) would wedge every
     // future render behind the same cached rejected promise until the process restarts.
-    globalForPuppeteer.ytarrOverlayBrowser = launchBrowser().catch((error) => {
-      globalForPuppeteer.ytarrOverlayBrowser = undefined;
+    globalForPuppeteer.tunarrtubeOverlayBrowser = launchBrowser().catch((error) => {
+      globalForPuppeteer.tunarrtubeOverlayBrowser = undefined;
       throw error;
     });
   }
-  const browser = await globalForPuppeteer.ytarrOverlayBrowser;
+  const browser = await globalForPuppeteer.tunarrtubeOverlayBrowser;
   if (!browser.connected) {
-    globalForPuppeteer.ytarrOverlayBrowser = undefined;
+    globalForPuppeteer.tunarrtubeOverlayBrowser = undefined;
     return getBrowser();
   }
   return browser;

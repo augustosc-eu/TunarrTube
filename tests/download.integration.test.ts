@@ -22,15 +22,15 @@ async function withCookiesPath(cookiesPath: string | null, run: () => Promise<vo
 const cleanup: string[] = [];
 
 afterEach(async () => {
-  delete process.env.YTARR_YTDLP_PATH;
-  delete process.env.YTARR_FFMPEG_PATH;
+  delete process.env.TUNARRTUBE_YTDLP_PATH;
+  delete process.env.TUNARRTUBE_FFMPEG_PATH;
   vi.unstubAllGlobals();
   await Promise.all(cleanup.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe("download pipeline", () => {
   it("publishes an MP4 and sidecar only after the downloader succeeds", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-download-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-download-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -44,8 +44,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
 
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
@@ -77,7 +77,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     // Tunarr's "other_videos" scanner also scans for local artwork next to the .nfo (Kodi's
     // "<basename>-poster.<ext>" convention) to power its guide/now-playing image. Without it, Tunarr shows
     // a broken thumbnail for the program.
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-poster-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-poster-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -91,8 +91,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
 
     const thumbnailPath = path.join(root, "mirrored-thumb.webp");
     await writeFile(thumbnailPath, "fake-thumbnail-bytes");
@@ -117,7 +117,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   }, 15_000);
 
   it("skips the poster sidecar without failing the download when no local thumbnail is mirrored yet", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-poster-missing-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-poster-missing-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -131,8 +131,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
 
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
@@ -157,7 +157,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   it("regenerates the .nfo/.json sidecars for an already-downloaded video without touching the media file", async () => {
     // Tunarr's "other_videos" scanner reads title/plot from a Kodi-style .nfo sidecar, never from the
     // video file's own container metadata -- so repairing metadata must not re-encode or rewrite the .mp4.
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-retag-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-retag-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     await mkdir(sourceDirectory, { recursive: true });
@@ -196,7 +196,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   }, 15_000);
 
   it("records a video yt-dlp reports as permanently gone as unavailable and throws VideoUnavailableError instead of an ordinary failure", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-unavailable-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-unavailable-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -207,8 +207,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
     // fetchVideoAvailabilityReason() (lib/youtube/ytdlp.ts) tries a real page fetch for a richer reason
     // before falling back to yt-dlp's own stderr line -- stub it to fail fast and deterministically.
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network disabled in test"); }));
@@ -236,7 +236,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   }, 15_000);
 
   it("records an age-restricted/sign-in-required video as unavailable with an actionable reason, without an extra network fetch", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-signin-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-signin-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -247,8 +247,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
     // unavailabilityReason() skips fetchVideoAvailabilityReason()'s page fetch entirely for this case, so
     // a fetch stub that always throws proves no network call happened.
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network disabled in test"); }));
@@ -277,7 +277,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   }, 15_000);
 
   it("passes the configured cookies file to yt-dlp when downloading", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-cookies-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-cookies-test-"));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -295,8 +295,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
 
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
@@ -320,7 +320,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   }, 15_000);
 
   it("downloads under a Source's 'template' naming scheme override, producing a nested folder and a bracketed-id filename", async () => {
-    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "ytarr-template-naming-test-")));
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "tunarrtube-template-naming-test-")));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -334,8 +334,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
 
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
@@ -367,7 +367,7 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
   }, 15_000);
 
   it("downloads under the 'tvshow' naming scheme, producing an Emby/Plex/Tunarr-Shows-compatible layout", async () => {
-    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "ytarr-tvshow-naming-test-")));
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "tunarrtube-tvshow-naming-test-")));
     cleanup.push(root);
     const sourceDirectory = path.join(root, "source");
     const fakeYtDlp = path.join(root, "yt-dlp");
@@ -381,8 +381,8 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
     await chmod(fakeYtDlp, 0o755);
     await chmod(fakeFfmpeg, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
-    process.env.YTARR_FFMPEG_PATH = fakeFfmpeg;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
 
     const thumbnailPath = path.join(root, "mirrored-thumb.jpg");
     await writeFile(thumbnailPath, "fake-thumbnail-bytes");

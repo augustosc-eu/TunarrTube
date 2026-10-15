@@ -4,7 +4,7 @@ import { purgeLogs } from "@/lib/logging/service";
 import { getSettings } from "@/lib/settings/service";
 import { enqueueSync, enqueueUniqueJob } from "@/lib/sources/service";
 
-const globalScheduler = globalThis as unknown as { ytarrSchedulerTimer?: NodeJS.Timeout; ytarrCacheTimer?: NodeJS.Timeout; ytarrLogPurgeTimer?: NodeJS.Timeout; ytarrSchedulerStartedAt?: Date; ytarrSchedulerRunning?: boolean; ytarrAvailabilityBackfillStarted?: boolean };
+const globalScheduler = globalThis as unknown as { tunarrtubeSchedulerTimer?: NodeJS.Timeout; tunarrtubeCacheTimer?: NodeJS.Timeout; tunarrtubeLogPurgeTimer?: NodeJS.Timeout; tunarrtubeSchedulerStartedAt?: Date; tunarrtubeSchedulerRunning?: boolean; tunarrtubeAvailabilityBackfillStarted?: boolean };
 
 async function runLogPurge() {
   const settings = await getSettings();
@@ -12,8 +12,8 @@ async function runLogPurge() {
 }
 
 export async function queueAvailabilityReasonBackfill() {
-  if (globalScheduler.ytarrAvailabilityBackfillStarted) return 0;
-  globalScheduler.ytarrAvailabilityBackfillStarted = true;
+  if (globalScheduler.tunarrtubeAvailabilityBackfillStarted) return 0;
+  globalScheduler.tunarrtubeAvailabilityBackfillStarted = true;
   const videos = await db.video.findMany({ where: { availability: "unavailable", availabilityReason: null }, select: { id: true } });
   for (const video of videos) await enqueueUniqueJob("metadata", undefined, video.id);
   if (videos.length) {
@@ -24,8 +24,8 @@ export async function queueAvailabilityReasonBackfill() {
 }
 
 export async function runDueSyncs(now = new Date()) {
-  if (globalScheduler.ytarrSchedulerRunning) return 0;
-  globalScheduler.ytarrSchedulerRunning = true;
+  if (globalScheduler.tunarrtubeSchedulerRunning) return 0;
+  globalScheduler.tunarrtubeSchedulerRunning = true;
   try {
     const due = await db.source.findMany({ where: { syncEnabled: true, OR: [{ nextSyncAt: null }, { nextSyncAt: { lte: now } }] }, select: { id: true, syncIntervalMinutes: true } });
     for (const source of due) {
@@ -33,24 +33,30 @@ export async function runDueSyncs(now = new Date()) {
       await enqueueSync(source.id);
     }
     return due.length;
-  } finally { globalScheduler.ytarrSchedulerRunning = false; }
+  } finally { globalScheduler.tunarrtubeSchedulerRunning = false; }
 }
 
 export function startScheduler() {
-  if (globalScheduler.ytarrSchedulerTimer) return;
-  globalScheduler.ytarrSchedulerStartedAt = new Date();
+  if (globalScheduler.tunarrtubeSchedulerTimer) return;
+  globalScheduler.tunarrtubeSchedulerStartedAt = new Date();
   void runDueSyncs();
   void queueAvailabilityReasonBackfill().catch(() => undefined);
   void reconcileCacheFiles().then(() => enforceCachePolicy()).catch(() => undefined);
   void runLogPurge().catch(() => undefined);
-  globalScheduler.ytarrSchedulerTimer = setInterval(() => void runDueSyncs(), 60_000);
-  globalScheduler.ytarrCacheTimer = setInterval(() => void enforceCachePolicy(), 60 * 60_000);
-  globalScheduler.ytarrLogPurgeTimer = setInterval(() => void runLogPurge().catch(() => undefined), 60 * 60_000);
-  globalScheduler.ytarrSchedulerTimer.unref();
-  globalScheduler.ytarrCacheTimer.unref();
-  globalScheduler.ytarrLogPurgeTimer.unref();
+  // The kickWorker() here is a safety net, not the primary trigger: enqueues and the runner's own wake
+  // timer normally start lanes promptly, but if that timer couldn't be set (e.g. a transient DB error),
+  // queued work still starts within a minute. Lanes already running are left alone.
+  globalScheduler.tunarrtubeSchedulerTimer = setInterval(() => {
+    void runDueSyncs();
+    void import("@/lib/jobs/runner").then(({ kickWorker }) => kickWorker()).catch(() => undefined);
+  }, 60_000);
+  globalScheduler.tunarrtubeCacheTimer = setInterval(() => void enforceCachePolicy(), 60 * 60_000);
+  globalScheduler.tunarrtubeLogPurgeTimer = setInterval(() => void runLogPurge().catch(() => undefined), 60 * 60_000);
+  globalScheduler.tunarrtubeSchedulerTimer.unref();
+  globalScheduler.tunarrtubeCacheTimer.unref();
+  globalScheduler.tunarrtubeLogPurgeTimer.unref();
 }
 
 export function schedulerStatus() {
-  return { started: Boolean(globalScheduler.ytarrSchedulerStartedAt), startedAt: globalScheduler.ytarrSchedulerStartedAt ?? null, running: Boolean(globalScheduler.ytarrSchedulerRunning) };
+  return { started: Boolean(globalScheduler.tunarrtubeSchedulerStartedAt), startedAt: globalScheduler.tunarrtubeSchedulerStartedAt ?? null, running: Boolean(globalScheduler.tunarrtubeSchedulerRunning) };
 }

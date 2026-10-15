@@ -6,11 +6,11 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import { AppError } from "@/lib/api";
+import { readEnv } from "@/lib/config/env";
 import { runProcess } from "@/lib/system/process";
 
 export type FfprobeStatus = { found: boolean; path: string | null; version: string | null; error?: string };
 
-const ENV_OVERRIDE = "YTARR_FFPROBE_PATH";
 const FALLBACKS = ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"];
 
 async function executable(candidate: string) {
@@ -23,7 +23,7 @@ async function executable(candidate: string) {
 }
 
 export async function discoverFfprobe(): Promise<string | null> {
-  const override = process.env[ENV_OVERRIDE];
+  const override = readEnv("FFPROBE_PATH");
   if (override && (await executable(override))) return override;
   try {
     const result = await runProcess("which", ["ffprobe"], { timeoutMs: 5000 });
@@ -36,7 +36,7 @@ export async function discoverFfprobe(): Promise<string | null> {
 
 export async function requireFfprobe(): Promise<string> {
   const path = await discoverFfprobe();
-  if (!path) throw new AppError("BINARY_NOT_FOUND", `ffprobe was not found on this machine. Install it or set ${ENV_OVERRIDE}.`, 500);
+  if (!path) throw new AppError("BINARY_NOT_FOUND", `ffprobe was not found on this machine. Install it or set TUNARRTUBE_FFPROBE_PATH.`, 500);
   return path;
 }
 

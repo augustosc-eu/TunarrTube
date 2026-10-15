@@ -20,7 +20,7 @@ const paths = {
 
 describe("Channel Tunarr publish pipeline", () => {
   it("materializes the render, registers a music_videos local source, and publishes the channel", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-channel-publish-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-channel-publish-test-"));
     const storageDirectory = path.join(root, "channel-storage");
     const renderPath = path.join(root, "rendered.mp4");
     await writeFile(renderPath, "fake-rendered-mp4");
@@ -93,7 +93,7 @@ describe("Channel Tunarr publish pipeline", () => {
   });
 
   it("refuses to publish a channel with an unrendered item", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-channel-publish-unrendered-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-channel-publish-unrendered-"));
     const template = await db.overlayTemplate.create({
       data: { name: "Unrendered Template", htmlTemplate: "<div>{{title}}</div>", bindingsJson: "[]", layersJson: "[]" }
     });
@@ -118,7 +118,7 @@ describe("Channel Tunarr publish pipeline", () => {
     // succeeded. If Tunarr had already created the remote channel but anything after that (the
     // programming call here) failed, the id was lost -- a retry couldn't find `existing` and generated
     // a fresh randomUUID(), creating a second, orphaned remote channel instead of updating the first.
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-channel-dup-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-channel-dup-test-"));
     const storageDirectory = path.join(root, "channel-storage");
     const renderPath = path.join(root, "rendered.mp4");
     await writeFile(renderPath, "fake-rendered-mp4");
