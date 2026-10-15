@@ -1,8 +1,9 @@
-import { access, rm } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
-import { getSettings } from "@/lib/settings/service";
+import { CACHE_DIRECTORY_NAME } from "@/lib/constants";
+import { getSettings, removeWithinDirectory } from "@/lib/settings/service";
 import { writeLog } from "@/lib/logging/service";
 
 async function exists(file: string | null) {
@@ -15,12 +16,23 @@ export async function protectedVideoIds() {
   return new Set(rows.map((row) => row.videoId));
 }
 
+// Cache files live under "<mediaBaseDirectory>/<CACHE_DIRECTORY_NAME>/videos" (see cacheVideo in
+// lib/downloads/service.ts). The media base can be changed in Settings after a file was cached, so also
+// accept the cache directory the file's own path names, as long as it really is a cache folder.
+export async function removeCacheFile(localPath: string | null | undefined) {
+  if (!localPath) return false;
+  const roots = [path.join((await getSettings()).mediaBaseDirectory, CACHE_DIRECTORY_NAME)];
+  const ownCacheRoot = path.dirname(path.dirname(path.resolve(localPath)));
+  if (path.basename(ownCacheRoot) === CACHE_DIRECTORY_NAME) roots.push(ownCacheRoot);
+  return removeWithinDirectory(roots, localPath);
+}
+
 async function removeAsset(id: string, force = false) {
   const asset = await db.cacheAsset.findUnique({ where: { id }, include: { video: true } });
   if (!asset) throw new AppError("CACHE_ASSET_NOT_FOUND", "Cache asset not found.", 404);
   const protectedIds = await protectedVideoIds();
   if (!force && (asset.pinned || asset.activeReaders > 0 || protectedIds.has(asset.videoId))) throw new AppError("CACHE_ASSET_PROTECTED", "This cache asset is pinned, playing, or required by Tunarr.", 409);
-  if (asset.localPath) await rm(asset.localPath, { force: true });
+  await removeCacheFile(asset.localPath);
   await db.cacheAsset.update({ where: { id }, data: { status: "not_cached", localPath: null, fileSize: null, cachedAt: null, lastAccessedAt: null, error: null } });
   await writeLog({ category: "cache", videoId: asset.videoId, message: `Evicted ${asset.video.youtubeId}.` });
   return asset.fileSize ?? 0n;

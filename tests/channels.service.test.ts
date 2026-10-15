@@ -23,7 +23,7 @@ const cleanupJobIds: string[] = [];
 const cleanupDirs: string[] = [];
 
 afterEach(async () => {
-  delete process.env.YTARR_YTDLP_PATH;
+  delete process.env.TUNARRTUBE_YTDLP_PATH;
   await db.channel.deleteMany({ where: { id: { in: cleanupChannelIds.splice(0) } } });
   await db.overlayTemplate.deleteMany({ where: { id: { in: cleanupTemplateIds.splice(0) } } });
   await db.source.deleteMany({ where: { id: { in: cleanupSourceIds.splice(0) } } });
@@ -57,12 +57,12 @@ async function makeChannel() {
 async function makeDownloadedSourceVideo(videoData: { artist?: string | null; album?: string | null } = {}) {
   const suffix = `${Date.now()}-${Math.random()}`;
   const source = await db.source.create({
-    data: { name: "Attach test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `attach-test-${suffix}`, mediaDirectory: `/tmp/ytarr-attach-test-${suffix}` }
+    data: { name: "Attach test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `attach-test-${suffix}`, mediaDirectory: `/tmp/tunarrtube-attach-test-${suffix}` }
   });
   const video = await db.video.create({
     data: { youtubeId: `video-${suffix}`, title: "Attach test video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}`, durationSeconds: 180, ...videoData }
   });
-  const sourceVideo = await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, downloadStatus: "complete", localPath: `/tmp/ytarr-attach-test-${suffix}/${video.youtubeId}.mp4` } });
+  const sourceVideo = await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, downloadStatus: "complete", localPath: `/tmp/tunarrtube-attach-test-${suffix}/${video.youtubeId}.mp4` } });
   cleanupSourceIds.push(source.id);
   cleanupVideoIds.push(video.id);
   return sourceVideo;
@@ -131,7 +131,7 @@ describe("attachExistingVideo", () => {
 
 describe("addYoutubeUrlToChannel", () => {
   it("creates a companion collection Source (visible like any other) and attaches the downloaded video", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-channel-intake-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-channel-intake-test-"));
     cleanupDirs.push(root);
     const fakeYtDlp = path.join(root, "yt-dlp");
     const videoId = makeVideoId(Date.now());
@@ -139,7 +139,7 @@ describe("addYoutubeUrlToChannel", () => {
 console.log(JSON.stringify({ id: "${videoId}", title: "Fake Channel Video", duration: 210, uploader: "Fake Uploader" }));
 `);
     await chmod(fakeYtDlp, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
 
     const channel = await makeChannel();
     const result = await addYoutubeUrlToChannel(channel.id, `https://www.youtube.com/watch?v=${videoId}`);
@@ -165,7 +165,7 @@ console.log(JSON.stringify({ id: "${videoId}", title: "Fake Channel Video", dura
   });
 
   it("reuses the same companion Source across repeated calls instead of creating a new one each time", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-channel-intake-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-channel-intake-test-"));
     cleanupDirs.push(root);
     const fakeYtDlp = path.join(root, "yt-dlp");
     await writeFile(fakeYtDlp, `#!/usr/bin/env node
@@ -173,7 +173,7 @@ const args = process.argv;
 console.log(JSON.stringify({ id: args[args.length - 1].split("v=")[1], title: "Fake Video " + Date.now() + Math.random(), duration: 100 }));
 `);
     await chmod(fakeYtDlp, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
 
     const channel = await makeChannel();
     const seed = Date.now();

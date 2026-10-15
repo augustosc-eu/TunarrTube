@@ -7,7 +7,7 @@ type BinaryStatus = { name: string; found: boolean; path: string | null; version
 type TunarrStatus = { connected: boolean; version: { tunarr: string; ffmpeg: string; nodejs: string }; capabilities: Record<string, boolean> };
 type ClaudeCodeStatus = { available: boolean; detail: string; version: string | null; path: string | null };
 
-type Mapping = { ytarrPrefix: string; tunarrPrefix: string };
+type Mapping = { tunarrtubePrefix: string; tunarrPrefix: string };
 export const VIDEO_QUALITY_OPTIONS = [
   { value: "best", label: "Best available (no cap)" },
   { value: "2160p", label: "2160p (4K)" },
@@ -40,7 +40,7 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
   const [claudeStatus, setClaudeStatus] = useState<ClaudeCodeStatus>(claudeCode);
   const [claudeTestResult, setClaudeTestResult] = useState<string | null>(null);
   const [ytdlpCookiesPath, setYtdlpCookiesPath] = useState(initialYtdlpCookiesPath ?? "");
-  const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ ytarrPrefix, tunarrPrefix }) => ({ ytarrPrefix, tunarrPrefix })));
+  const [mappings, setMappings] = useState<Mapping[]>(initialMappings.map(({ tunarrtubePrefix, tunarrPrefix }) => ({ tunarrtubePrefix, tunarrPrefix })));
   const [namingScheme, setNamingScheme] = useState(initialDefaultNamingScheme);
   const [filenameTemplate, setFilenameTemplate] = useState(initialDefaultFilenameTemplate);
   const [namingPreview, setNamingPreview] = useState<string | null>(null);
@@ -182,8 +182,8 @@ export function SettingsForm({ initialDirectory, initialTunarrUrl, initialCacheM
     <div className="toolbar"><button className="button secondary" disabled={Boolean(busy)} onClick={testTunarr}>{busy === "tunarr" && <LoaderCircle size={14} className="animate-spin" />} Test Tunarr</button>{tunarr && <span className="success"><CheckCircle2 size={14} className="inline-icon" />API {tunarr.version.tunarr} · {Object.values(tunarr.capabilities).filter(Boolean).length}/{Object.keys(tunarr.capabilities).length} capabilities</span>}</div>
     <div className="toolbar"><button className="button secondary" disabled={Boolean(busy)} onClick={repairMetadata}>{busy === "repair" && <LoaderCircle size={14} className="animate-spin" />} Repair video metadata</button><span className="meta">Re-embeds title/description into already-downloaded files and refreshes linked Tunarr channels.</span></div>
     <h2 className="section-heading">Tunarr path mappings</h2><p>Mappings use longest-prefix matching. Leave the table empty when both applications see identical paths.</p>
-    {mappings.map((mapping, index) => <div className="form-grid" key={index}><div className="field"><label htmlFor={`ytarr-prefix-${index}`}>TunarrTube prefix</label><input className="input code" id={`ytarr-prefix-${index}`} value={mapping.ytarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ytarrPrefix: event.target.value } : item))}/></div><div className="field"><label htmlFor={`tunarr-prefix-${index}`}>Tunarr prefix</label><input className="input code" id={`tunarr-prefix-${index}`} value={mapping.tunarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, tunarrPrefix: event.target.value } : item))}/></div><button className="button secondary" type="button" onClick={() => setMappings((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}
-    <div className="toolbar"><button className="button secondary" type="button" onClick={() => setMappings((current) => [...current, { ytarrPrefix: directory, tunarrPrefix: "/media" }])}>Add mapping</button><button className="button secondary" type="button" onClick={previewMapping}>Preview media path</button>{preview ? <span className="code success">{preview}</span> : null}</div>
+    {mappings.map((mapping, index) => <div className="form-grid" key={index}><div className="field"><label htmlFor={`tunarrtube-prefix-${index}`}>TunarrTube prefix</label><input className="input code" id={`tunarrtube-prefix-${index}`} value={mapping.tunarrtubePrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, tunarrtubePrefix: event.target.value } : item))}/></div><div className="field"><label htmlFor={`tunarr-prefix-${index}`}>Tunarr prefix</label><input className="input code" id={`tunarr-prefix-${index}`} value={mapping.tunarrPrefix} onChange={(event) => setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, tunarrPrefix: event.target.value } : item))}/></div><button className="button secondary" type="button" onClick={() => setMappings((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}
+    <div className="toolbar"><button className="button secondary" type="button" onClick={() => setMappings((current) => [...current, { tunarrtubePrefix: directory, tunarrPrefix: "/media" }])}>Add mapping</button><button className="button secondary" type="button" onClick={previewMapping}>Preview media path</button>{preview ? <span className="code success">{preview}</span> : null}</div>
 
     <button className="button" disabled={Boolean(busy)} onClick={save}>{busy === "settings" && <LoaderCircle size={14} className="animate-spin" />} Save Settings</button>
     {message && <p className={messageTone}>{message}</p>}

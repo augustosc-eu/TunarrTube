@@ -12,7 +12,7 @@ async function exists(file: string) {
 }
 
 afterEach(() => {
-  delete process.env.YTARR_YTDLP_PATH;
+  delete process.env.TUNARRTUBE_YTDLP_PATH;
 });
 
 describe("createSourceFromDraft", () => {
@@ -65,7 +65,7 @@ describe("createSourceFromDraft", () => {
 
 describe("removeVideoFromSource", () => {
   it("deletes the membership, the files it owns, and the orphaned video once no other source references it", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-remove-video-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-remove-video-test-"));
     const suffix = `${Date.now()}-${Math.random()}`;
     const source = await db.source.create({
       data: { name: "Remove video test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: root }
@@ -95,7 +95,7 @@ describe("removeVideoFromSource", () => {
   });
 
   it("keeps the video row when another source still references it", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-remove-video-shared-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-remove-video-shared-test-"));
     const suffix = `${Date.now()}-${Math.random()}`;
     const sourceA = await db.source.create({
       data: { name: "Shared video source A", url: `https://youtube.com/playlist?list=a-${suffix}`, youtubeId: `a-${suffix}`, directoryName: `test-a-${suffix}`, mediaDirectory: root }
@@ -125,7 +125,7 @@ describe("removeVideoFromSource", () => {
 
 describe("syncSource", () => {
   it("does not re-queue a download for a video already recorded as unavailable (permanently gone, or sign-in-required)", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-sync-unavailable-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-sync-unavailable-test-"));
     const fakeYtDlp = path.join(root, "yt-dlp");
     const suffix = `${Date.now()}-${Math.random()}`;
     const youtubeId = `video-${suffix}`;
@@ -136,7 +136,7 @@ describe("syncSource", () => {
       entries: [{ id: youtubeId, title: "Sync test video", webpage_url: `https://youtube.com/watch?v=${youtubeId}` }]
     })}\nEOF\n`);
     await chmod(fakeYtDlp, 0o755);
-    process.env.YTARR_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
 
     const video = await db.video.create({
       data: {

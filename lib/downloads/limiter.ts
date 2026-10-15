@@ -7,7 +7,7 @@ type Waiter = {
 
 type DownloadLimiterState = { active: number; waiters: Waiter[] };
 
-const globalLimiter = globalThis as typeof globalThis & { ytarrDownloadLimiter?: DownloadLimiterState };
+const globalLimiter = globalThis as typeof globalThis & { tunarrtubeDownloadLimiter?: DownloadLimiterState };
 const configuredConcurrency = Number.parseInt(process.env.TUNARRTUBE_DOWNLOAD_CONCURRENCY ?? "1", 10);
 
 export const DOWNLOAD_CONCURRENCY = Number.isSafeInteger(configuredConcurrency) && configuredConcurrency > 0
@@ -15,7 +15,7 @@ export const DOWNLOAD_CONCURRENCY = Number.isSafeInteger(configuredConcurrency) 
   : 1;
 
 function state() {
-  return (globalLimiter.ytarrDownloadLimiter ??= { active: 0, waiters: [] });
+  return (globalLimiter.tunarrtubeDownloadLimiter ??= { active: 0, waiters: [] });
 }
 
 function abortReason(signal: AbortSignal) {

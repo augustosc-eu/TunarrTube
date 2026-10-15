@@ -17,7 +17,7 @@ Source: [README.md](../README.md), corroborated end-to-end by [lib/sources/servi
 
 ## Who it serves
 
-A single local operator who self-hosts Tunarr and wants specific YouTube playlists/channels to behave like TV channels, without manually downloading and organizing video files. There is no multi-user, multi-tenant, or authentication concept anywhere in the schema or API (see [docs/ARCHITECTURE.md](ARCHITECTURE.md#authentication) and [docs/DECISIONS.md](DECISIONS.md)) — the product is built for one trusted operator on a loopback-only host or behind an operator-managed authenticated boundary, consistent with the README's "local-first companion" framing.
+A single local operator who self-hosts Tunarr and wants specific YouTube playlists/channels to behave like TV channels, without manually downloading and organizing video files. There is no multi-user or multi-tenant concept anywhere in the schema or API, and authentication is limited to one optional shared password from the environment (see [docs/ARCHITECTURE.md](ARCHITECTURE.md#authentication) and [docs/DECISIONS.md](DECISIONS.md)) — the product is built for one trusted operator on a loopback-only host or behind an operator-managed authenticated boundary, consistent with the README's "local-first companion" framing.
 
 ## Core user journeys
 

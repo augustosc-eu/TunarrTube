@@ -65,7 +65,7 @@ describe("renderVideoWithOverlay", () => {
     // audio track); a source with no audio has nothing to shorten against, and the video stream is
     // otherwise unbounded (each overlay layer is a "-loop 1" PNG input, i.e. infinite duration) -- see
     // lib/ffmpeg/compose.ts. Passing the real, ffprobe'd duration explicitly closes that gap.
-    const outDir = await mkdtemp(path.join(os.tmpdir(), "ytarr-compose-test-"));
+    const outDir = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-compose-test-"));
     try {
       await renderVideoWithOverlay(
         "/tmp/source.mp4",

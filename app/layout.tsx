@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
-import { THEME_STORAGE_KEY } from "@/components/theme-constants";
+import { LEGACY_THEME_STORAGE_KEY, THEME_STORAGE_KEY } from "@/components/theme-constants";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -18,7 +18,13 @@ export const metadata: Metadata = {
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
-    var stored = window.localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
+    var storage = window.localStorage;
+    var stored = storage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
+    var legacy = storage.getItem(${JSON.stringify(LEGACY_THEME_STORAGE_KEY)});
+    if (legacy !== null) {
+      if (stored === null) { stored = legacy; storage.setItem(${JSON.stringify(THEME_STORAGE_KEY)}, legacy); }
+      storage.removeItem(${JSON.stringify(LEGACY_THEME_STORAGE_KEY)});
+    }
     if (stored === "light" || stored === "dark") {
       document.documentElement.setAttribute("data-theme", stored);
     }

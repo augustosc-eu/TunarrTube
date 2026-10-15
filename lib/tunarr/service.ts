@@ -3,11 +3,10 @@ import { randomUUID } from "node:crypto";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
-import { getSettings, normalizeTunarrUrl, translatePathForTunarr } from "@/lib/settings/service";
+import { getSettings, normalizeTunarrUrl, removeWithinDirectory, translatePathForTunarr } from "@/lib/settings/service";
 import { enqueueUniqueJob } from "@/lib/sources/service";
 import { materializeForTunarr, VideoUnavailableError } from "@/lib/downloads/service";
 import { extractVideoId, sidecarPathsFor } from "@/lib/naming/service";
-import { rm } from "node:fs/promises";
 import { TunarrApiClient, type TunarrChannel, type TunarrProgram } from "@/lib/tunarr/client";
 import { ensureProgrammingPlan } from "@/lib/programming/ai-service";
 import { buildTunarrSchedule, buildTunarrRotationSchedule } from "@/lib/programming/schedule-builder";
@@ -299,8 +298,8 @@ export async function unlinkTunarr(sourceId: string) {
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   for (const membership of source.videos.filter((item) => item.retentionOrigin === "tunarr")) {
     if (membership.localPath) {
-      await rm(membership.localPath, { force: true });
-      for (const sidecar of sidecarPathsFor(membership.localPath)) await rm(sidecar, { force: true });
+      await removeWithinDirectory(source.mediaDirectory, membership.localPath);
+      for (const sidecar of sidecarPathsFor(membership.localPath)) await removeWithinDirectory(source.mediaDirectory, sidecar);
     }
     await db.sourceVideo.update({ where: { id: membership.id }, data: { localPath: null, fileSize: null, downloadStatus: "not_downloaded", retentionOrigin: "none" } });
   }

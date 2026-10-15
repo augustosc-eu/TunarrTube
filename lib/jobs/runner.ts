@@ -12,22 +12,25 @@ import { enqueueChannelJob, runChannelBrief, runContentSelection, runHeuristicSe
 import { scanLocalFolder } from "@/lib/ingest/local-scan";
 import { renderMediaItem } from "@/lib/renders/service";
 import { publishChannelToTunarr } from "@/lib/tunarr/channel-service";
+import {
+  channelBriefJobPayloadSchema, contentSelectJobPayloadSchema, ingestLocalScanJobPayloadSchema, renderJobPayloadSchema, tunarrPublishJobPayloadSchema
+} from "@/lib/validation";
 
 const globalWorker = globalThis as unknown as {
-  ytarrLanes?: Map<string, Promise<void>>;
-  ytarrRecovered?: boolean;
-  ytarrRecovery?: Promise<void>;
-  ytarrWakeTimer?: NodeJS.Timeout;
-  ytarrRateLimitHits?: number;
-  ytarrControllers?: Map<string, AbortController>;
+  tunarrtubeLanes?: Map<string, Promise<void>>;
+  tunarrtubeRecovered?: boolean;
+  tunarrtubeRecovery?: Promise<void>;
+  tunarrtubeWakeTimer?: NodeJS.Timeout;
+  tunarrtubeRateLimitHits?: number;
+  tunarrtubeControllers?: Map<string, AbortController>;
 };
 
 function controllers() {
-  return (globalWorker.ytarrControllers ??= new Map());
+  return (globalWorker.tunarrtubeControllers ??= new Map());
 }
 
 function lanes() {
-  return (globalWorker.ytarrLanes ??= new Map());
+  return (globalWorker.tunarrtubeLanes ??= new Map());
 }
 
 // Media-fetching job types that shell out to yt-dlp for the actual video bytes, as opposed to the light
@@ -84,12 +87,12 @@ export class SourceJobsActiveError extends Error {}
 // Exported so tests can exercise startup recovery directly rather than through kickWorker()/work()'s
 // table-wide scan -- that scan has no per-test scoping, so driving it from a test risks racing a
 // *different* test file's own kickWorker() call over the same shared dev database (same reasoning as
-// handleJobFailure's export above). Tests should clear globalWorker.ytarrRecovered first so the
+// handleJobFailure's export above). Tests should clear globalWorker.tunarrtubeRecovered first so the
 // once-per-process guard below doesn't skip the call.
 export async function recoverJobs() {
-  if (globalWorker.ytarrRecovered) return;
+  if (globalWorker.tunarrtubeRecovered) return;
   // All lanes must await the same recovery pass before any of them can claim work.
-  globalWorker.ytarrRecovery ??= (async () => {
+  globalWorker.tunarrtubeRecovery ??= (async () => {
     const interrupted = await db.job.findMany({ where: { status: "running" } });
     for (const job of interrupted) {
       const exhausted = job.attempts >= job.maxAttempts;
@@ -123,12 +126,12 @@ export async function recoverJobs() {
     // "still playing"). Since a fresh process has no live streams yet, any nonzero count left over from
     // before the restart is necessarily stale.
     await db.cacheAsset.updateMany({ where: { activeReaders: { gt: 0 } }, data: { activeReaders: 0 } });
-    globalWorker.ytarrRecovered = true;
+    globalWorker.tunarrtubeRecovered = true;
   })();
   try {
-    await globalWorker.ytarrRecovery;
+    await globalWorker.tunarrtubeRecovery;
   } finally {
-    globalWorker.ytarrRecovery = undefined;
+    globalWorker.tunarrtubeRecovery = undefined;
   }
 }
 
@@ -158,7 +161,7 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
   if (job.type === "cache" && job.videoId) return cacheVideo(job.videoId, job.sourceId ?? undefined, signal);
   if (job.type === "retag" && job.sourceId && job.videoId) return retagVideo(job.sourceId, job.videoId);
   if (job.type === "tunarr_publish" && job.sourceId && job.payloadJson) {
-    return publishSourceToTunarr(job.sourceId, JSON.parse(job.payloadJson) as PublishTunarrInput, signal);
+    return publishSourceToTunarr(job.sourceId, tunarrPublishJobPayloadSchema.parse(JSON.parse(job.payloadJson)), signal);
   }
   if (job.type === "tunarr_refresh" && job.sourceId) {
     const source = await db.source.findUnique({ where: { id: job.sourceId } });
@@ -168,28 +171,25 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
     return publishSourceToTunarr(job.sourceId, { channelName: source.tunarrChannelName, channelNumber: source.tunarrRequestedChannelNumber ?? undefined, programmingOrder: source.tunarrProgrammingOrder as PublishTunarrInput["programmingOrder"], prefetch: false }, signal);
   }
   if (job.type === "ingest_local_scan" && job.channelId && job.payloadJson) {
-    const { folderPath } = JSON.parse(job.payloadJson) as { folderPath: string };
+    const { folderPath } = ingestLocalScanJobPayloadSchema.parse(JSON.parse(job.payloadJson));
     return scanLocalFolder(job.channelId, folderPath);
   }
   if (job.type === "render" && job.mediaItemId && job.payloadJson) {
-    const { templateId } = JSON.parse(job.payloadJson) as { templateId: string };
+    const { templateId } = renderJobPayloadSchema.parse(JSON.parse(job.payloadJson));
     return renderMediaItem(job.mediaItemId, templateId, signal);
   }
   if (job.type === "channel_publish" && job.channelId) {
     return publishChannelToTunarr(job.channelId, signal);
   }
   if (job.type === "content_select" && job.channelId && job.payloadJson) {
-    const payload = JSON.parse(job.payloadJson) as {
-      method?: "ai" | "heuristic"; sourceIds: string[]; instructions?: string; targetCount?: number;
-      providerOverride?: string | null; mode?: "balanced" | "grouped"; targetDurationSeconds?: number;
-    };
+    const payload = contentSelectJobPayloadSchema.parse(JSON.parse(job.payloadJson));
     if (payload.method === "heuristic") {
       return runHeuristicSelection(job.channelId, { sourceIds: payload.sourceIds, targetCount: payload.targetCount, mode: payload.mode, targetDurationSeconds: payload.targetDurationSeconds });
     }
     return runContentSelection(job.channelId, { sourceIds: payload.sourceIds, instructions: payload.instructions ?? "", targetCount: payload.targetCount, providerOverride: payload.providerOverride }, signal);
   }
   if (job.type === "channel_brief" && job.channelId && job.payloadJson) {
-    const payload = JSON.parse(job.payloadJson) as { sourceIds: string[] };
+    const payload = channelBriefJobPayloadSchema.parse(JSON.parse(job.payloadJson));
     return runChannelBrief(job.channelId, payload, signal);
   }
   throw new Error(`Invalid ${job.type} job payload.`);
@@ -231,8 +231,8 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
     // every other queued download/cache job's runAfter out too, so the whole queue backs off together
     // instead of the next job immediately tripping the same 429. Escalate the cooldown on repeated
     // hits and reset it (see the success path in work()) once a download actually gets through.
-    const hits = (globalWorker.ytarrRateLimitHits ?? 0) + 1;
-    globalWorker.ytarrRateLimitHits = hits;
+    const hits = (globalWorker.tunarrtubeRateLimitHits ?? 0) + 1;
+    globalWorker.tunarrtubeRateLimitHits = hits;
     const cooldownSeconds = Math.min(30 * 60, 120 * 2 ** (hits - 1));
     const cooldownUntil = new Date(Date.now() + cooldownSeconds * 1000);
     await db.job.updateMany({
@@ -296,7 +296,7 @@ async function work(lane: LaneKind) {
       if ((await db.job.findUnique({ where: { id: job.id } }))?.status !== "running") continue;
       await handleJob(job, controller.signal);
       controller.signal.throwIfAborted();
-      if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.ytarrRateLimitHits = 0;
+      if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.tunarrtubeRateLimitHits = 0;
       const completed = await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "complete", activeKey: null, finishedAt: new Date() } });
       if (!completed.count) continue;
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
@@ -329,23 +329,37 @@ async function work(lane: LaneKind) {
   }
 }
 
-// Called from each lane's finally() below once every lane has drained (checked via lanes().size so a lane
-// that just finished doesn't schedule a wake while its siblings are still working through the queue --
-// whichever lane finishes last is the one that actually gets past that check). Guards on ytarrWakeTimer
-// too, since more than one lane can reach this within the same tick.
+// Which queued job types each lane kind claims -- mirrors claimJob() above.
+function laneTypeFilter(kind: LaneKind) {
+  if (kind === "media") return { in: RATE_LIMITED_JOB_TYPES };
+  if (kind === "render") return { in: RENDER_JOB_TYPES };
+  return { notIn: [...RATE_LIMITED_JOB_TYPES, ...RENDER_JOB_TYPES] };
+}
+
+// Called from each lane's finally() below. Schedules one wake-up for the earliest queued job that a lane
+// *not currently running* could claim -- so a download backing off for a few minutes isn't stranded just
+// because a long render or Tunarr publish is still occupying another lane. Job types only a busy lane
+// claims are left out: that lane re-checks the queue itself when its current job ends, and including
+// them would wake idle lanes in a tight loop over work they can't take. Guards on tunarrtubeWakeTimer, since
+// more than one lane can reach this within the same tick.
 async function scheduleWakeIfIdle() {
-  if (lanes().size) return;
-  if (globalWorker.ytarrWakeTimer) return;
+  if (globalWorker.tunarrtubeWakeTimer) return;
+  const idleKinds = [...new Set(LANE_IDS.filter((id) => !lanes().has(id)).map(laneKind))];
+  if (!idleKinds.length) return;
   if ((await getSettings()).jobsPaused) return;
-  const next = await db.job.findFirst({ where: { status: "queued" }, orderBy: { runAfter: "asc" }, select: { runAfter: true } });
-  if (!next) return;
+  const next = await db.job.findFirst({
+    where: { status: "queued", OR: idleKinds.map((kind) => ({ type: laneTypeFilter(kind) })) },
+    orderBy: { runAfter: "asc" },
+    select: { runAfter: true }
+  });
+  if (!next || globalWorker.tunarrtubeWakeTimer) return;
   const delay = Math.max(25, Math.min(60_000, next.runAfter.getTime() - Date.now()));
-  globalWorker.ytarrWakeTimer = setTimeout(() => kickWorker(), delay);
-  globalWorker.ytarrWakeTimer.unref();
+  globalWorker.tunarrtubeWakeTimer = setTimeout(() => kickWorker(), delay);
+  globalWorker.tunarrtubeWakeTimer.unref();
 }
 
 export function kickWorker() {
-  if (globalWorker.ytarrWakeTimer) { clearTimeout(globalWorker.ytarrWakeTimer); globalWorker.ytarrWakeTimer = undefined; }
+  if (globalWorker.tunarrtubeWakeTimer) { clearTimeout(globalWorker.tunarrtubeWakeTimer); globalWorker.tunarrtubeWakeTimer = undefined; }
   for (const id of LANE_IDS) {
     if (lanes().has(id)) continue;
     // A throw out of work() (e.g. a DB error outside handleJobFailure's guarded updates) would otherwise
@@ -355,7 +369,13 @@ export function kickWorker() {
       message: `Job worker lane ${id} crashed: ${sanitizeLogValue(error instanceof Error ? error.message : String(error))}`
     }).catch(() => undefined)).finally(() => {
       lanes().delete(id);
-      void scheduleWakeIfIdle();
+      // Best-effort like the lane's own crash handler above: a DB error here must not become an
+      // unhandled rejection; the scheduler's once-a-minute kickWorker() (lib/jobs/scheduler.ts) or the next
+      // enqueue picks work back up.
+      void scheduleWakeIfIdle().catch((error) => writeLog({
+        level: "error", category: "job",
+        message: `Could not schedule the job worker wake-up: ${sanitizeLogValue(error instanceof Error ? error.message : String(error))}`
+      }).catch(() => undefined));
     });
     lanes().set(id, promise);
   }

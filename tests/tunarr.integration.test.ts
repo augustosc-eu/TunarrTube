@@ -18,7 +18,7 @@ const paths = {
 describe("Tunarr publish pipeline", () => {
   it("registers local media, scans it, creates a channel, and assigns programming", async () => {
     const suffix = `${Date.now()}-${Math.random()}`;
-    const mediaDirectory = `/tmp/ytarr-tunarr-${suffix}`;
+    const mediaDirectory = `/tmp/tunarrtube-tunarr-${suffix}`;
     const source = await db.source.create({
       data: { name: "Tunarr test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `tunarr-${suffix}`, mediaDirectory }
     });
@@ -70,7 +70,7 @@ describe("Tunarr publish pipeline", () => {
 
   it("keeps an existing channel's number on refresh instead of bumping it to the next available slot", async () => {
     const suffix = `${Date.now()}-${Math.random()}`;
-    const mediaDirectory = `/tmp/ytarr-tunarr-renumber-${suffix}`;
+    const mediaDirectory = `/tmp/tunarrtube-tunarr-renumber-${suffix}`;
     const existingChannelId = `channel-${suffix}`;
     const source = await db.source.create({
       data: { name: "Renumber test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `tunarr-renumber-${suffix}`, mediaDirectory, tunarrChannelId: existingChannelId, tunarrChannelNumber: 5 }

@@ -1,13 +1,15 @@
 import { createReadStream } from "node:fs";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { AppError } from "@/lib/api";
+import { readEnv } from "@/lib/config/env";
 import { db } from "@/lib/db/client";
+import { removeWithinDirectory } from "@/lib/settings/service";
 
 const ALLOWED_HOSTS = ["ytimg.com", "ggpht.com", "googleusercontent.com", "youtube.com"];
 
-function thumbnailRoot() { return path.resolve(process.env.TUNARRTUBE_THUMBNAIL_DIR ?? process.env.YTARR_THUMBNAIL_DIR ?? path.join(process.cwd(), "storage", "thumbnails")); }
+function thumbnailRoot() { return path.resolve(readEnv("THUMBNAIL_DIR") ?? path.join(process.cwd(), "storage", "thumbnails")); }
 function safeRemoteUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "https:" || !ALLOWED_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) throw new AppError("THUMBNAIL_URL_REJECTED", "Thumbnail host is not allowed.", 422);
@@ -33,7 +35,7 @@ export async function persistSourceThumbnails(sourceId: string) {
   if (!source) throw new AppError("SOURCE_NOT_FOUND", "Source not found.", 404);
   if (source.thumbnailUrl) {
     const local = await persist("source", source.id, source.thumbnailUrl);
-    if (source.thumbnailPath && source.thumbnailPath !== local) await rm(source.thumbnailPath, { force: true });
+    if (source.thumbnailPath && source.thumbnailPath !== local) await removeThumbnailFile(source.thumbnailPath);
     await db.source.update({ where: { id: source.id }, data: { thumbnailPath: local } });
   }
   for (const membership of source.videos) {
@@ -59,7 +61,12 @@ export async function thumbnailResponse(kind: "source" | "video" | "render", id:
   return new Response(Readable.toWeb(createReadStream(record.thumbnailPath)) as ReadableStream, { headers: { "Content-Type": contentType, "Content-Length": String(details.size), ETag: etag, "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" } });
 }
 
+// Thumbnails are only ever written under thumbnailRoot() (see persist above).
+export async function removeThumbnailFile(thumbnailPath: string | null | undefined) {
+  return removeWithinDirectory(thumbnailRoot(), thumbnailPath);
+}
+
 export async function removeSourceThumbnail(sourceId: string) {
   const source = await db.source.findUnique({ where: { id: sourceId }, select: { thumbnailPath: true } });
-  if (source?.thumbnailPath) await rm(source.thumbnailPath, { force: true });
+  await removeThumbnailFile(source?.thumbnailPath);
 }

@@ -7,10 +7,9 @@ import { buildUserPrompt, SYSTEM_PROMPT } from "@/lib/programming/providers/prom
 import { buildSelectionUserPrompt, SELECTION_SYSTEM_PROMPT } from "@/lib/programming/providers/selection-prompt";
 import type { AiProvider, GeneratePlanInput, SelectContentInput } from "@/lib/programming/providers/types";
 
-// claude-opus-5 per this project's default model choice; not user-configurable today since AGENTS.md's
-// env-var convention (TUNARRTUBE_YTDLP_PATH-style) is reserved for binaries/URLs, not model selection --
-// revisit if a second model tier turns out to be worth the extra setting.
-const MODEL = "claude-opus-5";
+// Defaults to the current Claude Opus model; TUNARRTUBE_ANTHROPIC_MODEL overrides it, mirroring the
+// OpenAI side's TUNARRTUBE_OPENAI_MODEL (e.g. to pick a cheaper tier for large channels).
+const MODEL = process.env.TUNARRTUBE_ANTHROPIC_MODEL?.trim() || "claude-opus-5-5";
 
 export const anthropicProvider: AiProvider = {
   name: "anthropic",

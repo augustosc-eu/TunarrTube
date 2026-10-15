@@ -7,7 +7,7 @@ Turn public YouTube videos, playlists, and channels into a local media library a
 TunarrTube is a self-hosted, local-first companion for Tunarr. It discovers videos with `yt-dlp`, stores its catalog in SQLite, downloads or streams media according to each source's retention policy, and keeps linked Tunarr channels up to date.
 
 > [!IMPORTANT]
-> TunarrTube is pre-1.0 software for one trusted operator. It has no login system. Keep it on localhost or behind an authenticated reverse proxy or VPN; do not expose it directly to the internet or an untrusted LAN.
+> TunarrTube is pre-1.0 software for one trusted operator. By default it has no login. Keep it on localhost, or set `TUNARRTUBE_AUTH_PASSWORD` (see [Optional password](#optional-password)) and/or put it behind an authenticated reverse proxy or VPN; do not expose it directly to the internet or an untrusted LAN.
 
 ## Features
 
@@ -88,15 +88,42 @@ docker compose up -d --build
 
 `host.docker.internal` works with Docker Desktop and is configured through `host-gateway` for Linux. If Tunarr is in another Docker stack, connect both services to a shared Docker network and use Tunarr's service name instead.
 
+### Published images
+
+The commands above build the image from your checkout. Each release is also published as a ready-made image for `linux/amd64` and `linux/arm64` (including Apple Silicon and Raspberry Pi 4/5), so you can skip the build:
+
+| Tag | Meaning |
+|---|---|
+| `ghcr.io/augustosc-eu/tunarrtube:0.3.0` | That exact release (recommended, so upgrades happen only when you choose) |
+| `ghcr.io/augustosc-eu/tunarrtube:0.3` | The newest patch release of 0.3 |
+| `ghcr.io/augustosc-eu/tunarrtube:latest` | The newest stable release |
+
+Pre-releases (for example `0.3.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
+
+To use one with the supplied `compose.yaml`, add the image to `.env`:
+
+```dotenv
+TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.3.0
+```
+
+Then pull it and start without building:
+
+```bash
+docker compose pull tunarrtube
+docker compose up -d
+```
+
+To upgrade later, change the version in `.env` and run the same two commands. Your data lives in the Docker volumes, not the image, so it carries over. Back up first, as with any upgrade.
+
 ### Docker storage
 
 The supplied Compose file persists:
 
 | Data | Container path | Default volume |
 |---|---|---|
-| SQLite database and thumbnails | `/config` | `ytarr-config` |
-| Downloaded and cached media | `/media` | `ytarr-media` |
-| Channels overlay render cache and staged renders | `/app/storage` | `ytarr-storage` |
+| SQLite database and thumbnails | `/config` | `tunarrtube-config` |
+| Downloaded and cached media | `/media` | `tunarrtube-media` |
+| Channels overlay render cache and staged renders | `/app/storage` | `tunarrtube-storage` |
 | Optional Tunarr configuration | `/config/tunarr` | `tunarr-config` |
 
 `/app/storage` is a rebuildable cache (Channels overlay screenshots and staged render outputs) rather
@@ -104,9 +131,9 @@ than primary media, but the database keeps referencing paths under it until a re
 a channel, so it's still persisted by default to avoid needlessly re-rendering after a container
 recreation.
 
-The `ytarr-*` volume names and `/config/ytarr.db` filename are legacy identifiers intentionally retained so upgrades continue using existing data.
+Docker volumes can't be renamed in place, so `compose.yaml` maps these volume keys onto volumes named `<project>_ytarr-*` — the names they were created under before the project was renamed. Existing installs keep their data with no manual steps, and a fresh install creates the same names. Leave those `name:` lines unchanged, or Compose starts with new, empty volumes.
 
-To make downloaded files directly visible on the host, replace the `ytarr-media:/media` mounts in `compose.yaml` with the same bind mount for both services, for example:
+To make downloaded files directly visible on the host, replace the `tunarrtube-media:/media` mounts in `compose.yaml` with the same bind mount for both services, for example:
 
 - Linux/macOS: `/srv/tunarrtube-media:/media`
 - Windows Docker Desktop: `D:/TunarrTube:/media`
@@ -124,7 +151,7 @@ TunarrTube needs write access; Tunarr only needs read access. The TunarrTube con
 - A current `yt-dlp`
 - FFmpeg
 - A reachable [Tunarr installation](https://tunarr.com/getting-started/installation/) for channel publishing
-- For the Channels overlay-render feature: `npm install` downloads Puppeteer's own bundled Chromium automatically (no separate browser install needed natively). If your environment blocks that download, set `PUPPETEER_SKIP_DOWNLOAD=1` and point `YTARR_PUPPETEER_EXECUTABLE_PATH` at an existing Chrome/Chromium binary instead.
+- For the Channels overlay-render feature: `npm install` downloads Puppeteer's own bundled Chromium automatically (no separate browser install needed natively). If your environment blocks that download, set `PUPPETEER_SKIP_DOWNLOAD=1` and point `TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH` at an existing Chrome/Chromium binary instead.
 
 ### Install dependencies
 
@@ -165,7 +192,7 @@ npm run build
 npm start
 ```
 
-Both development and production startup generate Prisma Client and apply committed SQLite migrations automatically. `npm start` listens on `127.0.0.1`; `npm run start:lan` deliberately listens on all interfaces and should only be used behind an authenticated boundary.
+Both development and production startup generate Prisma Client and apply committed SQLite migrations automatically. `npm start` listens on `127.0.0.1`; `npm run start:lan` deliberately listens on all interfaces — set `TUNARRTUBE_AUTH_PASSWORD` before using it (see [Optional password](#optional-password)).
 
 ## Connect to Tunarr
 
@@ -281,7 +308,13 @@ Manual or scheduled synchronization detects new videos and marks missing members
 
 TunarrTube exposes its HTTP API as an OpenAPI 3.1 document at [`/openapi.json`](http://localhost:3000/openapi.json). Import that URL into Postman, Insomnia, n8n, or an OpenAPI client generator. Operations have stable `operationId` values. JSON successes use `{ "data": ... }`; JSON failures use `{ "error": { "code": "...", "message": "...", "details": ... } }`.
 
-There is no built-in API authentication. API operations can start background jobs, write media, change filesystem destinations, and mutate the configured Tunarr server. Keep TunarrTube on localhost or a trusted private network; for remote integrations, place it behind an authenticated reverse proxy or VPN with TLS.
+API operations can start background jobs, write media, change filesystem destinations, and mutate the configured Tunarr server. Unless `TUNARRTUBE_AUTH_PASSWORD` is set there is no authentication, so keep TunarrTube on localhost or a trusted private network; for remote integrations, also place it behind a reverse proxy or VPN with TLS. With a password set, pass it with curl's `-u admin:<password>`.
+
+### Optional password
+
+Set `TUNARRTUBE_AUTH_PASSWORD` (and optionally `TUNARRTUBE_AUTH_USERNAME`, default `admin`) to require HTTP Basic authentication for every page and API route. Your browser shows its own sign-in prompt and remembers the credentials for the session. `/api/health` stays open so container health checks keep working. The password is read only from the environment — it is never stored in the database or shown in the UI. Basic authentication sends the password with every request, so over an untrusted network serve TunarrTube through an HTTPS reverse proxy.
+
+Independently of the password, state-changing API requests that a browser marks as coming from another site — including another port on the same host — are rejected.
 
 ```bash
 curl http://localhost:3000/api/sources
@@ -296,7 +329,7 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `DATABASE_URL` | Prisma SQLite connection | `file:./ytarr.db` |
+| `DATABASE_URL` | Prisma SQLite connection | `file:./tunarrtube.db` |
 | `TUNARRTUBE_YTDLP_PATH` | Absolute `yt-dlp` executable path | Auto-discovered |
 | `TUNARRTUBE_FFMPEG_PATH` | Absolute FFmpeg executable path | Auto-discovered |
 | `TUNARRTUBE_MEDIA_DIR` | Initial media root | `storage/media` |
@@ -306,22 +339,26 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `TUNARRTUBE_GENERAL_WORKERS` | How many lightweight non-download/cache/render jobs run concurrently | `3` |
 | `TUNARRTUBE_DOWNLOAD_CONCURRENCY` | Shared media-fetch limit across queued downloads, cache fills, and Tunarr materialization | `1` |
 | `TUNARRTUBE_RENDER_THREADS` | FFmpeg encoder/filter thread budget for the single render lane | `2` |
-| `YTARR_FFPROBE_PATH` | Absolute `ffprobe` executable path (used by Channels rendering) | Auto-discovered |
+| `TUNARRTUBE_FFPROBE_PATH` | Absolute `ffprobe` executable path (used by Channels rendering) | Auto-discovered |
 | `TUNARRTUBE_ANTHROPIC_API_KEY` | Enables Anthropic (Claude) as an AI Programming provider | None (feature unavailable if unset) |
 | `OPENAI_API_KEY` | Enables OpenAI as an AI Programming provider | None (feature unavailable if unset) |
-| `TUNARRTUBE_OPENAI_MODEL` | OpenAI model used for AI Programming | `gpt-4o` |
+| `TUNARRTUBE_AUTH_PASSWORD` | Requires HTTP Basic sign-in for the UI and API (see [Optional password](#optional-password)) | None (no sign-in) |
+| `TUNARRTUBE_AUTH_USERNAME` | Username for `TUNARRTUBE_AUTH_PASSWORD` | `admin` |
+| `TUNARRTUBE_ANTHROPIC_MODEL` | Anthropic model used for AI Programming | `claude-opus-5-5` |
+| `TUNARRTUBE_OPENAI_MODEL` | OpenAI model used for AI Programming (must support structured outputs) | `gpt-5` |
 | `TUNARRTUBE_CLAUDE_PATH` | Absolute `claude` (Claude Code CLI) executable path, used when Settings' own path override is unset | Auto-discovered |
-| `YTARR_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium |
+| `TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium |
 | `TUNARRTUBE_PORT` | Docker host port | `3000` |
 | `TUNARR_PORT` | Optional Tunarr Docker host port | `8000` |
+| `TUNARRTUBE_IMAGE` | Published TunarrTube image to run instead of building this checkout (see [Published images](#published-images)) | `tunarrtube:local` (built from source) |
 | `TUNARR_IMAGE` | Optional Tunarr image tag or digest | `chrisbenincasa/tunarr:latest` |
 | `TZ` | Container timezone | `UTC` |
 
-Former `YTARR_*` variables remain supported as lower-priority aliases for existing installations.
+The pre-rename `YTARR_*` names (and `YTARR_PORT` for Compose) still work as fallbacks, but are deprecated: TunarrTube logs a warning at startup naming each one it finds, so you can rename it to the `TUNARRTUBE_*` equivalent.
 
 Native defaults:
 
-- Database: `prisma/ytarr.db`
+- Database: `prisma/tunarrtube.db`
 - Media: `storage/media/`
 - Thumbnails: `storage/thumbnails/`
 - Source files: `<media-root>/<source-directory>/<youtubeId>.mp4` by default (see "Naming" below for custom filename/folder layouts)
@@ -357,13 +394,13 @@ Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_
 
 ### Downloads fail with "No supported JavaScript runtime" or HTTP 403/500
 
-Current `yt-dlp` needs a JavaScript runtime (plus its `yt-dlp-ejs` solver scripts) to extract YouTube formats; without one, downloads fail with the warning above, and metadata jobs can intermittently fail with `The page needs to be reloaded`. TunarrTube itself always passes `--js-runtimes node --remote-components ejs:github` to every `yt-dlp` invocation (so it uses the Node.js it's already running on, and actually downloads the solver script instead of only warning it was skipped), and caches that download under its own persisted storage (`/config` in Docker, alongside the database; the project directory's `storage/` folder for a host install) rather than `yt-dlp`'s default `~/.cache`, which isn't guaranteed to exist or be writable. The Docker image also ships `yt-dlp[default]` (the extra that includes `yt-dlp-ejs`) — rebuild and redeploy it if you see this on an older image. For a host install, `pip install "yt-dlp[default]"` (or install [Deno](https://deno.com), which `yt-dlp` auto-detects as an alternative runtime). See the [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+Current `yt-dlp` needs a JavaScript runtime (plus its `yt-dlp-ejs` solver scripts) to extract YouTube formats; without one, downloads fail with the warning above, and metadata jobs can intermittently fail with `The page needs to be reloaded`. TunarrTube itself always passes `--js-runtimes node --remote-components ejs:github` to every `yt-dlp` invocation (so it uses the Node.js it's already running on, and actually downloads the solver script instead of only warning it was skipped), and caches that download under its own persisted storage (`/config` in Docker, alongside the database; the project directory's `storage/` folder for a host install) rather than `yt-dlp`'s default `~/.cache`, which isn't guaranteed to exist or be writable. The Docker image also ships the dependencies from `yt-dlp[default]` (the extra that includes `yt-dlp-ejs`) — rebuild and redeploy it if you see this on an older image. For a host install, `pip install "yt-dlp[default]"` (or install [Deno](https://deno.com), which `yt-dlp` auto-detects as an alternative runtime). See the [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 
 ### A YouTube URL cannot be analyzed
 
 Only public HTTPS URLs on supported YouTube hosts are accepted, including `youtu.be`. Private/unlisted, account-only, and members-only media are not supported — TunarrTube can't browse a signed-in account's library, only analyze a URL you already have. Age-restricted and bot-checked *public* videos are supported if you configure a cookies file (see "Age-restricted or sign-in-required videos" below); without one they're marked unavailable instead of failing repeatedly.
 
-YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), self-update refuses and reports the error; update it with that package manager instead.
+YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), self-update refuses and reports the error; update it with that package manager instead. In Docker, the image ships yt-dlp's official self-updating build, so **Update** works there too; an update lasts until the container is recreated, and rebuilding the image picks up the latest release.
 
 ### A download failed
 

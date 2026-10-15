@@ -8,7 +8,6 @@ const cleanup: string[] = [];
 
 afterEach(async () => {
   delete process.env.TUNARRTUBE_YTDLP_PATH;
-  delete process.env.YTARR_YTDLP_PATH;
   await Promise.all(cleanup.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -26,7 +25,7 @@ describe("updateBinary", () => {
   });
 
   it("reports a version bump when the self-update actually changes the version", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-update-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-update-test-"));
     cleanup.push(root);
     const marker = path.join(root, "updated");
     await fakeYtDlp(root, `
@@ -43,7 +42,7 @@ process.exit(1);
   });
 
   it("reports up to date without a version bump when there is nothing to update", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-update-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-update-test-"));
     cleanup.push(root);
     await fakeYtDlp(root, `
 const args = process.argv.slice(2);
@@ -57,7 +56,7 @@ process.exit(1);
   });
 
   it("surfaces a package-manager refusal as a failure", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ytarr-update-test-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-update-test-"));
     cleanup.push(root);
     await fakeYtDlp(root, `
 const args = process.argv.slice(2);

@@ -1,7 +1,8 @@
 import path from "node:path";
-import { mkdir, realpath, access } from "node:fs/promises";
+import { mkdir, realpath, access, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import { AppError } from "@/lib/api";
+import { readEnv } from "@/lib/config/env";
 import { DEFAULT_MEDIA_ROOT } from "@/lib/constants";
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
@@ -51,11 +52,11 @@ export async function getSettings() {
   const existing = await db.appSettings.findUnique({ where: { id: 1 } });
   if (existing) return reconcileMediaDirectory(existing);
 
-  const configured = process.env.TUNARRTUBE_MEDIA_DIR ?? process.env.YTARR_MEDIA_DIR ?? DEFAULT_MEDIA_ROOT;
+  const configured = readEnv("MEDIA_DIR") ?? DEFAULT_MEDIA_ROOT;
   const mediaBaseDirectory = await validateMediaDirectory(configured);
-  const tunarrUrl = normalizeTunarrUrl(process.env.TUNARRTUBE_TUNARR_URL ?? process.env.YTARR_TUNARR_URL ?? "http://127.0.0.1:8000");
+  const tunarrUrl = normalizeTunarrUrl(readEnv("TUNARR_URL") ?? "http://127.0.0.1:8000");
   // Not validated here (unlike mediaBaseDirectory/tunarrUrl above) -- see validateCookiesPath's comment.
-  const ytdlpCookiesPath = process.env.TUNARRTUBE_YTDLP_COOKIES ?? process.env.YTARR_YTDLP_COOKIES ?? null;
+  const ytdlpCookiesPath = readEnv("YTDLP_COOKIES") ?? null;
   // Atomic create-or-fetch: concurrent callers (instrumentation.ts's kickWorker()/startScheduler(), plus
   // any early request) can all reach this branch together at startup, before any row exists. upsert with
   // a no-op `update` resolves that race at the DB layer -- every loser gets the winner's row back --
@@ -103,7 +104,7 @@ function joinTunarrPath(prefix: string, relative: string) {
     : path.posix.join(prefix, relative.replaceAll("\\", "/"));
 }
 
-export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; musicbrainzContactEmail?: string | null; metadataMusicbrainzEnabled?: boolean; metadataItunesEnabled?: boolean; metadataAutoApplyThreshold?: number; aiProvider?: string; aiClaudeCodeEnabled?: boolean; aiClaudeCodePath?: string | null; aiClaudeCodeTimeoutSeconds?: number; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ ytarrPrefix: string; tunarrPrefix: string }>; defaultNamingScheme?: string; defaultFilenameTemplate?: string }) {
+export async function updateSettings(input: { mediaBaseDirectory?: string; tunarrUrl?: string; cacheMaxMegabytes?: number; cacheMaxAgeDays?: number; logRetentionDays?: number; defaultVideoQuality?: string; musicbrainzContactEmail?: string | null; metadataMusicbrainzEnabled?: boolean; metadataItunesEnabled?: boolean; metadataAutoApplyThreshold?: number; aiProvider?: string; aiClaudeCodeEnabled?: boolean; aiClaudeCodePath?: string | null; aiClaudeCodeTimeoutSeconds?: number; ytdlpCookiesPath?: string | null; pathMappings?: Array<{ tunarrtubePrefix: string; tunarrPrefix: string }>; defaultNamingScheme?: string; defaultFilenameTemplate?: string }) {
   const current = await getSettings();
   const valid = input.mediaBaseDirectory
     ? await validateMediaDirectory(input.mediaBaseDirectory)
@@ -119,15 +120,15 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
     ? undefined
     : input.aiClaudeCodePath === null ? null : await validateClaudeCodePath(input.aiClaudeCodePath);
   const mappings = input.pathMappings ? input.pathMappings.map((mapping, position) => {
-    if (!path.isAbsolute(mapping.ytarrPrefix) || !isAbsoluteTunarrPath(mapping.tunarrPrefix)) {
+    if (!path.isAbsolute(mapping.tunarrtubePrefix) || !isAbsoluteTunarrPath(mapping.tunarrPrefix)) {
       throw new AppError("INVALID_PATH_MAPPING", "The TunarrTube prefix must be absolute on this host, and the Tunarr prefix must be an absolute Unix or Windows path.");
     }
     const tunarrPrefix = isWindowsAbsolutePath(mapping.tunarrPrefix)
       ? path.win32.normalize(mapping.tunarrPrefix)
       : path.posix.normalize(mapping.tunarrPrefix);
-    return { ytarrPrefix: path.normalize(mapping.ytarrPrefix), tunarrPrefix, position };
+    return { tunarrtubePrefix: path.normalize(mapping.tunarrtubePrefix), tunarrPrefix, position };
   }) : null;
-  if (mappings && new Set(mappings.map((mapping) => mapping.ytarrPrefix)).size !== mappings.length) throw new AppError("DUPLICATE_PATH_MAPPING", "TunarrTube mapping prefixes must be unique.");
+  if (mappings && new Set(mappings.map((mapping) => mapping.tunarrtubePrefix)).size !== mappings.length) throw new AppError("DUPLICATE_PATH_MAPPING", "TunarrTube mapping prefixes must be unique.");
   const sources = await db.source.findMany({ select: { id: true, directoryName: true } });
   const destinations = sources.map((source) => ({
     ...source,
@@ -153,11 +154,11 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   return { ...settings, pathMappings: await db.tunarrPathMapping.findMany({ orderBy: { position: "asc" } }), updatedSources: sources.length };
 }
 
-export function translatePathWithMappings(input: string, mappings: Array<{ ytarrPrefix: string; tunarrPrefix: string }>) {
+export function translatePathWithMappings(input: string, mappings: Array<{ tunarrtubePrefix: string; tunarrPrefix: string }>) {
   const normalized = path.resolve(input);
   if (!mappings.length) return normalized;
   const matches = mappings.flatMap((mapping) => {
-    const prefix = path.resolve(mapping.ytarrPrefix);
+    const prefix = path.resolve(mapping.tunarrtubePrefix);
     const relative = path.relative(prefix, normalized);
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)) ? [{ ...mapping, prefix, relative }] : [];
   }).sort((left, right) => right.prefix.length - left.prefix.length);
@@ -180,4 +181,30 @@ export async function assertWithinDirectory(base: string, target: string) {
     throw new AppError("UNSAFE_PATH", "The requested path is outside the configured media directory.", 400);
   }
   return resolvedTarget;
+}
+
+// Deletion counterpart of assertWithinDirectory: removes `target` only when it resolves inside one of
+// `roots` -- the same directory the file was originally written under. Every caller deletes a path read
+// back from the DB, so a hand-edited row or a moved directory must never turn a cleanup into deleting
+// something unrelated: such a path is skipped and logged instead. A target (or root) that no longer
+// exists is a quiet no-op, same as rm({ force: true }).
+export async function removeWithinDirectory(roots: string | string[], target: string | null | undefined) {
+  if (!target) return false;
+  for (const root of [roots].flat()) {
+    let resolved: string;
+    try {
+      resolved = await assertWithinDirectory(root, target);
+    } catch (error) {
+      if (error instanceof AppError && error.code === "UNSAFE_PATH") continue;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    await rm(resolved, { force: true });
+    return true;
+  }
+  const stillThere = await access(target).then(() => true, () => false);
+  if (stillThere) {
+    await writeLog({ level: "warn", category: "maintenance", message: `Skipped deleting ${target}: it is outside the directory TunarrTube wrote it to.` }).catch(() => undefined);
+  }
+  return false;
 }

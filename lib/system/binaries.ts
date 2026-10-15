@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import { AppError } from "@/lib/api";
+import { readEnv } from "@/lib/config/env";
 import { runProcess } from "@/lib/system/process";
 
 export type BinaryName = "yt-dlp" | "ffmpeg";
@@ -23,9 +24,7 @@ async function executable(candidate: string) {
 }
 
 export async function discoverBinary(name: BinaryName): Promise<string | null> {
-  const override = name === "yt-dlp"
-    ? process.env.TUNARRTUBE_YTDLP_PATH ?? process.env.YTARR_YTDLP_PATH
-    : process.env.TUNARRTUBE_FFMPEG_PATH ?? process.env.YTARR_FFMPEG_PATH;
+  const override = readEnv(name === "yt-dlp" ? "YTDLP_PATH" : "FFMPEG_PATH");
   if (override && (await executable(override))) return override;
   try {
     const result = await runProcess("which", [name], { timeoutMs: 5000 });

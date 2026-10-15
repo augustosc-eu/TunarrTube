@@ -158,7 +158,7 @@ const nullableString = { type: ["string", "null"] };
 const dateTime = { type: "string", format: "date-time" };
 const videoQuality = { type: "string", enum: ["best", "2160p", "1440p", "1080p", "720p", "480p"] };
 const namingScheme = { type: "string", enum: ["id", "template", "tvshow"] };
-const pathMapping = { type: "object", required: ["ytarrPrefix", "tunarrPrefix"], properties: { ytarrPrefix: { type: "string", minLength: 1 }, tunarrPrefix: { type: "string", minLength: 1 } } };
+const pathMapping = { type: "object", required: ["tunarrtubePrefix", "tunarrPrefix"], properties: { tunarrtubePrefix: { type: "string", minLength: 1 }, tunarrPrefix: { type: "string", minLength: 1 } } };
 
 export const openApiDocument = {
   openapi: "3.1.0",

@@ -6,9 +6,9 @@ TunarrTube is pre-1.0 software. Security fixes are applied to the latest commit 
 
 ## Deployment boundary
 
-TunarrTube is a single-user, local-first application. **It has no authentication or authorization layer and must not be exposed directly to the public internet or an untrusted LAN.** Its API can start downloads, change writable media paths, and modify a configured Tunarr server.
+TunarrTube is a single-user, local-first application. **Its only authentication is an optional shared password (`TUNARRTUBE_AUTH_PASSWORD`, HTTP Basic) and it has no authorization layer; it must not be exposed directly to the public internet or an untrusted LAN.** Its API can start downloads, change writable media paths, and modify a configured Tunarr server.
 
-The supplied Compose configuration publishes TunarrTube and its optional Tunarr service on `127.0.0.1` only. The `npm start` command does the same. If you deliberately bind TunarrTube to another interface, put an authenticating reverse proxy or VPN in front of it and restrict access to trusted users. TLS termination and rate limiting also belong at that boundary.
+The supplied Compose configuration publishes TunarrTube and its optional Tunarr service on `127.0.0.1` only. The `npm start` command does the same. If you deliberately bind TunarrTube to another interface, set `TUNARRTUBE_AUTH_PASSWORD` at minimum, and preferably put an HTTPS reverse proxy or VPN in front of it and restrict access to trusted users — Basic authentication over plain HTTP sends the password in cleartext. TLS termination and rate limiting also belong at that boundary.
 
 TunarrTube accepts only public HTTPS YouTube URLs. It does not accept account credentials directly, and never has: the one supported authentication path is an optional, opt-in `yt-dlp` cookies file (Settings → External tools/`TUNARRTUBE_YTDLP_COOKIES`) whose *path* TunarrTube is told about — it never receives, stores, or displays the file's contents, only passes the path to `yt-dlp`. Because anyone who can reach the API can point this at any file readable inside the container, treat API access as equivalent to access to that YouTube account's session, and treat the cookies file itself like a password (see README's "Age-restricted or sign-in-required videos"). Never add credentials to YouTube URLs, command-line overrides, logs, issues, or diagnostics.
 

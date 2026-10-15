@@ -17,8 +17,13 @@ export const RENDERS_ROOT = path.join(DEFAULT_MEDIA_ROOT, "_renders");
 // lib/youtube/ytdlp.ts's CHALLENGE_SOLVER_ARGS) defaults to XDG_CACHE_HOME/~/.cache, which isn't
 // guaranteed to exist, be writable, or persist across restarts. Same process-relative-storage pattern as
 // RENDER_CACHE_ROOT above so it persists identically in a native install (under the project directory)
-// and in Docker (the ytarr-storage volume already mounted over /app/storage in compose.yaml).
+// and in Docker (the tunarrtube-storage volume already mounted over /app/storage in compose.yaml).
 export const YTDLP_CACHE_ROOT = path.join(PROJECT_ROOT, "storage", "yt-dlp-cache");
+// Hidden work directories TunarrTube creates inside media directories: the playback cache (under the
+// media base directory) and per-download temp roots (next to each download target). Dot-prefixed so Tunarr
+// and other media scanners skip them.
+export const CACHE_DIRECTORY_NAME = "._tunarrtube-cache";
+export const TEMP_DIRECTORY_NAME = "._tunarrtube-tmp";
 export const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi"];
 
 export const JOB_TYPES = {

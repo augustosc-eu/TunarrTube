@@ -11,6 +11,7 @@ import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
 import { challengeSolverArgs, challengeSolverEnv, cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
+import { CACHE_DIRECTORY_NAME, TEMP_DIRECTORY_NAME } from "@/lib/constants";
 
 // Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means
 // retrying automatically will never succeed: the video is gone for good (deleted/private/region-blocked/
@@ -171,7 +172,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
   return withDownloadPermit(async () => {
     const targetDirectory = path.dirname(target);
     await mkdir(targetDirectory, { recursive: true });
-    const tempRoot = path.join(targetDirectory, "._ytarr-tmp");
+    const tempRoot = path.join(targetDirectory, TEMP_DIRECTORY_NAME);
     await mkdir(tempRoot, { recursive: true });
     const tempDirectory = path.join(tempRoot, `${youtubeId}-${Date.now()}-${process.pid}`);
     await mkdir(tempDirectory, { recursive: false });
@@ -310,7 +311,7 @@ export async function retagVideo(sourceId: string, videoId: string) {
 // overrides; the cache isn't keyed by quality, so whichever source's job fills it first determines the
 // cached resolution until eviction -- same class of behavior as reuseExistingAsset's hardlink sharing.
 // Deliberately always "<youtubeId>.mp4" regardless of naming scheme -- this is an internal cache
-// directory (._ytarr-cache), never the user-organized library the naming scheme is about.
+// directory (CACHE_DIRECTORY_NAME), never the user-organized library the naming scheme is about.
 export async function cacheVideo(videoId: string, sourceId?: string, signal?: AbortSignal) {
   const video = await db.video.findUnique({ where: { id: videoId }, include: { cacheAsset: true } });
   if (!video) throw new AppError("VIDEO_NOT_FOUND", "Video not found.", 404);
@@ -321,7 +322,7 @@ export async function cacheVideo(videoId: string, sourceId?: string, signal?: Ab
   const settings = await getSettings();
   const source = sourceId ? await db.source.findUnique({ where: { id: sourceId }, select: { videoQuality: true } }) : null;
   const quality = resolveEffectiveQuality(source?.videoQuality, settings.defaultVideoQuality);
-  const directory = path.join(settings.mediaBaseDirectory, "._ytarr-cache", "videos");
+  const directory = path.join(settings.mediaBaseDirectory, CACHE_DIRECTORY_NAME, "videos");
   await mkdir(directory, { recursive: true });
   const target = await assertWithinDirectory(settings.mediaBaseDirectory, path.join(directory, `${video.youtubeId}.mp4`));
   const asset = await db.cacheAsset.upsert({

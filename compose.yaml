@@ -1,27 +1,35 @@
 services:
   tunarrtube:
+    # Builds this checkout by default (`docker compose up -d --build`). To run a published release instead,
+    # set TUNARRTUBE_IMAGE in .env (e.g. ghcr.io/augustosc-eu/tunarrtube:0.3.0) and run
+    # `docker compose pull` then `docker compose up -d` -- see README's "Published images".
+    image: ${TUNARRTUBE_IMAGE:-tunarrtube:local}
     build: .
     container_name: tunarrtube
     ports:
+      # YTARR_PORT is the pre-rename name, still honored so an existing .env keeps its port.
       - "127.0.0.1:${TUNARRTUBE_PORT:-${YTARR_PORT:-3000}}:3000"
     environment:
-      DATABASE_URL: file:/config/ytarr.db
+      DATABASE_URL: file:/config/tunarrtube.db
       TUNARRTUBE_MEDIA_DIR: /media
       TUNARRTUBE_THUMBNAIL_DIR: /config/thumbnails
-      TUNARRTUBE_TUNARR_URL: ${TUNARRTUBE_TUNARR_URL:-${YTARR_TUNARR_URL:-http://tunarr:8000}}
+      TUNARRTUBE_TUNARR_URL: ${TUNARRTUBE_TUNARR_URL:-http://tunarr:8000}
       # Optional: only takes effect the first time TunarrTube starts (see README's "Age-restricted or
       # sign-in-required videos"). Set TUNARRTUBE_YTDLP_COOKIES in .env AND uncomment the matching bind
       # mount below, pointed at your own exported cookies.txt, to enable it.
       TUNARRTUBE_YTDLP_COOKIES: ${TUNARRTUBE_YTDLP_COOKIES:-}
+      # Optional HTTP Basic sign-in for the UI/API -- set in .env (see README's "Optional password").
+      TUNARRTUBE_AUTH_PASSWORD: ${TUNARRTUBE_AUTH_PASSWORD:-}
+      TUNARRTUBE_AUTH_USERNAME: ${TUNARRTUBE_AUTH_USERNAME:-}
       TZ: ${TZ:-UTC}
     volumes:
-      - ytarr-config:/config
-      - ytarr-media:/media
+      - tunarrtube-config:/config
+      - tunarrtube-media:/media
       # /app/storage holds the render-cache and staged Channels-overlay render outputs
       # (lib/constants.ts's RENDER_CACHE_ROOT/RENDERS_ROOT) -- freely rebuildable, but RenderedAsset
       # rows in the database keep pointing at paths under it until a render is republished, so losing
       # it on every container recreation needlessly breaks in-progress/unpublished renders.
-      - ytarr-storage:/app/storage
+      - tunarrtube-storage:/app/storage
       # - ./cookies.txt:/config/cookies.txt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -42,12 +50,20 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - tunarr-config:/config/tunarr
-      - ytarr-media:/media:ro
+      - tunarrtube-media:/media:ro
     restart: unless-stopped
 
 volumes:
-  # Legacy volume keys are intentionally stable so upgrades keep existing data.
-  ytarr-config:
-  ytarr-media:
+  # These volumes were created under their pre-rename "ytarr-*" keys, and Docker volumes can't be renamed
+  # in place. `name:` keeps every existing install attached to its data (Compose prefixes the project
+  # name, so the real volumes are "<project>_ytarr-*"); a fresh install simply creates them under the
+  # same names. Changing these lines would make Compose start with new, empty volumes.
+  # The ":?" guard makes Compose refuse to start, rather than silently attach empty "_ytarr-*" volumes,
+  # on a Compose version that doesn't provide COMPOSE_PROJECT_NAME for interpolation.
+  tunarrtube-config:
+    name: ${COMPOSE_PROJECT_NAME:?Docker Compose did not set COMPOSE_PROJECT_NAME - upgrade Compose or set it to your project name (usually this folder name) so TunarrTube keeps using its existing volumes}_ytarr-config
+  tunarrtube-media:
+    name: ${COMPOSE_PROJECT_NAME:?Docker Compose did not set COMPOSE_PROJECT_NAME - upgrade Compose or set it to your project name (usually this folder name) so TunarrTube keeps using its existing volumes}_ytarr-media
   tunarr-config:
-  ytarr-storage:
+  tunarrtube-storage:
+    name: ${COMPOSE_PROJECT_NAME:?Docker Compose did not set COMPOSE_PROJECT_NAME - upgrade Compose or set it to your project name (usually this folder name) so TunarrTube keeps using its existing volumes}_ytarr-storage

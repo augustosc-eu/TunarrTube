@@ -1,7 +1,10 @@
-FROM node:22-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS deps
 WORKDIR /app
+# python3/make/g++ let node-gyp compile better-sqlite3 when no prebuilt binary matches this Node ABI and
+# architecture (e.g. Node 24 on linux/arm64). Only this build stage has them -- the runner copies the
+# compiled node_modules and never needs a toolchain.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && apt-get install -y --no-install-recommends openssl ca-certificates python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY prisma/schema.prisma ./prisma/schema.prisma
@@ -19,12 +22,12 @@ COPY . .
 ENV DATABASE_URL=file:/tmp/tunarrtube-build.db
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
-# YTARR_PUPPETEER_EXECUTABLE_PATH points the Channels overlay-render feature (lib/overlay/puppeteer.ts)
+# TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH points the Channels overlay-render feature (lib/overlay/puppeteer.ts)
 # at Debian's own chromium package -- see the deps-stage PUPPETEER_SKIP_DOWNLOAD comment above.
-ENV YTARR_PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # yt-dlp needs a JavaScript runtime to solve YouTube's player challenges (without one, formats go missing
 # and extraction intermittently fails with "The page needs to be reloaded"/HTTP 403/500). It only
 # auto-enables deno, so /etc/yt-dlp.conf points it at the image's own Node.js as a system-wide default
@@ -34,23 +37,40 @@ ENV YTARR_PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # ejs:github lets it fetch the actual challenge-solver script it runs there (without this, yt-dlp skips the
 # solver and only warns, defeating --js-runtimes node above). yt-dlp caches that download under
 # XDG_CACHE_HOME (`lib/youtube/ytdlp.ts` points it at storage/yt-dlp-cache, alongside RENDER_CACHE_ROOT --
-# see lib/constants.ts -- so it lands on the ytarr-storage volume mounted at /app/storage below, same as a
+# see lib/constants.ts -- so it lands on the tunarrtube-storage volume mounted at /app/storage below, same as a
 # native install persists it under its own project directory).
+#
+# yt-dlp itself is the official zipimport release in /opt/yt-dlp, owned by the app user, so Settings ->
+# Update (`yt-dlp --update`, lib/system/binaries.ts) works inside the container -- a pip-installed copy
+# refuses to self-update, and root-owned site-packages wouldn't be writable by the app user anyway. pip
+# still installs "yt-dlp[default]" for its optional dependencies (yt-dlp-ejs, requests, websockets,
+# mutagen, ...), which the zip app imports from site-packages; the pip copy of yt-dlp itself is then
+# removed so there is exactly one yt-dlp on PATH. A self-update lasts until the container is recreated;
+# rebuilding the image picks up the latest release.
+# Found through PATH (lib/system/binaries.ts runs `which yt-dlp`) rather than TUNARRTUBE_YTDLP_PATH, so an
+# operator's own TUNARRTUBE_YTDLP_PATH (or legacy YTARR_YTDLP_PATH) still takes precedence.
+ENV PATH=/opt/yt-dlp:$PATH
+COPY scripts/install-ytdlp.py /tmp/install-ytdlp.py
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip ca-certificates chromium \
   && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default]" \
+  && pip3 uninstall --break-system-packages -y yt-dlp \
+  && python3 /tmp/install-ytdlp.py /opt/yt-dlp/yt-dlp \
+  && rm /tmp/install-ytdlp.py \
   && printf '%s\n' "--js-runtimes node" "--remote-components ejs:github" > /etc/yt-dlp.conf \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 1001 tunarrtube \
   && useradd --system --uid 1001 --gid tunarrtube --create-home tunarrtube \
   && mkdir -p /config/thumbnails /media /app/storage \
-  && chown -R tunarrtube:tunarrtube /config /media /app/storage /home/tunarrtube
+  && chown -R tunarrtube:tunarrtube /config /media /app/storage /home/tunarrtube /opt/yt-dlp
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/.next/standalone ./
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/.next/static ./.next/static
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/prisma ./prisma
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/prisma.config.ts ./prisma.config.ts
+COPY --from=builder --chown=tunarrtube:tunarrtube /app/scripts/migrate-legacy-database.mjs ./scripts/migrate-legacy-database.mjs
 COPY --from=builder --chown=tunarrtube:tunarrtube /app/node_modules ./node_modules
 USER tunarrtube
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]
+# migrate-legacy-database.mjs moves a pre-rename ytarr.db to tunarrtube.db before Prisma migrates it.
+CMD ["sh", "-c", "node scripts/migrate-legacy-database.mjs && node node_modules/prisma/build/index.js migrate deploy && node server.js"]

@@ -7,7 +7,7 @@ describe("recoverJobs (startup recovery)", () => {
 
   afterEach(async () => {
     await db.video.deleteMany({ where: { id: { in: cleanupVideoIds.splice(0) } } });
-    delete (globalThis as Record<string, unknown>).ytarrRecovered;
+    delete (globalThis as Record<string, unknown>).tunarrtubeRecovered;
   });
 
   it("zeroes out a CacheAsset's activeReaders left stuck above zero by a crash", async () => {
@@ -23,7 +23,7 @@ describe("recoverJobs (startup recovery)", () => {
     cleanupVideoIds.push(video.id);
     const asset = await db.cacheAsset.create({ data: { videoId: video.id, status: "complete", activeReaders: 2 } });
 
-    delete (globalThis as Record<string, unknown>).ytarrRecovered;
+    delete (globalThis as Record<string, unknown>).tunarrtubeRecovered;
     await recoverJobs();
 
     const reloaded = await db.cacheAsset.findUniqueOrThrow({ where: { id: asset.id } });
@@ -31,7 +31,7 @@ describe("recoverJobs (startup recovery)", () => {
   });
 
   it("only runs once per process", async () => {
-    delete (globalThis as Record<string, unknown>).ytarrRecovered;
+    delete (globalThis as Record<string, unknown>).tunarrtubeRecovered;
     const video = await db.video.create({
       data: { youtubeId: `runner-test-once-${Date.now()}`, title: "Runner test video", youtubeUrl: "https://www.youtube.com/watch?v=runner-test-once" }
     });

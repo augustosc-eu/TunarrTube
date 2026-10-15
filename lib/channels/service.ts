@@ -333,3 +333,30 @@ export async function enqueueChannelJob(type: string, target: { channelId?: stri
   kickWorker();
   return job;
 }
+
+// Queues a "render" job (channel's template x each media item) for every item that doesn't already have
+// a complete render for that template. Rendering one media item that's shared by several channels is
+// deliberately idempotent -- see the RenderedAsset unique constraint. Items whose media isn't downloaded/
+// available yet are skipped (not failed) so a later call picks them up.
+export async function enqueueChannelRenders(channelId: string) {
+  const channel = await db.channel.findUnique({
+    where: { id: channelId },
+    include: { items: { include: { mediaItem: { include: { sourceVideo: { select: { downloadStatus: true } } } } } } }
+  });
+  if (!channel) throw new AppError("CHANNEL_NOT_FOUND", "Channel not found.", 404);
+
+  const renders = await db.renderedAsset.findMany({
+    where: { templateId: channel.templateId, status: "complete", mediaItemId: { in: channel.items.map((item) => item.mediaItemId) } },
+    select: { mediaItemId: true }
+  });
+  const complete = new Set(renders.map((render) => render.mediaItemId));
+  const pending = channel.items.filter((item) => !complete.has(item.mediaItemId));
+
+  const jobIds: string[] = [];
+  for (const { mediaItem } of pending) {
+    const ready = mediaItem.originType === "local" ? Boolean(mediaItem.originLocalPath) : mediaItem.sourceVideo?.downloadStatus === "complete";
+    if (!ready) continue;
+    jobIds.push((await enqueueChannelJob("render", { mediaItemId: mediaItem.id }, { templateId: channel.templateId })).id);
+  }
+  return { queued: jobIds.length, skipped: pending.length - jobIds.length, jobIds };
+}

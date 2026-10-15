@@ -77,7 +77,7 @@ export const settingsSchema = z.object({
   aiClaudeCodePath: z.string().trim().min(1).nullable().optional(),
   aiClaudeCodeTimeoutSeconds: aiClaudeCodeTimeoutSecondsSchema.optional(),
   ytdlpCookiesPath: z.string().trim().min(1).nullable().optional(),
-  pathMappings: z.array(z.object({ ytarrPrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional(),
+  pathMappings: z.array(z.object({ tunarrtubePrefix: z.string().trim().min(1), tunarrPrefix: z.string().trim().min(1) })).max(50).optional(),
   defaultNamingScheme: namingSchemeSchema.optional(),
   defaultFilenameTemplate: filenameTemplateSchema.optional()
 }).refine((input) => Object.values(input).some((value) => value !== undefined), {
@@ -232,3 +232,35 @@ export const createTemplateSchema = z.object({
 });
 
 export const updateTemplateSchema = createTemplateSchema.partial().refine((input) => Object.keys(input).length > 0, { message: "At least one template field is required." });
+
+// Settings-page preview helpers -- display aids only (no DB/fs writes), but still validated here like any
+// other body so a malformed request gets a VALIDATION_ERROR rather than a bare 400 or a 500.
+export const namingPreviewSchema = z.object({
+  scheme: namingSchemeSchema,
+  // Blank/omitted falls back to "{title}" in the route, matching the Settings form's empty-field behavior.
+  template: z.string().max(300).optional()
+});
+export const pathMappingSchema = z.object({ tunarrtubePrefix: z.string(), tunarrPrefix: z.string() });
+export const pathPreviewSchema = z.object({
+  path: z.string().max(4_096),
+  mappings: z.array(pathMappingSchema).max(50)
+});
+export const pathPreviewQuerySchema = z.object({ path: z.string().min(1).max(4_096) });
+
+// --- Job payloads (Job.payloadJson), parsed by lib/jobs/runner.ts before dispatch ----------------------
+// Payloads are written by this app's own enqueue paths, but they outlive deploys in the DB, so a shape
+// change between versions should fail the job with a clear validation error rather than a TypeError
+// deep inside a service.
+export const tunarrPublishJobPayloadSchema = publishTunarrSchema.extend({ prefetch: z.boolean().optional() });
+export const ingestLocalScanJobPayloadSchema = z.object({ folderPath: z.string().min(1) });
+export const renderJobPayloadSchema = z.object({ templateId: z.string().min(1) });
+export const contentSelectJobPayloadSchema = z.object({
+  method: z.enum(["ai", "heuristic"]).optional(),
+  sourceIds: z.array(z.string().min(1)).min(1),
+  instructions: z.string().optional(),
+  targetCount: z.number().int().positive().optional(),
+  providerOverride: z.string().nullable().optional(),
+  mode: z.enum(["balanced", "grouped"]).optional(),
+  targetDurationSeconds: z.number().int().positive().optional()
+});
+export const channelBriefJobPayloadSchema = z.object({ sourceIds: z.array(z.string().min(1)).min(1) });
