@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS deps
+FROM node:25-bookworm-slim AS deps
 WORKDIR /app
 # python3/make/g++ let node-gyp compile better-sqlite3 when no prebuilt binary matches this Node ABI and
 # architecture (e.g. Node 24 on linux/arm64). Only this build stage has them -- the runner copies the
@@ -22,7 +22,7 @@ COPY . .
 ENV DATABASE_URL=file:/tmp/tunarrtube-build.db
 RUN npm run build
 
-FROM node:24-bookworm-slim AS runner
+FROM node:25-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 # TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH points the Channels overlay-render feature (lib/overlay/puppeteer.ts)
