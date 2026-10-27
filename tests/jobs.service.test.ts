@@ -1,15 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db/client";
 
-// cancelJob/retryJob's DB effects are what we're testing here; kickWorker() firing the real, table-wide
-// job drain (see claimJob() in lib/jobs/runner.ts) is exactly the shared-DB race the rate-limit tests
-// avoid -- stub it out so retryJob's assertions stay deterministic instead of racing a background worker.
-// markJobCancelled is re-exported for real (imported below) since cancelJob()'s own test coverage is
-// exactly what exercises it; requestJobStop/STOPPABLE_JOB_TYPES back stopJob()'s tests further down.
-vi.mock("@/lib/jobs/runner", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/jobs/runner")>();
-  return { ...actual, kickWorker: vi.fn() };
-});
+// cancelJob/retryJob's DB effects are what we're testing here. tests/support/setup.ts keeps kickWorker()
+// from starting the real, table-wide job drain (see claimJob() in lib/jobs/runner.ts), so retryJob's
+// assertions stay deterministic instead of racing a background worker.
 
 const { cancelJob, getJobsStatus, postponeJob, retryJob, stopJob } = await import("@/lib/jobs/service");
 

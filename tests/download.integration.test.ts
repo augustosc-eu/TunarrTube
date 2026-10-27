@@ -154,6 +154,95 @@ fs.writeFileSync(template.replace("%(ext)s", "mp4"), "fake-mp4");
     }
   }, 15_000);
 
+  it("records a local file error as an ordinary, retryable failure -- not stuck downloading, not unavailable", async () => {
+    // reuseExistingAsset hardlinks, then falls back to copying, another source's completed file. When both
+    // fail (here: the recorded path is a directory, which can be neither hardlinked nor copied), the
+    // membership must be marked failed like any other download error -- it used to stay "downloading"
+    // after the job had already given up. The filesystem error's message embeds the paths, and "deleted"
+    // in this media root (or "/private/" in any macOS temp path) used to be read as YouTube reporting the
+    // video gone, marking it permanently unavailable for every source.
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-deleted-scenes-"));
+    cleanup.push(root);
+    const sourceDirectory = path.join(root, "source");
+    const unreadableAsset = path.join(root, "other-source", "not-a-file.mp4");
+    await mkdir(unreadableAsset, { recursive: true });
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: { name: "Reuse failure test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: sourceDirectory }
+    });
+    const otherSource = await db.source.create({
+      data: { name: "Reuse failure other", url: `https://youtube.com/playlist?list=other-${suffix}`, youtubeId: `other-${suffix}`, directoryName: `test-other-${suffix}`, mediaDirectory: path.dirname(unreadableAsset) }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `video-${suffix}`, title: "Reuse failure video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+    await db.sourceVideo.create({ data: { sourceId: otherSource.id, videoId: video.id, downloadStatus: "complete", localPath: unreadableAsset } });
+
+    try {
+      const failure = await downloadVideo(source.id, video.id).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(VideoUnavailableError);
+      const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } } });
+      expect(membership?.downloadStatus).toBe("failed");
+      expect((await db.video.findUniqueOrThrow({ where: { id: video.id } })).availability).not.toBe("unavailable");
+    } finally {
+      await db.source.deleteMany({ where: { id: { in: [source.id, otherSource.id] } } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }, 15_000);
+
+  // The bookkeeping around a download (the unavailable-video record, the log line) can fail too. Neither
+  // may leave the membership in the wrong state: it used to stay "downloading" when the unavailable
+  // bookkeeping threw, and a completed download was rewritten to "failed" when the success log did.
+  async function downloadWithFailingLog(ytDlpScript: string) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-log-failure-test-"));
+    cleanup.push(root);
+    const fakeYtDlp = path.join(root, "yt-dlp");
+    const fakeFfmpeg = path.join(root, "ffmpeg");
+    await writeFile(fakeYtDlp, ytDlpScript);
+    await writeFile(fakeFfmpeg, "#!/bin/sh\nexit 0\n");
+    await chmod(fakeYtDlp, 0o755);
+    await chmod(fakeFfmpeg, 0o755);
+    process.env.TUNARRTUBE_YTDLP_PATH = fakeYtDlp;
+    process.env.TUNARRTUBE_FFMPEG_PATH = fakeFfmpeg;
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({
+      data: { name: "Log failure test", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `test-${suffix}`, mediaDirectory: path.join(root, "source") }
+    });
+    const video = await db.video.create({
+      data: { youtubeId: `video-${suffix}`, title: "Log failure video", youtubeUrl: `https://youtube.com/watch?v=video-${suffix}` }
+    });
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id } });
+    const writeLog = vi.spyOn(await import("@/lib/logging/service"), "writeLog").mockRejectedValue(new Error("log store offline"));
+    try {
+      const failure = await downloadVideo(source.id, video.id).catch((error: unknown) => error);
+      const membership = await db.sourceVideo.findUniqueOrThrow({ where: { sourceId_videoId: { sourceId: source.id, videoId: video.id } } });
+      return { failure, downloadStatus: membership.downloadStatus };
+    } finally {
+      writeLog.mockRestore();
+      await db.source.delete({ where: { id: source.id } });
+      await db.video.delete({ where: { id: video.id } });
+    }
+  }
+
+  it("records an unavailable video's status even when its bookkeeping fails afterwards", async () => {
+    const result = await downloadWithFailingLog(`#!/bin/sh\necho "ERROR: [youtube] gone: Video unavailable" 1>&2\nexit 1\n`);
+    expect(result.failure).toBeInstanceOf(Error);
+    expect(result.downloadStatus).toBe("unavailable");
+  }, 15_000);
+
+  it("keeps a completed download complete when only the success log fails", async () => {
+    const result = await downloadWithFailingLog(`#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(args[args.indexOf("-o") + 1].replace("%(ext)s", "mp4"), "fake-mp4");
+`);
+    expect(result.downloadStatus).toBe("complete");
+  }, 15_000);
+
   it("regenerates the .nfo/.json sidecars for an already-downloaded video without touching the media file", async () => {
     // Tunarr's "other_videos" scanner reads title/plot from a Kodi-style .nfo sidecar, never from the
     // video file's own container metadata -- so repairing metadata must not re-encode or rewrite the .mp4.

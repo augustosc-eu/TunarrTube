@@ -1,13 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db/client";
 
-// Same rationale as tests/channels.service.test.ts: the real job queue (kickWorker's table-wide claim
-// loop) is exactly the shared-DB race that suite avoids, so it's stubbed out the same way.
-vi.mock("@/lib/jobs/runner", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/jobs/runner")>();
-  return { ...actual, kickWorker: vi.fn() };
-});
-
 // runChannelBrief's render/publish steps are real ffmpeg/Puppeteer and a real Tunarr HTTP call
 // respectively -- neither is what this test is exercising (that's covered by tests/renders.service
 // .test.ts and tests/tunarr-channel.integration.test.ts). Stub both so this test only checks

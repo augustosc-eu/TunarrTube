@@ -6,7 +6,7 @@ By participating in this project you agree to abide by the [Code of Conduct](COD
 
 ## Development setup
 
-Install Node.js 22 or newer, `yt-dlp`, and FFmpeg, then run:
+Install Node.js 22.13 or newer, `yt-dlp`, and FFmpeg, then run:
 
 ```bash
 npm install

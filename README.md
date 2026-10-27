@@ -147,7 +147,7 @@ TunarrTube needs write access; Tunarr only needs read access. The TunarrTube con
 
 ### Requirements
 
-- Node.js 22 or newer
+- Node.js 22.13 or newer
 - A current `yt-dlp`
 - FFmpeg
 - A reachable [Tunarr installation](https://tunarr.com/getting-started/installation/) for channel publishing
@@ -163,7 +163,7 @@ brew install yt-dlp ffmpeg
 
 On Linux, install FFmpeg using your distribution package manager. Install a current `yt-dlp` using its [official installation instructions](https://github.com/yt-dlp/yt-dlp/wiki/Installation); distribution packages can lag behind YouTube changes.
 
-On Windows, install Node.js 22, [yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/Installation), and an [FFmpeg Windows build](https://ffmpeg.org/download.html). Add `yt-dlp.exe` and the FFmpeg `bin` directory to `PATH`, open a new PowerShell window, and verify:
+On Windows, install Node.js 22.13 or newer, [yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/Installation), and an [FFmpeg Windows build](https://ffmpeg.org/download.html). Add `yt-dlp.exe` and the FFmpeg `bin` directory to `PATH`, open a new PowerShell window, and verify:
 
 ```powershell
 node --version
