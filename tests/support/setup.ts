@@ -15,13 +15,17 @@ process.env.DATABASE_URL = inject("databaseUrl");
 // sets globalThis.tunarrtubeTestRealWorker at its top level (see tests/jobs.lifecycle.test.ts).
 export function inertKickWorker() {}
 
+// The first import in each file loads the runner's whole module graph (Prisma, both AI SDKs, ...), which
+// on a slow or busy disk can take well over the default 10s hook timeout; later calls hit the cache.
+const FIRST_RUNNER_IMPORT_TIMEOUT_MS = 120_000;
+
 beforeEach(async () => {
   if ((globalThis as { tunarrtubeTestRealWorker?: boolean }).tunarrtubeTestRealWorker) return;
   const runner = await import("@/lib/jobs/runner");
   if (runner.kickWorker !== inertKickWorker) {
     Object.defineProperty(runner, "kickWorker", { value: inertKickWorker, configurable: true, enumerable: true, writable: true });
   }
-});
+}, FIRST_RUNNER_IMPORT_TIMEOUT_MS);
 
 // Outbound HTTP is never part of a test: tests that need fetch stub it with vi.stubGlobal, and
 // vi.unstubAllGlobals() restores this guard rather than the real fetch.
