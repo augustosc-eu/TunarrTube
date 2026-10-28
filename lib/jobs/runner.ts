@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db/client";
 import { cacheVideo, downloadVideo, materializeForTunarr, retagVideo, VideoUnavailableError } from "@/lib/downloads/service";
 import { sanitizeLogValue, writeLog } from "@/lib/logging/service";
@@ -7,6 +8,7 @@ import { enqueueUniqueJob, syncSource } from "@/lib/sources/service";
 import { getSettings } from "@/lib/settings/service";
 import { publishSourceToTunarr, type PublishTunarrInput } from "@/lib/tunarr/service";
 import { persistSourceThumbnails } from "@/lib/thumbnails/service";
+import { SITES, siteForStoredId, siteForStoredUrl, type Site } from "@/lib/youtube/sites";
 import { isRateLimitedError, isTransientNetworkError } from "@/lib/youtube/ytdlp";
 import { enqueueChannelJob, runChannelBrief, runContentSelection, runHeuristicSelection } from "@/lib/channels/service";
 import { scanLocalFolder } from "@/lib/ingest/local-scan";
@@ -21,7 +23,8 @@ const globalWorker = globalThis as unknown as {
   tunarrtubeRecovered?: boolean;
   tunarrtubeRecovery?: Promise<void>;
   tunarrtubeWakeTimer?: NodeJS.Timeout;
-  tunarrtubeRateLimitHits?: number;
+  // Consecutive rate-limit/block hits per site (SiteId), for escalating that site's cooldown.
+  tunarrtubeRateLimitHits?: Partial<Record<string, number>>;
   tunarrtubeControllers?: Map<string, AbortController>;
 };
 
@@ -38,6 +41,33 @@ function lanes() {
 // only ones routed through the dedicated media worker below (see LANE_IDS). The process-wide limiter
 // in lib/downloads/limiter.ts enforces the actual fetch ceiling across this lane and publishing.
 const RATE_LIMITED_JOB_TYPES = ["download", "cache"];
+// Jobs that call yt-dlp against a video site, and so can hit that site's rate limit or bot protection.
+// A hit backs off the site's queued video jobs together (sync jobs have no video to filter by, so only
+// the failing one waits).
+const SITE_BACKOFF_JOB_TYPES = ["download", "cache", "metadata", "sync"];
+const SITE_BACKOFF_VIDEO_JOB_TYPES = ["download", "cache", "metadata"];
+
+// The site a job's yt-dlp work targets: its video's, else its source's. Jobs with neither (and stored
+// IDs/URLs from before multi-site support) are YouTube, same convention as siteForStoredUrl.
+async function jobSite(job: { videoId: string | null; sourceId: string | null }): Promise<Site> {
+  if (job.videoId) {
+    const video = await db.video.findUnique({ where: { id: job.videoId }, select: { youtubeId: true } });
+    if (video) return siteForStoredId(video.youtubeId);
+  }
+  if (job.sourceId) {
+    const source = await db.source.findUnique({ where: { id: job.sourceId }, select: { url: true } });
+    if (source) return siteForStoredUrl(source.url);
+  }
+  return SITES.youtube;
+}
+
+// Queued jobs whose video is on this site. YouTube IDs are the only ones without a "<site>." prefix
+// (lib/youtube/sites.ts:storageId), and video-less jobs count as YouTube (see jobSite).
+function sameSiteJobs(site: Site): Prisma.JobWhereInput {
+  return site.id === "youtube"
+    ? { OR: [{ videoId: null }, { video: { youtubeId: { not: { contains: "." } } } }] }
+    : { video: { youtubeId: { startsWith: `${site.id}.` } } };
+}
 const RENDER_JOB_TYPES = ["render"];
 
 // How many "general" jobs (everything except download/cache/render -- metadata, metadata_lookup,
@@ -225,14 +255,17 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
   if (job.type === "sync" && job.sourceId) {
     await db.source.update({ where: { id: job.sourceId }, data: { lastSyncStatus: "failed" } }).catch(() => undefined);
   }
-  if (RATE_LIMITED_JOB_TYPES.includes(job.type) && isRateLimitedError(message)) {
-    // YouTube is throttling us, not rejecting this particular video: don't burn one of the job's
-    // limited attempts on it (undo claimJob's increment), and don't just delay this one job -- push
-    // every other queued download/cache job's runAfter out too, so the whole queue backs off together
-    // instead of the next job immediately tripping the same 429. Escalate the cooldown on repeated
-    // hits and reset it (see the success path in work()) once a download actually gets through.
-    const hits = (globalWorker.tunarrtubeRateLimitHits ?? 0) + 1;
-    globalWorker.tunarrtubeRateLimitHits = hits;
+  const site = SITE_BACKOFF_JOB_TYPES.includes(job.type) ? await jobSite(job) : null;
+  if (site && isRateLimitedError(message, site)) {
+    // The site is throttling or blocking us (a 429, or its own block signal such as Bilibili's 412 risk
+    // control), not rejecting this particular video: don't burn one of the job's limited attempts on it
+    // (undo claimJob's increment), and don't just delay this one job -- push every other queued video
+    // job for the *same site* out too, so that site's queue backs off together instead of the next job
+    // immediately tripping the same block. Other sites keep going. Escalate the cooldown on repeated hits
+    // and reset it (see the success path in work()) once a job for that site actually gets through.
+    const hitsBySite = (globalWorker.tunarrtubeRateLimitHits ??= {});
+    const hits = (hitsBySite[site.id] ?? 0) + 1;
+    hitsBySite[site.id] = hits;
     const cooldownSeconds = Math.min(30 * 60, 120 * 2 ** (hits - 1));
     const cooldownUntil = new Date(Date.now() + cooldownSeconds * 1000);
     await db.job.updateMany({
@@ -240,12 +273,12 @@ export async function handleJobFailure(job: NonNullable<Awaited<ReturnType<typeo
       data: { status: "queued", attempts: { decrement: 1 }, error: message.slice(-2000), runAfter: cooldownUntil, finishedAt: null }
     }).catch(() => undefined);
     await db.job.updateMany({
-      where: { status: "queued", type: { in: RATE_LIMITED_JOB_TYPES }, id: { not: job.id }, runAfter: { lt: cooldownUntil } },
+      where: { status: "queued", type: { in: SITE_BACKOFF_VIDEO_JOB_TYPES }, id: { not: job.id }, runAfter: { lt: cooldownUntil }, ...sameSiteJobs(site) },
       data: { runAfter: cooldownUntil }
     });
     await writeLog({
       level: "warn", category: job.type, sourceId: job.sourceId ?? undefined, videoId: job.videoId ?? undefined,
-      message: `YouTube rate-limited (429) on ${job.type}; pausing download/cache jobs for ${cooldownSeconds}s.`
+      message: `${site.label} rate-limited or blocked a ${job.type} job; pausing ${site.label} jobs for ${cooldownSeconds}s.`
     }).catch(() => undefined);
     return;
   }
@@ -296,7 +329,8 @@ async function work(lane: LaneKind) {
       if ((await db.job.findUnique({ where: { id: job.id } }))?.status !== "running") continue;
       await handleJob(job, controller.signal);
       controller.signal.throwIfAborted();
-      if (RATE_LIMITED_JOB_TYPES.includes(job.type)) globalWorker.tunarrtubeRateLimitHits = 0;
+      const hitsBySite = globalWorker.tunarrtubeRateLimitHits;
+      if (SITE_BACKOFF_JOB_TYPES.includes(job.type) && hitsBySite && Object.keys(hitsBySite).length) delete hitsBySite[(await jobSite(job)).id];
       const completed = await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "complete", activeKey: null, finishedAt: new Date() } });
       if (!completed.count) continue;
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {

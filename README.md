@@ -94,16 +94,16 @@ The commands above build the image from your checkout. Each release is also publ
 
 | Tag | Meaning |
 |---|---|
-| `ghcr.io/augustosc-eu/tunarrtube:0.4.0` | That exact release (recommended, so upgrades happen only when you choose) |
+| `ghcr.io/augustosc-eu/tunarrtube:0.5.0` | That exact release (recommended, so upgrades happen only when you choose) |
 | `ghcr.io/augustosc-eu/tunarrtube:0.3` | The newest patch release of 0.3 |
 | `ghcr.io/augustosc-eu/tunarrtube:latest` | The newest stable release |
 
-Pre-releases (for example `0.4.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
+Pre-releases (for example `0.5.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
 
 To use one with the supplied `compose.yaml`, add the image to `.env`:
 
 ```dotenv
-TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.4.0
+TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.5.0
 ```
 
 Then pull it and start without building:
@@ -191,6 +191,8 @@ Open [http://localhost:3000](http://localhost:3000). For a production build:
 npm run build
 npm start
 ```
+
+To skip the build when nothing changed, use `npm run serve` instead (`npm run serve -- --lan` for all interfaces, `-- --rebuild` to force a build). It backs up the database to `prisma/backups/` (keeping the last 10), runs `npm run build` only if the source changed since the last build, then runs `npm start`.
 
 Both development and production startup generate Prisma Client and apply committed SQLite migrations automatically. `npm start` listens on `127.0.0.1`; `npm run start:lan` deliberately listens on all interfaces — set `TUNARRTUBE_AUTH_PASSWORD` before using it (see [Optional password](#optional-password)).
 
@@ -403,7 +405,7 @@ Current `yt-dlp` needs a JavaScript runtime (plus its `yt-dlp-ejs` solver script
 Only public HTTPS URLs on supported sites are accepted:
 
 - **YouTube** — videos, playlists, and channels on `youtube.com`, `m.youtube.com`, `music.youtube.com`, and `youtu.be`.
-- **Bilibili** — videos (`www.bilibili.com/video/BV…` or `av…`, `m.bilibili.com`), profiles (`space.bilibili.com/<uid>`, synced like a YouTube channel — Bilibili profiles have a single uploads feed, so there's no Videos/Shorts/Live choice; collections the uploader hides from that feed are fetched and included, up to 25 per profile, and a profile whose collections can't all be read fails to analyze or sync rather than syncing without them), collections and series (`space.bilibili.com/<uid>/lists/<id>`), and favorites (`space.bilibili.com/<uid>/favlist?fid=…`). Analyzing a multi-part video URL without `?p=N` adds every part; with `?p=N` (or pasted into an existing collection) it adds only that part. Bilibili Live, bangumi (licensed anime), and `b23.tv` short links aren't supported (bilibili.tv, the international site, is listed separately below) — open a short link in a browser and paste the full URL instead. Without a cookies file Bilibili usually limits quality to 480p–1080p; the same cookies-file setting below works for a Bilibili account. Bilibili also blocks some regions and rate-limits aggressively, which shows up as "may be deleted or geo-restricted" or HTTP 412 errors.
+- **Bilibili** — videos (`www.bilibili.com/video/BV…` or `av…`, `m.bilibili.com`), profiles (`space.bilibili.com/<uid>`, synced like a YouTube channel — Bilibili profiles have a single uploads feed, so there's no Videos/Shorts/Live choice; collections the uploader hides from that feed are fetched and included, up to 25 per profile, and a profile whose collections can't all be read fails to analyze or sync rather than syncing without them), collections and series (`space.bilibili.com/<uid>/lists/<id>`), and favorites (`space.bilibili.com/<uid>/favlist?fid=…`). Analyzing a multi-part video URL without `?p=N` adds every part; with `?p=N` (or pasted into an existing collection) it adds only that part. Bilibili Live, bangumi (licensed anime), and `b23.tv` short links aren't supported (bilibili.tv, the international site, is listed separately below) — open a short link in a browser and paste the full URL instead. Without a cookies file Bilibili usually limits quality to 480p–1080p; the same cookies-file setting below works for a Bilibili account. Bilibili also blocks some regions ("may be deleted or geo-restricted") and blocks bursts of requests from one connection; see "A site is refusing requests" below.
 - **bilibili.tv** (Bilibili's international site, separate from bilibili.com) — uploaded videos (`www.bilibili.tv/<lang>/video/<id>`), show episodes (`/play/<season>/<episode>`), and whole shows (`/play/<season>` or `/media/<id>`, added like a playlist). The legacy `biliintl.com` host works too. yt-dlp can't list an uploader's videos on bilibili.tv, so there are no channel sources, and Stream mode isn't available. Many shows are region-locked, and some videos need a cookies file from a bilibili.tv account.
 - **Internet Archive** — items (`archive.org/details/<identifier>`), e.g. public-domain films and old TV. An item with several video files adds every file; a link to one file (`archive.org/details/<identifier>/<file>`) adds just that file. Collections and searches aren't supported, so these sources don't sync. Stream mode works.
 - **Vimeo** — videos, users (`vimeo.com/<user>`, synced like a channel), channels (`vimeo.com/channels/<name>`), and showcases/albums. **Vimeo now only serves videos to signed-in clients**, so it needs a cookies file from a Vimeo account (see below); without one, analysis works but every video is marked as requiring sign-in. On Demand and private/review links aren't supported.
@@ -411,7 +413,7 @@ Only public HTTPS URLs on supported sites are accepted:
 - **Twitch** — past broadcasts/VODs (`twitch.tv/videos/<id>`), clips (`clips.twitch.tv/<slug>` or `twitch.tv/<channel>/clip/<slug>`), channels (`twitch.tv/<channel>`, synced from the channel's video list), and a channel's clips (`twitch.tv/<channel>/clips`, all-time, most-viewed first). Twitch deletes past broadcasts after 7–60 days; TunarrTube keeps anything it already downloaded. Live streams and subscriber-only VODs aren't supported.
 - **Niconico** — videos (`nicovideo.jp/watch/sm…`, `nico.ms/sm…`), users (`nicovideo.jp/user/<id>`, synced like a channel), mylists, and series. Many videos need a cookies file from a Niconico account, and some are only available from Japan. Niconico Live isn't supported.
 
-One cookies file can hold cookies for several of these sites at once.
+One cookies file can hold cookies for several of these sites at once, or give each site its own in Settings → Sites.
 
 Other sites `yt-dlp` supports aren't accepted on purpose: letting `yt-dlp` fetch arbitrary URLs would let anyone with access to TunarrTube make the server request internal network addresses. Sites are added one at a time (see `lib/youtube/sites.ts`). Private/unlisted, account-only, and members-only media are not supported — TunarrTube can't browse a signed-in account's library, only analyze a URL you already have. Age-restricted and bot-checked *public* videos are supported if you configure a cookies file (see "Age-restricted or sign-in-required videos" below); without one they're marked unavailable instead of failing repeatedly.
 
@@ -440,6 +442,19 @@ To actually download these videos instead of skipping them, configure **yt-dlp c
 3. In Settings, set the cookies file path to the in-container path (`/config/cookies.txt` for the example above), or set `TUNARRTUBE_YTDLP_COOKIES` before first start. Existing "unavailable" videos need a manual **Retry** — they aren't automatically retried once cookies are added.
 
 TunarrTube never uploads, generates, or displays this file's contents — it only passes the path to `yt-dlp` as `--cookies <path>`, and that path is redacted from Logs the same way other `--cookies[-from-browser]` flags already are (see Security below). Treat the file itself like a password: whoever can read it can act as that YouTube account, cookies expire and need periodic re-export, and tripping YouTube's automation detection on a shared/family account risks that account, not just the download.
+
+### Settings → Sites
+
+Settings → Sites lists every supported site with what it needs: whether a cookies file is required (Vimeo), recommended (Bilibili, Niconico), optional, or unnecessary, plus whether it supports Stream mode and channel sources. For each site you can set:
+
+- **Cookies file** — a site's own cookies file, used instead of the global one under External tools. Leave it empty to use the global file. As with the global setting, this is only a path to a file you manage; TunarrTube never reads or shows its contents.
+- **Request delay** — seconds `yt-dlp` waits between its requests to that site while reading pages (it doesn't slow video downloads). Bilibili defaults to 1 second; every other site to 0. Raise it if a site keeps refusing requests.
+
+### A site is refusing requests
+
+When a site rate-limits or blocks this connection, the error reads "<Site> is refusing requests from this connection (rate limit or bot protection)", followed by the line `yt-dlp` printed. YouTube's version is an HTTP 429. Bilibili's is its risk control: HTTP 412, "Request is blocked by server", "exceeded the rate limit", or yt-dlp's "Unable to extract initial state" — the last is how a blocked Bilibili page looks to `yt-dlp`, not a broken video, and updating `yt-dlp` won't fix it.
+
+TunarrTube doesn't count these against a job's retries. It pauses that site's queued downloads, cache fills, and metadata refreshes together (2 minutes, doubling on repeated blocks up to 30 minutes) and retries them automatically; other sites keep going. To stop it recurring, add a cookies file for that site in Settings → Sites (for Bilibili, from a signed-in bilibili.com session), or raise its request delay there.
 
 ### Tunarr cannot find downloaded videos
 

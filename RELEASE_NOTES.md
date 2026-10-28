@@ -1,3 +1,22 @@
+# TunarrTube Extended v0.5.0
+
+## Settings → Sites
+
+A new **Sites** section in Settings lists every supported site with what it needs: whether a cookies file is required (Vimeo), recommended (Bilibili, Niconico), optional, or unnecessary, and whether it supports Stream mode and channel sources. For each site you can set:
+
+- its own **cookies file**, used instead of the global one, so each site can sign in with its own account. Leave it empty to keep using the global file.
+- a **request delay**: how long yt-dlp waits between requests to that site while reading pages. Bilibili now defaults to 1 second, to stay under its bot protection.
+
+## Blocked sites back off on their own
+
+- When a site rate-limits or blocks your connection, TunarrTube now says so plainly ("Bilibili is refusing requests from this connection…") and points to the setting that fixes it, instead of showing yt-dlp's raw error.
+- That site's queued downloads, cache fills, and metadata refreshes pause together and retry automatically, without using up their retries. Other sites keep going: a Bilibili block no longer holds up YouTube downloads.
+- Bilibili's blocks are now recognized: HTTP 412 "Request is blocked by server", "exceeded the rate limit", and yt-dlp's "Unable to extract initial state" (how a blocked Bilibili page looks to yt-dlp). Previously these failed as ordinary errors, and the retries kept the block going.
+
+## Upgrading
+
+Adds one database table for per-site settings; it's created automatically on start.
+
 # TunarrTube Extended v0.4.0
 
 ## More video sites

@@ -1,9 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import { AppError } from "@/lib/api";
 import { YTDLP_CACHE_ROOT } from "@/lib/constants";
-import { getSettings } from "@/lib/settings/service";
+import { siteRequestSettings } from "@/lib/settings/service";
 import { discoverBinary } from "@/lib/system/binaries";
-import { runProcess } from "@/lib/system/process";
+import { runProcess, type RunOptions } from "@/lib/system/process";
 import { expandNestedPlaylists, normalizeChannel, normalizeEntry, normalizePlaylist } from "@/lib/youtube/normalize";
 import { SITES, isAllowedStreamUrl, siteForStoredUrl, type Site } from "@/lib/youtube/sites";
 import type { AnalyzeSourceOptions, ChannelFeed, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
@@ -16,16 +16,24 @@ async function executable() {
   return binary;
 }
 
-// Appended to every yt-dlp invocation below (and to downloadMp4 in lib/downloads/service.ts) when the
-// operator has pointed AppSettings.ytdlpCookiesPath at a Netscape-format cookies.txt file. Lets
-// age-restricted/bot-checked videos ("Sign in to confirm your age/you're not a bot", see
-// isSignInRequiredError below) authenticate instead of permanently failing. Unset by default -- see
-// AGENTS.md's stance on cookie-based auth for why this is opt-in and file-path-based rather than
-// accepting credentials directly. safeCommand()/sanitizeLogValue (lib/logging/service.ts, lib/system/
-// process.ts) already redact the path itself out of any logged command line or yt-dlp error text.
-export async function cookiesArgs() {
-  const settings = await getSettings();
-  return settings.ytdlpCookiesPath ? ["--cookies", settings.ytdlpCookiesPath] : [];
+// Per-site request arguments appended to every yt-dlp invocation below (and to the download in
+// lib/downloads/service.ts), from Settings → Sites with fallbacks (lib/settings/service.ts:
+// siteRequestSettings):
+//  - `--cookies <path>` when that site, or the global AppSettings.ytdlpCookiesPath, points at a
+//    Netscape-format cookies.txt file. Lets age-restricted/bot-checked/signed-in-only videos ("Sign in to
+//    confirm your age/you're not a bot", see isSignInRequiredError below) authenticate instead of
+//    permanently failing. Unset by default -- see AGENTS.md's stance on cookie-based auth for why this is
+//    opt-in and file-path-based rather than accepting credentials directly. safeCommand()/
+//    sanitizeLogValue (lib/logging/service.ts, lib/system/process.ts) already redact the path itself out
+//    of any logged command line or yt-dlp error text.
+//  - `--sleep-requests <seconds>`: a pause between the extraction requests yt-dlp makes to the site, so
+//    sites that block bursts (Bilibili) see a slower, steadier client. Doesn't slow media downloads.
+export async function siteRequestArgs(site: Site) {
+  const { cookiesPath, sleepRequestsSeconds } = await siteRequestSettings(site.id);
+  return [
+    ...(cookiesPath ? ["--cookies", cookiesPath] : []),
+    ...(sleepRequestsSeconds > 0 ? ["--sleep-requests", String(sleepRequestsSeconds)] : [])
+  ];
 }
 
 // yt-dlp only auto-enables the `deno` JS runtime for solving YouTube's player challenges; without one
@@ -65,9 +73,22 @@ export async function challengeSolverEnv(): Promise<NodeJS.ProcessEnv> {
   return { ...process.env, XDG_CACHE_HOME: YTDLP_CACHE_ROOT };
 }
 
+// Runs yt-dlp for one site: its pinned extractors (siteArgs) and request arguments (siteRequestArgs) go
+// before `--`, the URL after. A failure that means the site is refusing this connection (HTTP 429, or
+// the site's own Site.blockedSignal) becomes SITE_RATE_LIMITED, so callers and the job runner can back
+// off the whole site instead of treating it as one bad video. Exported for lib/downloads/service.ts.
+export async function runYtDlp(site: Site, args: string[], url: string, options: RunOptions) {
+  try {
+    return await runProcess(await executable(), [...args, ...siteArgs(site), ...await siteRequestArgs(site), "--", url], options);
+  } catch (error) {
+    if (error instanceof AppError && error.code === "PROCESS_FAILED" && isRateLimitedError(error.message, site)) throw await siteBlockedError(site, error.message);
+    throw error;
+  }
+}
+
 export async function analyzePlaylist(input: string, signal?: AbortSignal): Promise<PlaylistAnalysis> {
   const url = validatePlaylistUrl(input);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...siteArgsForUrl(url), ...await cookiesArgs(), "--", url], {
+  const result = await runYtDlp(siteForStoredUrl(url), ["--dump-single-json", "--flat-playlist", "--no-warnings"], url, {
     signal,
     timeoutMs: 10 * 60_000,
     env: await challengeSolverEnv()
@@ -81,10 +102,9 @@ export async function analyzePlaylist(input: string, signal?: AbortSignal): Prom
 }
 
 async function dumpFlatPlaylist(url: string, site: Site, playlistEnd: number | null, timeoutMs: number, label: string, signal?: AbortSignal) {
-  const args = ["--dump-single-json", "--flat-playlist", "--no-warnings", ...siteArgs(site)];
+  const args = ["--dump-single-json", "--flat-playlist", "--no-warnings"];
   if (playlistEnd !== null) args.push("--playlist-end", String(playlistEnd));
-  args.push(...await cookiesArgs(), "--", url);
-  const result = await runProcess(await executable(), args, { signal, timeoutMs, env: await challengeSolverEnv() });
+  const result = await runYtDlp(site, args, url, { signal, timeoutMs, env: await challengeSolverEnv() });
   try {
     const raw: unknown = JSON.parse(result.stdout);
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
@@ -160,7 +180,7 @@ export async function analyzeSource(input: string, options: AnalyzeSourceOptions
 // entries) rather than silently keeping only one. An ordinary single video yields one fully-extracted
 // entry from the same call.
 async function fetchVideoParts(url: string, site: Site, signal?: AbortSignal): Promise<PlaylistEntry[]> {
-  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...siteArgs(site), ...await cookiesArgs(), "--", url], {
+  const result = await runYtDlp(site, ["--dump-single-json", "--flat-playlist", "--no-warnings"], url, {
     signal,
     timeoutMs: 5 * 60_000,
     env: await challengeSolverEnv()
@@ -182,7 +202,7 @@ export async function fetchVideoMetadata(youtubeUrl: string, signal?: AbortSigna
   const site = siteForStoredUrl(url);
   // --no-playlist: a multi-part video (see analyzeMultiPartVideo above) without "?p=N" resolves to its
   // first part instead of a playlist, so this always yields exactly one entry.
-  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-playlist", "--no-warnings", ...siteArgs(site), ...await cookiesArgs(), "--", url], {
+  const result = await runYtDlp(site, ["--dump-single-json", "--skip-download", "--no-playlist", "--no-warnings"], url, {
     signal,
     timeoutMs: 5 * 60_000,
     env: await challengeSolverEnv()
@@ -272,8 +292,30 @@ export async function getYtDlpPath() {
 // this is purely "you're requesting too fast," which calling code should treat as a signal to back off.
 const RATE_LIMIT_SIGNAL = /HTTP Error 429|429 Client Error|Too Many Requests/i;
 
-export function isRateLimitedError(message: string) {
-  return RATE_LIMIT_SIGNAL.test(message);
+// With a site, also matches that site's own block signal (Site.blockedSignal: Bilibili's HTTP 412 risk
+// control, for one), or a SITE_RATE_LIMITED message runYtDlp already produced.
+export function isRateLimitedError(message: string, site?: Site) {
+  return RATE_LIMIT_SIGNAL.test(message) || SITE_BLOCKED_MARKER.test(message) || Boolean(site?.blockedSignal?.test(message));
+}
+
+const SITE_BLOCKED_MARKER = /is refusing requests from this connection/;
+
+// What the operator sees (job error, analyze error) when a site blocks us: what's happening, that it
+// retries on its own, and the setting most likely to fix it -- plus yt-dlp's own line, since a site's
+// block signal can also be a genuine extractor breakage ("Unable to extract initial state").
+async function siteBlockedError(site: Site, message: string) {
+  const { cookiesPath } = await siteRequestSettings(site.id);
+  const fix = cookiesPath || site.signIn.level === "none"
+    ? "Try again later, or raise its request delay in Settings → Sites."
+    : `Adding a ${site.label} cookies file in Settings → Sites usually prevents this; raising its request delay there helps too.`;
+  // yt-dlp's "please report this issue ... yt-dlp -U" tail is wrong advice for a block, so drop it.
+  const said = message.match(/ERROR:\s*(.+)/)?.[1]?.replace(/;\s*please report this issue.*$/i, "").trim().slice(0, 300);
+  return new AppError(
+    "SITE_RATE_LIMITED",
+    `${site.label} is refusing requests from this connection (rate limit or bot protection). Queued jobs for ${site.label} back off and retry automatically. ${fix}${said ? ` yt-dlp said: ${said}` : ""}`,
+    429,
+    { site: site.id }
+  );
 }
 
 // yt-dlp's wording when YouTube's CDN drops or stalls a connection mid-download (typically a short
@@ -298,7 +340,7 @@ export function isUnavailableVideoError(message: string) {
 // yt-dlp's message when YouTube demands authentication before it'll serve the video at all: age-gated
 // content ("Sign in to confirm your age") or a bot-check challenge ("Sign in to confirm you're not a
 // bot"). Unlike UNAVAILABLE_SIGNAL above, the video isn't gone -- it's fixable by configuring
-// AppSettings.ytdlpCookiesPath (see cookiesArgs above) -- but retrying *without* cookies configured will
+// a cookies file (see siteRequestArgs above) -- but retrying *without* cookies configured will
 // never succeed, so callers should still stop burning automatic retries on it, same as an unavailable
 // video, just with a more actionable reason (see unavailabilityReason below).
 // Other sites word it differently: Vimeo's "only works when logged-in", Niconico's login requirement, and
@@ -332,13 +374,7 @@ export async function unavailabilityReason(youtubeUrl: string, message: string) 
 export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality = "best", signal?: AbortSignal) {
   const site = siteForStoredUrl(youtubeUrl);
   if (!site.supportsStreaming) throw new AppError("STREAM_UNSUPPORTED", `${site.label} videos can't be streamed; use Permanent or Cache playback.`, 422);
-  const result = await runProcess(await executable(), [
-    "--get-url", "--no-playlist", "--no-warnings",
-    "-f", streamFormatSelector(quality),
-    ...siteArgs(site),
-    ...await cookiesArgs(),
-    "--", youtubeUrl
-  ], { signal, timeoutMs: 2 * 60_000, env: await challengeSolverEnv() });
+  const result = await runYtDlp(site, ["--get-url", "--no-playlist", "--no-warnings", "-f", streamFormatSelector(quality)], youtubeUrl, { signal, timeoutMs: 2 * 60_000, env: await challengeSolverEnv() });
   const value = result.stdout.trim().split(/\r?\n/)[0];
   if (!value) throw new AppError("STREAM_URL_MISSING", `${site.label} did not return a playable stream URL.`, 502);
   if (!isAllowedStreamUrl(site, value)) throw new AppError("STREAM_URL_REJECTED", `${site.label} returned an unexpected stream host.`, 502);

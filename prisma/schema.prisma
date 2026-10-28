@@ -417,3 +417,18 @@ model RenderedAsset {
 
   @@unique([mediaItemId, templateId])
 }
+
+// Per-site yt-dlp request settings, edited in Settings → Sites (lib/settings/service.ts:
+// getSiteSettingsView/updateSiteSetting). One row per lib/youtube/sites.ts SiteId the operator has
+// customized; a missing row, or a null column, falls back to AppSettings.ytdlpCookiesPath and the site's
+// built-in Site.defaultSleepRequestsSeconds. cookiesPath follows the same file-path-only rule as
+// AppSettings.ytdlpCookiesPath (see AGENTS.md): TunarrTube only passes the path to yt-dlp as `--cookies`,
+// never reads, stores, or displays the file's contents. sleepRequestsSeconds becomes yt-dlp's
+// `--sleep-requests`: a pause between the extraction requests it makes to that site, the main lever
+// against sites that block bursts of requests (Bilibili's risk control).
+model SiteSetting {
+  site                 String   @id
+  cookiesPath          String?
+  sleepRequestsSeconds Int?
+  updatedAt            DateTime @updatedAt
+}

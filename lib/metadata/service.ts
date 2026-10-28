@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
 import { fetchVideoMetadata, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
@@ -26,7 +27,10 @@ export async function enrichVideo(videoId: string, signal?: AbortSignal) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (isUnavailableVideoError(message) || isSignInRequiredError(message)) {
+    // A site block (SITE_RATE_LIMITED, lib/youtube/ytdlp.ts:runYtDlp) says nothing about this video;
+    // the job runner backs off and retries it.
+    const siteBlocked = error instanceof AppError && error.code === "SITE_RATE_LIMITED";
+    if (!siteBlocked && (isUnavailableVideoError(message) || isSignInRequiredError(message))) {
       const reason = await unavailabilityReason(video.youtubeUrl, message);
       await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason, metadataStatus: "failed" } });
       await writeLog({ level: "warn", category: "video", videoId, message: `Video ${video.youtubeId} is unavailable: ${reason}` });

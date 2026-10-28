@@ -8,10 +8,9 @@ import { requireFfmpeg } from "@/lib/ffmpeg/service";
 import { writeLog } from "@/lib/logging/service";
 import { assignEpisodeNumber, resolveVideoPaths, seasonNumberFor, type NamingScheme, type ResolvedVideoPaths } from "@/lib/naming/service";
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
-import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
-import { siteForStoredId } from "@/lib/youtube/sites";
-import { challengeSolverEnv, cookiesArgs, siteArgsForUrl, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
+import { siteForStoredId, siteForStoredUrl } from "@/lib/youtube/sites";
+import { challengeSolverEnv, runYtDlp, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
 import { CACHE_DIRECTORY_NAME, TEMP_DIRECTORY_NAME } from "@/lib/constants";
 
 // Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means
@@ -187,9 +186,8 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
     const tempDirectory = path.join(tempRoot, `${youtubeId}-${Date.now()}-${process.pid}`);
     await mkdir(tempDirectory, { recursive: false });
     try {
-      const ytdlp = await getYtDlpPath();
       const ffmpeg = await requireFfmpeg();
-      await runProcess(ytdlp, [
+      await runYtDlp(siteForStoredUrl(youtubeUrl), [
         "--no-playlist", "--no-overwrites", "--newline", "--no-progress",
         "--ffmpeg-location", path.dirname(ffmpeg),
         "-f", downloadFormatSelector(quality),
@@ -198,9 +196,8 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
         // span a throttling window instead of all burning within seconds.
         "--retry-sleep", "http:exp=1:30", "--retry-sleep", "fragment:exp=1:30",
         "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
-        ...siteArgsForUrl(youtubeUrl),
-        "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
-      ], { timeoutMs: 12 * 60 * 60_000, signal, env: await challengeSolverEnv() });
+        "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`)
+      ], youtubeUrl, { timeoutMs: 12 * 60 * 60_000, signal, env: await challengeSolverEnv() });
       const files = await readdir(tempDirectory);
       const output = files.find((file) => file === `${youtubeId}.mp4`);
       if (!output) throw new AppError("DOWNLOAD_OUTPUT_MISSING", "yt-dlp completed without producing the expected MP4.", 502);

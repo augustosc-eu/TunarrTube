@@ -6,6 +6,7 @@ import { readEnv } from "@/lib/config/env";
 import { DEFAULT_MEDIA_ROOT } from "@/lib/constants";
 import { db } from "@/lib/db/client";
 import { writeLog } from "@/lib/logging/service";
+import { SITES, type SiteId } from "@/lib/youtube/sites";
 
 export async function validateMediaDirectory(input: string, create = true) {
   if (!path.isAbsolute(input)) throw new AppError("INVALID_MEDIA_DIRECTORY", "Media directory must be an absolute path.");
@@ -208,3 +209,49 @@ export async function removeWithinDirectory(roots: string | string[], target: st
   }
   return false;
 }
+
+// The cookies file and request delay yt-dlp should use for one site: that site's SiteSetting row
+// where set, else the global AppSettings.ytdlpCookiesPath and the site's built-in default delay.
+export async function siteRequestSettings(site: SiteId) {
+  const [settings, row] = await Promise.all([getSettings(), db.siteSetting.findUnique({ where: { site } })]);
+  return {
+    cookiesPath: row?.cookiesPath ?? settings.ytdlpCookiesPath ?? null,
+    sleepRequestsSeconds: row?.sleepRequestsSeconds ?? SITES[site].defaultSleepRequestsSeconds
+  };
+}
+
+// Every site's requirements (from lib/youtube/sites.ts) alongside its own settings and what's in
+// effect after fallbacks, for Settings → Sites. Lists cookies file *paths* only, never contents.
+export async function getSiteSettingsView() {
+  const [settings, rows] = await Promise.all([getSettings(), db.siteSetting.findMany()]);
+  const bySite = new Map(rows.map((row) => [row.site, row]));
+  return Object.values(SITES).map((site) => {
+    const row = bySite.get(site.id);
+    const cookiesPath = row?.cookiesPath ?? null;
+    const sleepRequestsSeconds = row?.sleepRequestsSeconds ?? null;
+    return {
+      site: site.id,
+      label: site.label,
+      signIn: site.signIn,
+      note: site.note,
+      supportsStreaming: site.supportsStreaming,
+      hasChannels: site.channelFeeds.length > 0,
+      defaultSleepRequestsSeconds: site.defaultSleepRequestsSeconds,
+      cookiesPath,
+      sleepRequestsSeconds,
+      effectiveCookiesPath: cookiesPath ?? settings.ytdlpCookiesPath ?? null,
+      cookiesSource: cookiesPath ? "site" as const : settings.ytdlpCookiesPath ? "global" as const : null,
+      effectiveSleepRequestsSeconds: sleepRequestsSeconds ?? site.defaultSleepRequestsSeconds
+    };
+  });
+}
+
+export async function updateSiteSetting(site: SiteId, input: { cookiesPath?: string | null; sleepRequestsSeconds?: number | null }) {
+  const cookiesPath = input.cookiesPath === undefined || input.cookiesPath === null ? input.cookiesPath : await validateCookiesPath(input.cookiesPath);
+  const data = { ...(cookiesPath !== undefined ? { cookiesPath } : {}), ...(input.sleepRequestsSeconds !== undefined ? { sleepRequestsSeconds: input.sleepRequestsSeconds } : {}) };
+  await db.siteSetting.upsert({ where: { site }, update: data, create: { site, ...data } });
+  await writeLog({ level: "info", category: "settings", message: `Updated ${SITES[site].label} site settings.` }).catch(() => undefined);
+  return (await getSiteSettingsView()).find((view) => view.site === site)!;
+}
+
+export type SiteSettingView = Awaited<ReturnType<typeof getSiteSettingsView>>[number];

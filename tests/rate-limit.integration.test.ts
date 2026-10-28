@@ -69,6 +69,55 @@ describe("download queue rate-limit handling", () => {
     expect(Math.abs(refreshedA.runAfter.getTime() - refreshedB.runAfter.getTime())).toBeLessThan(2000);
   });
 
+  describe("per-site backoff", () => {
+    const cleanupVideoIds: string[] = [];
+    afterEach(async () => {
+      await db.job.deleteMany({ where: { videoId: { in: cleanupVideoIds } } });
+      await db.video.deleteMany({ where: { id: { in: cleanupVideoIds.splice(0) } } });
+    });
+    const video = async (youtubeId: string, youtubeUrl: string) => {
+      const created = await db.video.create({ data: { youtubeId: `${youtubeId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, title: youtubeId, youtubeUrl } });
+      cleanupVideoIds.push(created.id);
+      return created;
+    };
+
+    it("pauses only that site's queued jobs when Bilibili blocks a download", async () => {
+      const bilibiliA = await video("bilibili.BV1aaaaaaaaa", "https://www.bilibili.com/video/BV1aaaaaaaaa");
+      const bilibiliB = await video("bilibili.BV1bbbbbbbbb", "https://www.bilibili.com/video/BV1bbbbbbbbb");
+      const youtube = await video("rtX9Fof1muY", "https://www.youtube.com/watch?v=rtX9Fof1muY");
+      const failing = await db.job.create({ data: { type: "download", attempts: 1, status: "running", videoId: bilibiliA.id } });
+      const sameSite = await db.job.create({ data: { type: "metadata", attempts: 0, status: "queued", videoId: bilibiliB.id } });
+      const otherSite = await db.job.create({ data: { type: "download", attempts: 0, status: "queued", videoId: youtube.id } });
+      cleanupJobIds.push(failing.id, sameSite.id, otherSite.id);
+
+      const before = Date.now();
+      await handleJobFailure(failing, new Error("/opt/homebrew/bin/yt-dlp failed: ERROR: [BiliBili] 1aaaaaaaaa: Unable to extract initial state; please report this issue on https://github.com/yt-dlp/yt-dlp/issues"));
+
+      const [refreshedFailing, refreshedSame, refreshedOther] = await Promise.all([failing, sameSite, otherSite].map((job) => db.job.findUniqueOrThrow({ where: { id: job.id } })));
+      expect(refreshedFailing).toMatchObject({ status: "queued", attempts: 0 });
+      expect(refreshedFailing.runAfter.getTime()).toBeGreaterThan(before + 90_000);
+      expect(Math.abs(refreshedSame.runAfter.getTime() - refreshedFailing.runAfter.getTime())).toBeLessThan(2000);
+      // YouTube keeps downloading while Bilibili cools down.
+      expect(refreshedOther.runAfter.getTime()).toBeLessThan(before + 60_000);
+    });
+
+    it("treats a SITE_RATE_LIMITED error from runYtDlp as a block", async () => {
+      const bilibili = await video("bilibili.BV1ccccccccc", "https://www.bilibili.com/video/BV1ccccccccc");
+      const failing = await db.job.create({ data: { type: "metadata", attempts: 1, status: "running", videoId: bilibili.id } });
+      cleanupJobIds.push(failing.id);
+      await handleJobFailure(failing, new Error("Bilibili is refusing requests from this connection (rate limit or bot protection). Queued jobs for Bilibili back off and retry automatically."));
+      expect(await db.job.findUniqueOrThrow({ where: { id: failing.id } })).toMatchObject({ status: "queued", attempts: 0 });
+    });
+
+    it("doesn't treat a Bilibili-only signal as a block for another site", async () => {
+      const youtube = await video("abcdefghijk", "https://www.youtube.com/watch?v=abcdefghijk");
+      const failing = await db.job.create({ data: { type: "download", attempts: 1, maxAttempts: 3, status: "running", videoId: youtube.id } });
+      cleanupJobIds.push(failing.id);
+      await handleJobFailure(failing, new Error("yt-dlp failed: ERROR: [youtube] abcdefghijk: Unable to extract initial state"));
+      expect((await db.job.findUniqueOrThrow({ where: { id: failing.id } })).attempts).toBe(1);
+    });
+  });
+
   it("falls back to the ordinary per-job backoff for a non-rate-limit failure", async () => {
     const job = await db.job.create({ data: { type: "download", attempts: 1, maxAttempts: 3, status: "running" } });
     cleanupJobIds.push(job.id);

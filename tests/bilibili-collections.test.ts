@@ -5,7 +5,7 @@ vi.mock("@/lib/system/process", () => ({ runProcess }));
 vi.mock("@/lib/system/binaries", () => ({ discoverBinary: async () => "/usr/bin/yt-dlp" }));
 vi.mock("@/lib/settings/service", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/settings/service")>(),
-  getSettings: async () => ({ ytdlpCookiesPath: "/config/cookies.txt" })
+  siteRequestSettings: async () => ({ cookiesPath: "/config/cookies.txt", sleepRequestsSeconds: 1 })
 }));
 
 const { analyzeSource } = await import("@/lib/youtube/ytdlp");
@@ -41,8 +41,8 @@ describe("analyzing a Bilibili profile with a hidden-mode collection", () => {
     expect(runProcess).toHaveBeenCalledTimes(2);
     const [, collectionArgs, collectionOptions] = runProcess.mock.calls[1];
     expect(collectionArgs).toEqual([
-      "--dump-single-json", "--flat-playlist", "--no-warnings", "--use-extractors", "bilibili.*",
-      "--playlist-end", "50", "--cookies", "/config/cookies.txt", "--", listUrl
+      "--dump-single-json", "--flat-playlist", "--no-warnings", "--playlist-end", "50",
+      "--use-extractors", "bilibili.*", "--cookies", "/config/cookies.txt", "--sleep-requests", "1", "--", listUrl
     ]);
     expect(collectionOptions.signal).toBe(controller.signal);
     expect(collectionOptions.timeoutMs).toBeGreaterThan(0);

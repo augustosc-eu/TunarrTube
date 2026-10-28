@@ -2,6 +2,7 @@ import { z } from "zod";
 import { VIDEO_QUALITIES } from "@/lib/youtube/quality";
 import { AI_PROVIDERS, SCHEDULE_STYLES } from "@/lib/programming/types";
 import { NAMING_SCHEMES } from "@/lib/naming/service";
+import { SITES, type SiteId } from "@/lib/youtube/sites";
 
 export const videoQualitySchema = z.enum(VIDEO_QUALITIES);
 // A per-Source filenameTemplate is only meaningful for namingScheme "template" -- "id"/"tvshow" ignore
@@ -264,3 +265,11 @@ export const contentSelectJobPayloadSchema = z.object({
   targetDurationSeconds: z.number().int().positive().optional()
 });
 export const channelBriefJobPayloadSchema = z.object({ sourceIds: z.array(z.string().min(1)).min(1) });
+
+// Settings → Sites (PATCH /api/settings/sites/{site}). null clears a value back to its fallback (the
+// global cookies file / the site's built-in request delay); an omitted field is left alone.
+export const siteIdSchema = z.enum(Object.keys(SITES) as [SiteId, ...SiteId[]]);
+export const updateSiteSettingSchema = z.object({
+  cookiesPath: z.string().trim().min(1).nullable().optional(),
+  sleepRequestsSeconds: z.number().int().min(0).max(60).nullable().optional()
+}).refine((value) => value.cookiesPath !== undefined || value.sleepRequestsSeconds !== undefined, { message: "Provide cookiesPath and/or sleepRequestsSeconds." });
