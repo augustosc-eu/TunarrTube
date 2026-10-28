@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -66,5 +66,46 @@ process.exit(1);
 `);
 
     await expect(updateBinary("yt-dlp")).rejects.toThrow(/brew upgrade yt-dlp/);
+  });
+
+  // yt-dlp 2026.08.19's real output from a Homebrew install: Homebrew ships the PyPI wheel, so it
+  // blames pip, and exits 100.
+  const REFUSAL = `
+const args = process.argv.slice(2);
+if (args[0] === "--version") { process.stdout.write("2026.08.19\\n"); process.exit(0); }
+if (args[0] === "--update") {
+  process.stdout.write("Current version: stable@2026.08.19 from yt-dlp/yt-dlp\\nLatest version: stable@2026.10.26 from yt-dlp/yt-dlp\\n");
+  process.stderr.write("ERROR: You installed yt-dlp with pip or using the wheel from PyPi; Use that to update\\n");
+  process.exit(100);
+}
+process.exit(1);
+`;
+
+  it("tells a Homebrew install to run brew upgrade instead of blaming pip", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-update-test-"));
+    cleanup.push(root);
+    const cellar = path.join(root, "Cellar", "yt-dlp", "2026.8.19", "libexec", "bin");
+    await mkdir(cellar, { recursive: true });
+    const real = await fakeYtDlp(cellar, REFUSAL);
+    const linked = path.join(root, "yt-dlp");
+    await symlink(real, linked);
+    process.env.TUNARRTUBE_YTDLP_PATH = linked;
+
+    const error = await updateBinary("yt-dlp").catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "YTDLP_SELF_UPDATE_UNSUPPORTED", status: 409 });
+    expect((error as Error).message).toContain("installed with Homebrew");
+    expect((error as Error).message).toContain("brew upgrade yt-dlp");
+    expect((error as Error).message).not.toContain("pip");
+  });
+
+  it("passes yt-dlp's own reason through for other non-updatable installs", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-update-test-"));
+    cleanup.push(root);
+    await fakeYtDlp(root, REFUSAL);
+
+    const error = await updateBinary("yt-dlp").catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "YTDLP_SELF_UPDATE_UNSUPPORTED" });
+    expect((error as Error).message).toContain("You installed yt-dlp with pip or using the wheel from PyPi; Use that to update");
+    expect((error as Error).message).toContain("TUNARRTUBE_YTDLP_PATH");
   });
 });

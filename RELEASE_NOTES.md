@@ -16,6 +16,7 @@ TunarrTube now accepts URLs from **Bilibili, bilibili.tv, Internet Archive, Vime
 - A custom filename template no longer treats an ID-like bracket inside a title (for example `Mirror [archive.2024]`) as the video's ID. Such files now get the real ID appended, so Tunarr matches them correctly. This applies to new downloads; existing files keep their names.
 - One failing source no longer stops the rest of a scheduled sync run, and the startup sync and hourly cache cleanup no longer crash with unhandled errors.
 - A failed download can no longer leave a video stuck as "downloading", and a problem after a download finishes can no longer mark the completed video as failed.
+- **Update** next to yt-dlp in Settings now explains when your yt-dlp can't update itself. A Homebrew install is told to run `brew upgrade yt-dlp`, instead of getting yt-dlp's misleading "installed with pip" error.
 - Titles and other yt-dlp output in Chinese, Japanese, and other multi-byte scripts are no longer garbled when they arrive in pieces.
 
 ## Upgrading
