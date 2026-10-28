@@ -8,6 +8,7 @@ import { sidecarPathsFor } from "@/lib/naming/service";
 import { getSettings, removeWithinDirectory } from "@/lib/settings/service";
 import { removeCacheFile } from "@/lib/cache/service";
 import { analyzeSource, fetchVideoMetadata } from "@/lib/youtube/ytdlp";
+import { siteForStoredUrl } from "@/lib/youtube/sites";
 import { validateVideoUrl } from "@/lib/youtube/url";
 import type { AnalyzeSourceOptions, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
 
@@ -15,7 +16,7 @@ type StoredEntry = Omit<PlaylistEntry, "uploadDate"> & { uploadDate: string | nu
 
 export function slugify(value: string) {
   const slug = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64);
-  return slug || "youtube-playlist";
+  return slug || "untitled";
 }
 
 function storeEntries(entries: PlaylistEntry[]): StoredEntry[] {
@@ -57,7 +58,18 @@ export async function analyzeAndStoreDraft(url: string, options: AnalyzeSourceOp
     }
   });
   await writeLog({ category: "source", message: `Analyzed ${analysis.name}: ${analysis.entries.length} videos found.` });
-  return { id: draft.id, name: draft.name, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, videoCount: draft.videoCount, sourceType: draft.sourceType, feedType: draft.feedType, historyLimit: draft.historyLimit, expiresAt: draft.expiresAt };
+  return { id: draft.id, platform: siteForStoredUrl(draft.url).id, name: draft.name, uploaderName: draft.uploaderName, thumbnailUrl: draft.thumbnailUrl, videoCount: draft.videoCount, sourceType: draft.sourceType, feedType: draft.feedType, historyLimit: draft.historyLimit, expiresAt: draft.expiresAt };
+}
+
+// Stream mode needs a single progressive URL from the video's site (see Site.supportsStreaming in
+// lib/youtube/sites.ts). A playlist/channel/collection whose own URL is on a site that can't stream is
+// refused stream mode outright; a mixed collection that later gains such a video falls back to caching
+// that one video instead (lib/playback/service.ts:effectivePlaybackMode).
+export function assertPlaybackModeSupported(sourceUrl: string, playbackMode: string) {
+  const site = siteForStoredUrl(sourceUrl);
+  if (playbackMode === "stream" && !site.supportsStreaming) {
+    throw new AppError("STREAM_UNSUPPORTED", `${site.label} sources can't use Stream mode. Choose Permanent or Cache.`, 422);
+  }
 }
 
 async function uniqueDirectoryName(name: string) {
@@ -76,8 +88,9 @@ export async function createSourceFromDraft(draftId: string, requestedName?: str
   if (!draft || draft.expiresAt < new Date() || draft.consumedAt) throw new AppError("INVALID_IMPORT_DRAFT", "This analysis expired or was already used. Analyze the playlist again.", 410);
   if (draft.sourceType !== "collection") {
     const duplicate = await db.source.findUnique({ where: { sourceType_youtubeId_feedType: { sourceType: draft.sourceType, youtubeId: draft.youtubeId, feedType: draft.feedType } } });
-    if (duplicate) throw new AppError("SOURCE_EXISTS", "This YouTube source is already configured.", 409, { sourceId: duplicate.id });
+    if (duplicate) throw new AppError("SOURCE_EXISTS", "This source is already configured.", 409, { sourceId: duplicate.id });
   }
+  assertPlaybackModeSupported(draft.url, playbackMode);
   const name = requestedName?.trim() || draft.name;
   const directoryName = await uniqueDirectoryName(name);
   const settings = await getSettings();

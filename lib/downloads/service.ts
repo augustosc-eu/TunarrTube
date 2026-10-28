@@ -10,7 +10,8 @@ import { assignEpisodeNumber, resolveVideoPaths, seasonNumberFor, type NamingSch
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
-import { challengeSolverArgs, challengeSolverEnv, cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
+import { siteForStoredId } from "@/lib/youtube/sites";
+import { challengeSolverEnv, cookiesArgs, siteArgsForUrl, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
 import { CACHE_DIRECTORY_NAME, TEMP_DIRECTORY_NAME } from "@/lib/constants";
 
 // Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means
@@ -83,7 +84,7 @@ function buildEpisodeNfo(video: { youtubeId: string; title: string; description:
   ];
   if (video.description) lines.push(`  <plot>${xmlEscape(video.description)}</plot>`);
   if (video.uploadDate) lines.push(`  <aired>${video.uploadDate.toISOString().slice(0, 10)}</aired>`);
-  lines.push(`  <uniqueid type="youtube" default="true">${xmlEscape(video.youtubeId)}</uniqueid>`);
+  lines.push(`  <uniqueid type="${siteForStoredId(video.youtubeId).id}" default="true">${xmlEscape(video.youtubeId)}</uniqueid>`);
   lines.push("</episodedetails>");
   return `${lines.join("\n")}\n`;
 }
@@ -197,7 +198,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
         // span a throttling window instead of all burning within seconds.
         "--retry-sleep", "http:exp=1:30", "--retry-sleep", "fragment:exp=1:30",
         "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
-        ...challengeSolverArgs(),
+        ...siteArgsForUrl(youtubeUrl),
         "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
       ], { timeoutMs: 12 * 60 * 60_000, signal, env: await challengeSolverEnv() });
       const files = await readdir(tempDirectory);

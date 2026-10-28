@@ -60,7 +60,7 @@ From a source's **Tunarr integration** panel ([components/tunarr-channel-form.ts
 Each source has a `playbackMode`:
 - **download** — every video is permanently downloaded into the source's media directory (the original MVP behavior).
 - **cache** — nothing downloads up front; a video is fetched into a shared cache directory the first time it's played, subject to a size/age eviction policy (default 20 GB / 30 idle days, configurable in Settings). Pinned, actively-playing, or Tunarr-linked assets are protected from eviction.
-- **stream** — nothing is ever stored; playback proxies a signed YouTube URL resolved on demand, with no retention at all.
+- **stream** — nothing is ever stored; playback proxies a signed YouTube URL resolved on demand, with no retention at all. YouTube and Internet Archive only — other sites' videos in a stream-mode collection are cached on first play instead.
 
 Publishing a **cache** or **stream** source to Tunarr materializes (downloads) every video into the source's media directory first, since Tunarr needs local files to scan — see `lib/tunarr/service.ts:publishSourceToTunarr` and `lib/downloads/service.ts:materializeForTunarr`.
 
@@ -108,7 +108,7 @@ Publishing a **cache** or **stream** source to Tunarr materializes (downloads) e
 
 These are explicit, stated constraints — either in the README or directly enforced in code — not assumptions:
 
-- **Public HTTPS YouTube URLs only**, on `youtube.com`/`www.youtube.com`/`m.youtube.com`/`music.youtube.com` (`lib/youtube/url.ts`). Private/unlisted-via-cookie, age-restricted, or authenticated extraction is explicitly out of scope for this MVP (README, "Troubleshooting").
+- **Public HTTPS URLs on allow-listed sites only** — YouTube, Bilibili, Internet Archive, Vimeo, Dailymotion, Twitch, and Niconico, each with its own accepted URL shapes in `lib/youtube/sites.ts` (README, "A URL cannot be analyzed", lists them). Videos, playlists, and channel-like sources (Bilibili profiles, Vimeo/Dailymotion users, Twitch channels, Niconico users) work like YouTube's; multi-part Bilibili videos and multi-file Internet Archive items expand into every part. Stream mode is YouTube/Internet Archive only. Vimeo requires a cookies file for any download; Niconico often does. Private/unlisted-via-cookie, age-restricted, or authenticated extraction is explicitly out of scope for this MVP (README, "Troubleshooting").
 - **Single TunarrTube process.** The README explicitly warns not to run multiple replicas against the same SQLite database; the job worker and scheduler rely on in-process state with no distributed locking.
 - **Never destroys a completed download because the source disappeared online.** A sync marks a `SourceVideo` `missing`; it does not delete the file or its metadata (README, and enforced in `lib/sources/service.ts:syncSource`).
 - **Deleting a source never deletes its media directory or a linked Tunarr channel.** Only the source's own catalog rows (and orphaned videos' thumbnails/cache files) are removed; downloaded MP4s stay on disk and any Tunarr channel/Local Media source built from them is left untouched in Tunarr, now orphaned from TunarrTube (README, "Troubleshooting"; `lib/sources/service.ts:deleteSource`).

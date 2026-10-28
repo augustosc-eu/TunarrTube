@@ -66,7 +66,7 @@ export function AddChannelItemsForm({ channelId }: { channelId: string }) {
       <div className="channel-panel-heading">
         <div>
           <h2>Add media</h2>
-          <p>Choose a video already in TunarrTube, scan a local folder, or paste a YouTube link.</p>
+          <p>Choose a video already in TunarrTube, scan a local folder, or paste a video link (YouTube, Bilibili, Internet Archive, Vimeo, Dailymotion, Twitch, or Niconico).</p>
         </div>
       </div>
       <div className="add-media-options">
@@ -96,10 +96,10 @@ export function AddChannelItemsForm({ channelId }: { channelId: string }) {
         </button>
       </div>
       <div className="add-media-option">
-        <div className="add-media-option-title"><LinkIcon size={17} /><h3>YouTube link</h3></div>
+        <div className="add-media-option-title"><LinkIcon size={17} /><h3>Video link</h3></div>
         <div className="field">
           <label htmlFor="youtube-url">Video URL</label>
-          <input id="youtube-url" className="input" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" />
+          <input id="youtube-url" className="input" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=… or https://www.bilibili.com/video/BV…" />
         </div>
         <button className="button secondary add-media-action" type="button" disabled={!url.trim() || busy !== null} onClick={() => submit({ type: "youtube", url })}>
           <LinkIcon size={16} /> {busy === "url" ? "Adding…" : "Add"}
@@ -107,7 +107,7 @@ export function AddChannelItemsForm({ channelId }: { channelId: string }) {
       </div>
       </div>
       {error ? <p className="error">{error}</p> : null}
-      <p className="channel-panel-note">YouTube links download through this channel&apos;s Source. Folder scans run in the background, so new items may take a moment to appear.</p>
+      <p className="channel-panel-note">Video links download through this channel&apos;s Source. Folder scans run in the background, so new items may take a moment to appear.</p>
     </section>
   );
 }

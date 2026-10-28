@@ -6,6 +6,7 @@ import { TunarrChannelForm } from "@/components/tunarr-channel-form";
 import { SourceSettings } from "@/components/source-settings";
 import { AddCollectionVideos } from "@/components/add-collection-videos";
 import { db } from "@/lib/db/client";
+import { siteForStoredUrl } from "@/lib/youtube/sites";
 import { sourceVideosQuerySchema } from "@/lib/validation";
 import type { Prisma } from "@prisma/client";
 
@@ -34,7 +35,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
     db.source.findUnique({
       where: { id },
       select: {
-        id: true, name: true, sourceType: true, feedType: true, uploaderName: true, mediaDirectory: true,
+        id: true, url: true, name: true, sourceType: true, feedType: true, uploaderName: true, mediaDirectory: true,
         playbackMode: true, videoQuality: true, syncEnabled: true, syncIntervalMinutes: true,
         namingScheme: true, filenameTemplate: true, tunarrChannelId: true, tunarrChannelNumber: true,
         tunarrChannelName: true, tunarrProgrammingOrder: true, tunarrLastPublishedAt: true,
@@ -59,5 +60,6 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
     ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(source.tunarrLastPublishedAt) + " UTC"
     : null;
   const isCollection = source.sourceType === "collection";
-  return <><PageHeader eyebrow={isCollection ? "Curated YouTube collection" : `YouTube ${source.sourceType} · ${source.feedType}`} title={source.name} /><SourceActions sourceId={source.id} canSync={!isCollection} /><div className="meta" style={{ marginBottom: 20 }}><span>{source.uploaderName ?? "Multiple uploaders"}</span><span>·</span><span>{totalCount} videos</span><span>·</span><span className="code">{source.mediaDirectory}</span></div>{isCollection ? <AddCollectionVideos sourceId={source.id} linked={Boolean(source.tunarrChannelId)} /> : null}<SourceSettings sourceId={source.id} initialMode={source.playbackMode} initialVideoQuality={source.videoQuality} initialSyncEnabled={source.syncEnabled} initialInterval={source.syncIntervalMinutes} supportsSync={!isCollection} initialNamingScheme={source.namingScheme} initialFilenameTemplate={source.filenameTemplate}/><TunarrChannelForm sourceId={source.id} sourceName={source.name} downloadedCount={downloadedCount} playbackMode={source.playbackMode} channelId={source.tunarrChannelId} channelNumber={source.tunarrChannelNumber} initialChannelName={source.tunarrChannelName} initialOrder={source.tunarrProgrammingOrder} initialAiInstructions={source.aiProgrammingInstructions} initialAiProvider={source.aiProvider} initialAiScheduleStyle={source.aiScheduleStyle} lastPublishedLabel={lastPublishedLabel} /><VideoSelectionTable sourceId={source.id} rows={rows} filters={{ query: query.query, sort: query.sort, order: query.order }} pagination={{ page: query.page, pageSize: query.pageSize, total: filteredCount, totalPages: Math.max(1, Math.ceil(filteredCount / query.pageSize)), sourceTotal: totalCount }} downloadableCount={downloadableCount} /></>;
+  const site = siteForStoredUrl(source.url);
+  return <><PageHeader eyebrow={isCollection ? "Curated video collection" : `${site.label} ${source.sourceType} · ${source.feedType}`} title={source.name} /><SourceActions sourceId={source.id} canSync={!isCollection} /><div className="meta" style={{ marginBottom: 20 }}><span>{source.uploaderName ?? "Multiple uploaders"}</span><span>·</span><span>{totalCount} videos</span><span>·</span><span className="code">{source.mediaDirectory}</span></div>{isCollection ? <AddCollectionVideos sourceId={source.id} linked={Boolean(source.tunarrChannelId)} /> : null}<SourceSettings sourceId={source.id} initialMode={source.playbackMode} initialVideoQuality={source.videoQuality} initialSyncEnabled={source.syncEnabled} initialInterval={source.syncIntervalMinutes} supportsSync={!isCollection} supportsStreaming={site.supportsStreaming} initialNamingScheme={source.namingScheme} initialFilenameTemplate={source.filenameTemplate}/><TunarrChannelForm sourceId={source.id} sourceName={source.name} downloadedCount={downloadedCount} playbackMode={source.playbackMode} channelId={source.tunarrChannelId} channelNumber={source.tunarrChannelNumber} initialChannelName={source.tunarrChannelName} initialOrder={source.tunarrProgrammingOrder} initialAiInstructions={source.aiProgrammingInstructions} initialAiProvider={source.aiProvider} initialAiScheduleStyle={source.aiScheduleStyle} lastPublishedLabel={lastPublishedLabel} /><VideoSelectionTable sourceId={source.id} rows={rows} filters={{ query: query.query, sort: query.sort, order: query.order }} pagination={{ page: query.page, pageSize: query.pageSize, total: filteredCount, totalPages: Math.max(1, Math.ceil(filteredCount / query.pageSize)), sourceTotal: totalCount }} downloadableCount={downloadableCount} /></>;
 }

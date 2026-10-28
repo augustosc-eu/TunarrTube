@@ -4,7 +4,8 @@ import { YTDLP_CACHE_ROOT } from "@/lib/constants";
 import { getSettings } from "@/lib/settings/service";
 import { discoverBinary } from "@/lib/system/binaries";
 import { runProcess } from "@/lib/system/process";
-import { normalizeChannel, normalizeEntry, normalizePlaylist } from "@/lib/youtube/normalize";
+import { expandNestedPlaylists, normalizeChannel, normalizeEntry, normalizePlaylist } from "@/lib/youtube/normalize";
+import { SITES, isAllowedStreamUrl, siteForStoredUrl, type Site } from "@/lib/youtube/sites";
 import type { AnalyzeSourceOptions, ChannelFeed, PlaylistAnalysis, PlaylistEntry } from "@/lib/youtube/types";
 import { validatePlaylistUrl, validateSourceUrl, validateVideoUrl } from "@/lib/youtube/url";
 import { streamFormatSelector, type VideoQuality } from "@/lib/youtube/quality";
@@ -42,6 +43,18 @@ export function challengeSolverArgs() {
   return CHALLENGE_SOLVER_ARGS;
 }
 
+// Per-site arguments appended to every yt-dlp invocation (and to downloadMp4 in
+// lib/downloads/service.ts). --use-extractors pins yt-dlp to the URL's site's own extractors so it can
+// never fall back to the "generic" extractor and fetch an arbitrary URL -- see lib/youtube/sites.ts.
+// The JS challenge solver above is YouTube-specific.
+export function siteArgs(site: Site) {
+  return ["--use-extractors", site.extractors, ...(site.id === "youtube" ? CHALLENGE_SOLVER_ARGS : [])];
+}
+
+export function siteArgsForUrl(url: string) {
+  return siteArgs(siteForStoredUrl(url));
+}
+
 // The challenge solver above downloads its script on first use and yt-dlp caches it (plus other data)
 // under XDG_CACHE_HOME, which defaults to ~/.cache -- not guaranteed to exist, be writable, or persist
 // across restarts/container recreations. Point it at this app's own persisted storage instead (see
@@ -54,7 +67,7 @@ export async function challengeSolverEnv(): Promise<NodeJS.ProcessEnv> {
 
 export async function analyzePlaylist(input: string, signal?: AbortSignal): Promise<PlaylistAnalysis> {
   const url = validatePlaylistUrl(input);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...challengeSolverArgs(), ...await cookiesArgs(), "--", url], {
+  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...siteArgsForUrl(url), ...await cookiesArgs(), "--", url], {
     signal,
     timeoutMs: 10 * 60_000,
     env: await challengeSolverEnv()
@@ -67,42 +80,67 @@ export async function analyzePlaylist(input: string, signal?: AbortSignal): Prom
   }
 }
 
-function channelFeedUrl(base: string, feed: Exclude<ChannelFeed, "all">) {
-  return `${base.replace(/\/$/, "")}/${feed === "live" ? "streams" : feed}`;
+async function dumpFlatPlaylist(url: string, site: Site, playlistEnd: number | null, timeoutMs: number, label: string, signal?: AbortSignal) {
+  const args = ["--dump-single-json", "--flat-playlist", "--no-warnings", ...siteArgs(site)];
+  if (playlistEnd !== null) args.push("--playlist-end", String(playlistEnd));
+  args.push(...await cookiesArgs(), "--", url);
+  const result = await runProcess(await executable(), args, { signal, timeoutMs, env: await challengeSolverEnv() });
+  try {
+    const raw: unknown = JSON.parse(result.stdout);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+    return raw as Record<string, unknown>;
+  } catch {
+    throw new AppError("INVALID_YTDLP_JSON", `yt-dlp returned malformed ${label} data.`, 502);
+  }
+}
+
+// Total time all of one channel's nested-playlist fetches (see expandNestedPlaylists) may take, on top
+// of the channel listing itself; each fetch also stops at the usual per-run timeout.
+const NESTED_PLAYLIST_BUDGET_MS = 15 * 60_000;
+
+// Fetches one nested playlist for expandNestedPlaylists. The URL was already canonicalized by the
+// site's own parser; it's re-validated here and must stay on the channel's site, so expansion can only
+// ever run that site's pinned extractors (--use-extractors) against its own list pages.
+function nestedPlaylistFetcher(site: Site, signal?: AbortSignal) {
+  const deadline = Date.now() + NESTED_PLAYLIST_BUDGET_MS;
+  return async (input: string, playlistEnd: number | null) => {
+    const url = validatePlaylistUrl(input);
+    if (siteForStoredUrl(url).id !== site.id) throw new AppError("NESTED_PLAYLIST_REJECTED", `A ${site.label} channel listed a collection on another site.`, 502);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new AppError("PROCESS_TIMEOUT", `Expanding this ${site.label} channel's collections timed out.`, 504);
+    return dumpFlatPlaylist(url, site, playlistEnd, Math.min(10 * 60_000, remaining), "collection", signal);
+  };
 }
 
 async function analyzeChannelFeed(base: string, feed: Exclude<ChannelFeed, "all">, historyLimit: number | null, signal?: AbortSignal) {
-  const url = channelFeedUrl(base, feed);
-  const args = ["--dump-single-json", "--flat-playlist", "--no-warnings", ...challengeSolverArgs()];
-  if (historyLimit !== null) args.push("--playlist-end", String(historyLimit));
-  args.push(...await cookiesArgs(), "--", url);
-  const result = await runProcess(await executable(), args, { signal, timeoutMs: 10 * 60_000, env: await challengeSolverEnv() });
-  try {
-    return normalizeChannel(JSON.parse(result.stdout) as Record<string, unknown>, base, feed, historyLimit);
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError("INVALID_YTDLP_JSON", "yt-dlp returned malformed channel data.", 502);
-  }
+  const site = siteForStoredUrl(base);
+  const raw = await dumpFlatPlaylist(site.channelFeedUrl(base, feed), site, historyLimit, 10 * 60_000, "channel", signal);
+  return normalizeChannel(await expandNestedPlaylists(raw, site, historyLimit, nestedPlaylistFetcher(site, signal)), base, feed, historyLimit);
 }
 
 export async function analyzeSource(input: string, options: AnalyzeSourceOptions = {}, signal?: AbortSignal): Promise<PlaylistAnalysis> {
   const parsed = validateSourceUrl(input);
+  const site = SITES[parsed.site];
   if (parsed.sourceType === "playlist") return analyzePlaylist(parsed.url, signal);
   if (parsed.sourceType === "video") {
-    const entry = await fetchVideoMetadata(parsed.url, signal);
+    const entries = site.multiPartVideos ? await fetchVideoParts(parsed.url, site, signal) : [await fetchVideoMetadata(parsed.url, signal)];
+    const first = entries[0];
     return {
-      youtubeId: entry.youtubeId,
-      name: `${entry.uploader ?? "YouTube"} collection`,
-      uploaderName: entry.uploader,
-      thumbnailUrl: entry.thumbnailUrl,
+      youtubeId: first.youtubeId,
+      name: `${first.uploader ?? site.label} collection`,
+      uploaderName: first.uploader,
+      thumbnailUrl: first.thumbnailUrl,
       url: parsed.url,
-      entries: [{ ...entry, playlistIndex: 1 }],
+      entries: entries.map((entry, index) => ({ ...entry, playlistIndex: index + 1 })),
       sourceType: "collection",
       feedType: "manual",
       historyLimit: null
     };
   }
   const feed = options.feedType ?? "videos";
+  if (!site.channelFeeds.includes(feed)) {
+    throw new AppError("CHANNEL_FEED_UNSUPPORTED", `${site.label} channels only support the ${site.channelFeeds.join("/")} feed.`, 422);
+  }
   const historyLimit = options.historyLimit === undefined ? 100 : options.historyLimit;
   if (feed !== "all") return analyzeChannelFeed(parsed.url, feed, historyLimit, signal);
   const results = await Promise.allSettled((["videos", "shorts", "live"] as const).map((item) => analyzeChannelFeed(parsed.url, item, historyLimit, signal)));
@@ -117,19 +155,50 @@ export async function analyzeSource(input: string, options: AnalyzeSourceOptions
   return { ...analyses[0], name: analyses[0].name.replace(/ - (Videos|Shorts|Live)$/, ""), feedType: "all", historyLimit, entries };
 }
 
+// A multi-part video URL (a Bilibili video without "?p=N", an Internet Archive item with several video
+// files) makes yt-dlp return a playlist of its parts; analyzing it yields every part (as separate
+// entries) rather than silently keeping only one. An ordinary single video yields one fully-extracted
+// entry from the same call.
+async function fetchVideoParts(url: string, site: Site, signal?: AbortSignal): Promise<PlaylistEntry[]> {
+  const result = await runProcess(await executable(), ["--dump-single-json", "--flat-playlist", "--no-warnings", ...siteArgs(site), ...await cookiesArgs(), "--", url], {
+    signal,
+    timeoutMs: 5 * 60_000,
+    env: await challengeSolverEnv()
+  });
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(result.stdout) as Record<string, unknown>;
+  } catch {
+    throw new AppError("INVALID_YTDLP_JSON", "yt-dlp returned malformed video metadata.", 502);
+  }
+  if (Array.isArray(raw.entries)) return normalizePlaylist(raw, url).entries;
+  const entry = normalizeEntry(raw, undefined, site);
+  if (!entry) throw new AppError("INVALID_YTDLP_JSON", "yt-dlp returned malformed video metadata.", 502);
+  return [entry];
+}
+
 export async function fetchVideoMetadata(youtubeUrl: string, signal?: AbortSignal): Promise<PlaylistEntry> {
   const url = validateVideoUrl(youtubeUrl);
-  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-warnings", ...challengeSolverArgs(), ...await cookiesArgs(), "--", url], {
+  const site = siteForStoredUrl(url);
+  // --no-playlist: a multi-part video (see analyzeMultiPartVideo above) without "?p=N" resolves to its
+  // first part instead of a playlist, so this always yields exactly one entry.
+  const result = await runProcess(await executable(), ["--dump-single-json", "--skip-download", "--no-playlist", "--no-warnings", ...siteArgs(site), ...await cookiesArgs(), "--", url], {
     signal,
     timeoutMs: 5 * 60_000,
     env: await challengeSolverEnv()
   });
   try {
     const raw = JSON.parse(result.stdout) as Record<string, unknown>;
-    const entry = normalizeEntry(raw);
+    // Sites whose extractor ignores --no-playlist (Internet Archive multi-file items) still return
+    // several videos; refuse rather than record the whole item as one video.
+    if (Array.isArray(raw.entries)) {
+      throw new AppError("MULTI_PART_VIDEO", "This link contains several videos. Add it as a new source to get all of them, or paste the link to a single part or file.", 422);
+    }
+    const entry = normalizeEntry(raw, undefined, site);
     if (!entry) throw new Error("missing video id");
     return entry;
-  } catch {
+  } catch (error) {
+    if (error instanceof AppError) throw error;
     throw new AppError("INVALID_YTDLP_JSON", "yt-dlp returned malformed video metadata.", 502);
   }
 }
@@ -178,8 +247,11 @@ export function extractAvailabilityReason(html: string) {
   return null;
 }
 
+// Scrapes YouTube's own watch page; other sites have no equivalent and return null (callers fall back
+// to readableUnavailabilityReason).
 export async function fetchVideoAvailabilityReason(youtubeUrl: string, signal?: AbortSignal) {
   const url = validateVideoUrl(youtubeUrl);
+  if (siteForStoredUrl(url).id !== "youtube") return null;
   const timeout = AbortSignal.timeout(30_000);
   const response = await fetch(`${url}&hl=en`, {
     headers: { "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (compatible; TunarrTube/0.1)" },
@@ -217,7 +289,7 @@ export function isTransientNetworkError(message: string) {
 // copyright blocked -- as opposed to a transient failure. Retrying this exact video will never succeed,
 // so callers (enrichVideo in lib/metadata/service.ts, downloadVideo/cacheVideo in
 // lib/downloads/service.ts) should record it and stop rather than burn retries on it.
-const UNAVAILABLE_SIGNAL = /private|unavailable|deleted|removed/i;
+const UNAVAILABLE_SIGNAL = /private|unavailable|deleted|removed|does not exist/i;
 
 export function isUnavailableVideoError(message: string) {
   return UNAVAILABLE_SIGNAL.test(message);
@@ -229,7 +301,9 @@ export function isUnavailableVideoError(message: string) {
 // AppSettings.ytdlpCookiesPath (see cookiesArgs above) -- but retrying *without* cookies configured will
 // never succeed, so callers should still stop burning automatic retries on it, same as an unavailable
 // video, just with a more actionable reason (see unavailabilityReason below).
-const SIGN_IN_REQUIRED_SIGNAL = /sign in to confirm/i;
+// Other sites word it differently: Vimeo's "only works when logged-in", Niconico's login requirement, and
+// yt-dlp's generic "...to provide account credentials" hint appended to any login-required error.
+const SIGN_IN_REQUIRED_SIGNAL = /sign in to confirm|only works when logged-in|provide account credentials|login required|requires? (?:a )?login/i;
 
 export function isSignInRequiredError(message: string) {
   return SIGN_IN_REQUIRED_SIGNAL.test(message);
@@ -239,8 +313,8 @@ export function isSignInRequiredError(message: string) {
 // richer reason isn't available from fetchVideoAvailabilityReason() above (e.g. it also failed, or the
 // caller doesn't want to spend an extra network round-trip on top of the yt-dlp failure it already got).
 export function readableUnavailabilityReason(message: string) {
-  const detail = message.match(/ERROR:\s*\[youtube\]\s+[^:]+:\s*(.+)/i)?.[1]?.trim();
-  return detail && detail.length <= 500 ? detail : "YouTube did not provide a more specific reason.";
+  const detail = message.match(/ERROR:\s*\[[^\]]+\]\s+[^:]+:\s*(.+)/i)?.[1]?.trim();
+  return detail && detail.length <= 500 ? detail : "The video site did not provide a more specific reason.";
 }
 
 // Shared by enrichVideo (lib/metadata/service.ts) and downloadVideo/cacheVideo (lib/downloads/service.ts)
@@ -250,24 +324,23 @@ export function readableUnavailabilityReason(message: string) {
 // Settings field instead.
 export async function unavailabilityReason(youtubeUrl: string, message: string) {
   if (isSignInRequiredError(message)) {
-    return "Requires YouTube sign-in (age-restricted, or blocked by a bot check). Set a yt-dlp cookies file in Settings → External tools to enable this video.";
+    return `Requires ${siteForStoredUrl(youtubeUrl).label} sign-in (age-restricted, or blocked by a bot check). Set a yt-dlp cookies file in Settings → External tools to enable this video.`;
   }
   return await fetchVideoAvailabilityReason(youtubeUrl).catch(() => null) ?? readableUnavailabilityReason(message);
 }
 
 export async function resolveStreamUrl(youtubeUrl: string, quality: VideoQuality = "best", signal?: AbortSignal) {
+  const site = siteForStoredUrl(youtubeUrl);
+  if (!site.supportsStreaming) throw new AppError("STREAM_UNSUPPORTED", `${site.label} videos can't be streamed; use Permanent or Cache playback.`, 422);
   const result = await runProcess(await executable(), [
     "--get-url", "--no-playlist", "--no-warnings",
     "-f", streamFormatSelector(quality),
-    ...challengeSolverArgs(),
+    ...siteArgs(site),
     ...await cookiesArgs(),
     "--", youtubeUrl
   ], { signal, timeoutMs: 2 * 60_000, env: await challengeSolverEnv() });
   const value = result.stdout.trim().split(/\r?\n/)[0];
-  if (!value) throw new AppError("STREAM_URL_MISSING", "YouTube did not return a playable stream URL.", 502);
-  const url = new URL(value);
-  if (url.protocol !== "https:" || !(url.hostname === "youtube.com" || url.hostname.endsWith(".youtube.com") || url.hostname.endsWith(".googlevideo.com"))) {
-    throw new AppError("STREAM_URL_REJECTED", "YouTube returned an unexpected stream host.", 502);
-  }
-  return url.toString();
+  if (!value) throw new AppError("STREAM_URL_MISSING", `${site.label} did not return a playable stream URL.`, 502);
+  if (!isAllowedStreamUrl(site, value)) throw new AppError("STREAM_URL_REJECTED", `${site.label} returned an unexpected stream host.`, 502);
+  return new URL(value).toString();
 }

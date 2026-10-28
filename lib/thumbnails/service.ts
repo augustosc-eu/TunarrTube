@@ -6,8 +6,9 @@ import { AppError } from "@/lib/api";
 import { readEnv } from "@/lib/config/env";
 import { db } from "@/lib/db/client";
 import { removeWithinDirectory } from "@/lib/settings/service";
+import { SITES } from "@/lib/youtube/sites";
 
-const ALLOWED_HOSTS = ["ytimg.com", "ggpht.com", "googleusercontent.com", "youtube.com"];
+const ALLOWED_HOSTS = Object.values(SITES).flatMap((site) => site.thumbnailHosts);
 
 function thumbnailRoot() { return path.resolve(readEnv("THUMBNAIL_DIR") ?? path.join(process.cwd(), "storage", "thumbnails")); }
 function safeRemoteUrl(value: string) {
