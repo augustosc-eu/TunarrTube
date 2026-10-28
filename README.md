@@ -94,16 +94,16 @@ The commands above build the image from your checkout. Each release is also publ
 
 | Tag | Meaning |
 |---|---|
-| `ghcr.io/augustosc-eu/tunarrtube:0.3.0` | That exact release (recommended, so upgrades happen only when you choose) |
+| `ghcr.io/augustosc-eu/tunarrtube:0.4.0` | That exact release (recommended, so upgrades happen only when you choose) |
 | `ghcr.io/augustosc-eu/tunarrtube:0.3` | The newest patch release of 0.3 |
 | `ghcr.io/augustosc-eu/tunarrtube:latest` | The newest stable release |
 
-Pre-releases (for example `0.3.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
+Pre-releases (for example `0.4.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
 
 To use one with the supplied `compose.yaml`, add the image to `.env`:
 
 ```dotenv
-TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.3.0
+TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.4.0
 ```
 
 Then pull it and start without building:

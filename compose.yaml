@@ -1,7 +1,7 @@
 services:
   tunarrtube:
     # Builds this checkout by default (`docker compose up -d --build`). To run a published release instead,
-    # set TUNARRTUBE_IMAGE in .env (e.g. ghcr.io/augustosc-eu/tunarrtube:0.3.0) and run
+    # set TUNARRTUBE_IMAGE in .env (e.g. ghcr.io/augustosc-eu/tunarrtube:0.4.0) and run
     # `docker compose pull` then `docker compose up -d` -- see README's "Published images".
     image: ${TUNARRTUBE_IMAGE:-tunarrtube:local}
     build: .
