@@ -66,7 +66,7 @@ export function AddChannelItemsForm({ channelId }: { channelId: string }) {
       <div className="channel-panel-heading">
         <div>
           <h2>Add media</h2>
-          <p>Choose a video already in TunarrTube, scan a local folder, or paste a video link (YouTube, Bilibili, Internet Archive, Vimeo, Dailymotion, Twitch, or Niconico).</p>
+          <p>Choose a video already in TunarrTube, scan a local folder, or paste a video link (YouTube, Bilibili, bilibili.tv, Internet Archive, Vimeo, Dailymotion, Twitch, or Niconico).</p>
         </div>
       </div>
       <div className="add-media-options">

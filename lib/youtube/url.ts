@@ -25,7 +25,7 @@ export function validateSourceUrl(input: string): SourceUrl {
     throw new AppError("INVALID_YOUTUBE_URL", `Only HTTPS URLs on supported ${SUPPORTED_SITE_LABELS} domains are accepted.`);
   }
   const parsed = site.parse(url);
-  if (!parsed) throw new AppError("YOUTUBE_SOURCE_REQUIRED", `Enter a ${site.label} video, playlist, or channel URL.`);
+  if (!parsed) throw new AppError("YOUTUBE_SOURCE_REQUIRED", `Enter a ${site.label} ${site.channelFeeds.length ? "video, playlist, or channel" : "video or playlist"} URL.`);
   return { ...parsed, site: site.id };
 }
 

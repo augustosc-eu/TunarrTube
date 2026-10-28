@@ -39,7 +39,7 @@ export function AddCollectionVideos({ sourceId, linked }: { sourceId: string; li
 
   return <section className="card integration-card">
     <h2>Add individual videos</h2>
-    <p>Paste one or more public video URLs (YouTube, Bilibili, Internet Archive, Vimeo, Dailymotion, Twitch, or Niconico), separated by spaces or new lines. They are appended in this order.</p>
+    <p>Paste one or more public video URLs (YouTube, Bilibili, bilibili.tv, Internet Archive, Vimeo, Dailymotion, Twitch, or Niconico), separated by spaces or new lines. They are appended in this order.</p>
     <form onSubmit={submit}>
       <div className="field"><label htmlFor="collection-video-urls">Video URLs</label><textarea className="input" id="collection-video-urls" rows={4} required placeholder="https://youtu.be/rtX9Fof1muY" value={value} onChange={(event) => setValue(event.target.value)} /></div>
       <button className="button" disabled={busy || !value.trim()}>{busy ? <LoaderCircle size={15} className="animate-spin" /> : <Plus size={15} />} Add videos</button>

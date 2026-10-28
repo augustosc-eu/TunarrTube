@@ -16,7 +16,7 @@ import type { ChannelFeed } from "@/lib/youtube/types";
 //
 // This module is pure (no Node/server imports) so client components can use it for form hints.
 
-export type SiteId = "youtube" | "bilibili" | "archive" | "vimeo" | "dailymotion" | "twitch" | "niconico";
+export type SiteId = "youtube" | "bilibili" | "bilibilitv" | "archive" | "vimeo" | "dailymotion" | "twitch" | "niconico";
 export type ParsedUrl = { url: string; sourceType: "playlist" | "channel" | "video" };
 export type SourceUrl = ParsedUrl & { site: SiteId };
 type Raw = Record<string, unknown>;
@@ -211,6 +211,61 @@ const bilibili: Site = {
     const id = text(raw.id);
     if (id && id !== `${ids[1]}_${ids[2]}`) return { url: null };
     return { url: parsed.url };
+  }
+};
+
+// bilibili.tv (Bilibili's international site, "Bstation") is a separate service from bilibili.com: its
+// own hosts, IDs, API, and yt-dlp extractors (BiliIntl, biliIntl:series). Uploaded videos are
+// /video/<aid>; licensed shows are series (/play/<season>, or /media/<id>) of episodes
+// (/play/<season>/<ep>). An optional two-letter language prefix (/en/, /th/, ...) is dropped -- yt-dlp
+// requests English metadata whatever the prefix -- and every URL is rebuilt on www.bilibili.tv/en/.
+// yt-dlp has no extractor for a bilibili.tv uploader's page, so there's no channel source.
+const BILIBILI_TV_PATH = /^\/(?:[A-Za-z]{2}\/)?(video|play|media)\/(\d{1,20})(?:\/(\d{1,20}))?\/?$/;
+const BILIBILI_TV_RAW_ID = /^(?:\d{1,20}|s\d{1,20}e\d{1,20})$/;
+
+// The raw ID and canonical URL a bilibili.tv video or episode link stands for: "<aid>" for an
+// uploaded video, "s<season>e<ep>" for an episode (rebuilding its URL needs both numbers).
+function bilibiliTvRef(value: string | null): EntryRef | null {
+  const url = parseUrl(value);
+  if (!url || !bilibilitv.hosts.has(url.hostname.toLowerCase())) return null;
+  const match = url.pathname.match(BILIBILI_TV_PATH);
+  if (!match) return null;
+  const [, kind, first, second] = match;
+  if (kind === "video" && !second) return { rawId: first, url: `https://www.bilibili.tv/en/video/${first}` };
+  if (kind === "play" && second) return { rawId: `s${first}e${second}`, url: `https://www.bilibili.tv/en/play/${first}/${second}` };
+  return null;
+}
+
+const bilibilitv: Site = {
+  id: "bilibilitv",
+  label: "bilibili.tv",
+  hosts: new Set(["bilibili.tv", "www.bilibili.tv", "m.bilibili.tv", "biliintl.com", "www.biliintl.com"]),
+  extractors: "biliintl.*",
+  thumbnailHosts: ["bstarstatic.com"],
+  // Split DASH audio/video.
+  streamHosts: [],
+  supportsStreaming: false,
+  channelFeeds: [],
+  multiPartVideos: false,
+  note: "Many bilibili.tv shows are region-locked, and some videos need a signed-in yt-dlp cookies file (Settings → External tools).",
+  parse(url) {
+    const match = url.pathname.match(BILIBILI_TV_PATH);
+    if (!match) return null;
+    const [, kind, first, second] = match;
+    if (second) return kind === "play" ? { url: `https://www.bilibili.tv/en/play/${first}/${second}`, sourceType: "video" } : null;
+    if (kind === "video") return { url: `https://www.bilibili.tv/en/video/${first}`, sourceType: "video" };
+    return { url: `https://www.bilibili.tv/en/${kind}/${first}`, sourceType: "playlist" };
+  },
+  channelFeedUrl: noFeedSuffix,
+  // yt-dlp reports an episode's ID as the bare episode number, which can't rebuild its URL, so the
+  // ref comes from the entry's URL (a full extraction's webpage_url, or a flat series stub's url,
+  // whose smuggled-data fragment is ignored). The reported ID must agree with that URL.
+  resolveEntry(raw) {
+    const ref = bilibiliTvRef(text(raw.webpage_url)) ?? bilibiliTvRef(text(raw.url));
+    if (!ref || !BILIBILI_TV_RAW_ID.test(ref.rawId)) return null;
+    const id = text(raw.id);
+    if (id && id !== ref.rawId && !ref.rawId.endsWith(`e${id}`)) return null;
+    return ref;
   }
 };
 
@@ -429,7 +484,7 @@ const niconico: Site = {
   }
 };
 
-export const SITES: Readonly<Record<SiteId, Site>> = { youtube, bilibili, archive, vimeo, dailymotion, twitch, niconico };
+export const SITES: Readonly<Record<SiteId, Site>> = { youtube, bilibili, bilibilitv, archive, vimeo, dailymotion, twitch, niconico };
 export const SUPPORTED_SITE_LABELS = Object.values(SITES).map((site) => site.label).join(", ");
 
 /** The site whose host matches this URL, or null (also for non-HTTPS/unparseable input). */

@@ -10,7 +10,7 @@ import { isSignInRequiredError, isUnavailableVideoError, readableUnavailabilityR
 describe("supported-site allow-list", () => {
   it.each([
     "https://example.com/video/BV1GJ411x7h7",
-    "https://www.bilibili.tv/en/video/123",
+    "https://www.bilibili.tv.evil.example/en/video/123",
     "https://live.bilibili.com/123",
     "https://b23.tv/abc",
     "http://www.bilibili.com/video/BV1GJ411x7h7"
@@ -174,6 +174,92 @@ describe("Bilibili hidden-mode collections on a profile", () => {
   it("leaves other sites' listings untouched", async () => {
     const raw = { id: "UC1", entries: [{ id: "rtX9Fof1muY" }] };
     expect(await expandNestedPlaylists(raw, SITES.youtube, null, async () => { throw new Error("unexpected fetch"); })).toBe(raw);
+  });
+});
+
+describe("bilibili.tv (international site)", () => {
+  it.each([
+    ["https://www.bilibili.tv/en/video/4799522620971520", "https://www.bilibili.tv/en/video/4799522620971520", "video"],
+    ["https://bilibili.tv/th/video/4799522620971520?bstar_from=bstar-web", "https://www.bilibili.tv/en/video/4799522620971520", "video"],
+    ["https://m.bilibili.tv/video/4799522620971520/", "https://www.bilibili.tv/en/video/4799522620971520", "video"],
+    ["https://www.bilibili.tv/en/play/34613/341736", "https://www.bilibili.tv/en/play/34613/341736", "video"],
+    ["https://www.biliintl.com/EN/play/34613/341736", "https://www.bilibili.tv/en/play/34613/341736", "video"],
+    ["https://www.bilibili.tv/en/play/34613", "https://www.bilibili.tv/en/play/34613", "playlist"],
+    ["https://www.bilibili.tv/en/media/1048837", "https://www.bilibili.tv/en/media/1048837", "playlist"]
+  ])("canonicalizes %s", (input, url, sourceType) => {
+    expect(validateSourceUrl(input)).toEqual({ url, sourceType, site: "bilibilitv" });
+  });
+
+  it.each([
+    "https://www.bilibili.tv/en/",
+    "https://www.bilibili.tv/en/space/123",
+    "https://www.bilibili.tv/en/video/abc",
+    "https://www.bilibili.tv/en/media/1048837/5",
+    "https://www.bilibili.tv/zh_hk/video/4799522620971520",
+    "http://www.bilibili.tv/en/video/4799522620971520"
+  ])("rejects %s", (input) => expect(() => validateSourceUrl(input)).toThrow());
+
+  it("doesn't suggest a channel link, which bilibili.tv doesn't have", () => {
+    expect(() => validateSourceUrl("https://www.bilibili.tv/en/space/123")).toThrow("Enter a bilibili.tv video or playlist URL.");
+  });
+
+  it("keeps bilibili.tv and bilibili.com separate", () => {
+    expect(siteForUrl("https://www.bilibili.tv/en/video/1")?.id).toBe("bilibilitv");
+    expect(siteForUrl("https://www.bilibili.com/video/BV1GJ411x7h7")?.id).toBe("bilibili");
+    expect(siteForStoredId("bilibilitv.4799522620971520").id).toBe("bilibilitv");
+    expect(siteArgs(SITES.bilibilitv)).toEqual(["--use-extractors", "biliintl.*"]);
+  });
+
+  it("maps a full extraction of an uploaded video", () => {
+    // Shape from yt-dlp 2026.08.19 on https://www.bilibili.tv/en/video/4799522620971520.
+    const entry = normalizeEntry({
+      id: "4799522620971520", title: "UTADA HIKARU LIVE", upload_date: "20260513", extractor_key: "BiliIntl",
+      webpage_url: "https://www.bilibili.tv/en/video/4799522620971520", thumbnail: "https://pic.bstarstatic.com/ugc/e8de8dbd2bb96d87137ae4d2188fd501.jpg"
+    }, 1, SITES.bilibilitv);
+    expect(entry).toMatchObject({
+      youtubeId: "bilibilitv.4799522620971520",
+      youtubeUrl: "https://www.bilibili.tv/en/video/4799522620971520",
+      title: "UTADA HIKARU LIVE",
+      thumbnailUrl: "https://pic.bstarstatic.com/ugc/e8de8dbd2bb96d87137ae4d2188fd501.jpg"
+    });
+  });
+
+  it("keys episodes by season and episode, from a series' flat stubs", () => {
+    // biliIntl:series yields url_result(smuggle_url(".../en/play/<season>/<ep>", metadata), BiliIntl, "<ep>").
+    const playlist = normalizePlaylist({
+      _type: "playlist", id: "34613", title: "Series",
+      entries: [
+        { _type: "url", ie_key: "BiliIntl", id: "341735", url: "https://www.bilibili.tv/en/play/34613/341735#__youtubedl_smuggle=%7B%22title%22%3A%22E1%22%7D" },
+        { _type: "url", ie_key: "BiliIntl", id: "341736", url: "https://www.bilibili.tv/en/play/34613/341736" }
+      ]
+    }, "https://www.bilibili.tv/en/play/34613");
+    expect(playlist.youtubeId).toBe("bilibilitv.34613");
+    expect(playlist.entries.map((entry) => [entry.youtubeId, entry.youtubeUrl])).toEqual([
+      ["bilibilitv.s34613e341735", "https://www.bilibili.tv/en/play/34613/341735"],
+      ["bilibilitv.s34613e341736", "https://www.bilibili.tv/en/play/34613/341736"]
+    ]);
+  });
+
+  it("drops entries whose ID or host doesn't match their URL", () => {
+    expect(normalizeEntry({ id: "999", webpage_url: "https://www.bilibili.tv/en/video/4799522620971520" }, 1, SITES.bilibilitv)).toBeNull();
+    expect(normalizeEntry({ id: "1736", url: "https://www.bilibili.tv/en/play/34613/341736" }, 1, SITES.bilibilitv)).toBeNull();
+    expect(normalizeEntry({ id: "4799522620971520", webpage_url: "https://evil.example/en/video/4799522620971520" }, 1, SITES.bilibilitv)).toBeNull();
+    expect(normalizeEntry({ id: "4799522620971520" }, 1, SITES.bilibilitv)).toBeNull();
+  });
+
+  it("round-trips IDs through filenames", () => {
+    const video = { youtubeId: "bilibilitv.s34613e341736", title: "E2 - The First Night", uploadDate: null };
+    const resolved = resolveVideoPaths({ mediaDirectory: "/m", scheme: "template", template: "{title}", source: { name: "Show" }, video });
+    expect(resolved.basename).toBe("E2 - The First Night [bilibilitv.s34613e341736]");
+    expect(extractVideoId(resolved.basename)).toBe(video.youtubeId);
+    expect(extractVideoId("Clip [bilibili.BV1GJ411x7h7]")).toBe("bilibili.BV1GJ411x7h7");
+  });
+
+  it("can't stream and has no channel feed", () => {
+    expect(SITES.bilibilitv.supportsStreaming).toBe(false);
+    expect(effectivePlaybackMode("stream", "https://www.bilibili.tv/en/video/4799522620971520")).toBe("cache");
+    expect(SITES.bilibilitv.channelFeeds).toEqual([]);
+    expect(isAllowedStreamUrl(SITES.bilibilitv, "https://upos-bstar1-mirrorakam.akamaized.net/x.m4s")).toBe(false);
   });
 });
 

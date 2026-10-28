@@ -2,9 +2,10 @@
 
 ## More video sites
 
-TunarrTube now accepts URLs from **Bilibili, Internet Archive, Vimeo, Dailymotion, Twitch, and Niconico** as well as YouTube. Videos, playlists, and channel-like pages (Bilibili profiles, Vimeo/Dailymotion users, Twitch channels, Niconico users) work the same way YouTube's do: analyze, sync, download, and publish to Tunarr. README's "A URL cannot be analyzed" lists the exact link shapes each site accepts.
+TunarrTube now accepts URLs from **Bilibili, bilibili.tv, Internet Archive, Vimeo, Dailymotion, Twitch, and Niconico** as well as YouTube. Videos, playlists, and channel-like pages (Bilibili profiles, Vimeo/Dailymotion users, Twitch channels, Niconico users) work the same way YouTube's do: analyze, sync, download, and publish to Tunarr. README's "A URL cannot be analyzed" lists the exact link shapes each site accepts.
 
 - **Multi-part videos.** A Bilibili video with several parts, or an Internet Archive item with several video files, adds every part. A link to one part (`?p=N`) or one file adds just that one.
+- **bilibili.tv**, Bilibili's international site, is supported separately from bilibili.com: uploaded videos, show episodes, and whole shows (added like a playlist). It has no channel sources, because yt-dlp can't list an uploader's videos there.
 - **Bilibili profiles** include collections the uploader hides from their uploads list, up to 25 per profile. If TunarrTube can't read every collection, analyzing or syncing that profile fails with an error. It never syncs without them.
 - **Stream on demand** works for YouTube and Internet Archive only. Sources from other sites can't select it, and such a video added to a stream-mode collection is cached on first play instead.
 - **Sign-in.** Vimeo now only serves videos to signed-in clients, so it needs a yt-dlp cookies file from a Vimeo account (Settings → External tools). Without one, every Vimeo video is marked as requiring sign-in. Many Niconico videos need one too. One cookies file can hold cookies for several sites.

@@ -35,6 +35,7 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "*.googleusercontent.com" },
       // Other sites' thumbnail CDNs -- keep in sync with lib/youtube/sites.ts thumbnailHosts.
       { protocol: "https", hostname: "**.hdslb.com" },
+      { protocol: "https", hostname: "**.bstarstatic.com" },
       { protocol: "https", hostname: "archive.org" },
       { protocol: "https", hostname: "**.archive.org" },
       { protocol: "https", hostname: "**.vimeocdn.com" },
