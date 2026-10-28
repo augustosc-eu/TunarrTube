@@ -34,7 +34,7 @@ describe("individual YouTube video input", () => {
     ["https://youtube.com/shorts/rtX9Fof1muY", "https://www.youtube.com/watch?v=rtX9Fof1muY"],
     ["https://youtube.com/live/rtX9Fof1muY", "https://www.youtube.com/watch?v=rtX9Fof1muY"]
   ])("canonicalizes %s", (input, expected) => {
-    expect(validateSourceUrl(input)).toEqual({ url: expected, sourceType: "video" });
+    expect(validateSourceUrl(input)).toEqual({ url: expected, sourceType: "video", site: "youtube" });
     expect(validateVideoUrl(input)).toBe(expected);
   });
 

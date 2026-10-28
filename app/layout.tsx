@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
   title: { default: "TunarrTube", template: "%s · TunarrTube" },
-  description: "A local-first YouTube companion for Tunarr"
+  description: "A local-first online-video companion for Tunarr"
 };
 
 // Runs before hydration so the correct theme is painted on first frame —

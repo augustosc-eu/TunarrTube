@@ -42,7 +42,7 @@ export function ChannelList({ channels }: { channels: Channel[] }) {
     return <div className="empty">
       <Clapperboard size={32} />
       <h2>No channels yet</h2>
-      <p>Create a channel, add local files, an existing downloaded video, or a YouTube URL, attach metadata, and burn in the overlay before publishing to Tunarr.</p>
+      <p>Create a channel, add local files, an existing downloaded video, or a video URL, attach metadata, and burn in the overlay before publishing to Tunarr.</p>
       <Link className="button" href="/channels/new">Create your first channel</Link>
     </div>;
   }

@@ -1,3 +1,32 @@
+# TunarrTube Extended v0.4.0
+
+## More video sites
+
+TunarrTube now accepts URLs from **Bilibili, bilibili.tv, Internet Archive, Vimeo, Dailymotion, Twitch, and Niconico** as well as YouTube. Videos, playlists, and channel-like pages (Bilibili profiles, Vimeo/Dailymotion users, Twitch channels, Niconico users) work the same way YouTube's do: analyze, sync, download, and publish to Tunarr. README's "A URL cannot be analyzed" lists the exact link shapes each site accepts.
+
+- **Multi-part videos.** A Bilibili video with several parts, or an Internet Archive item with several video files, adds every part. A link to one part (`?p=N`) or one file adds just that one.
+- **bilibili.tv**, Bilibili's international site, is supported separately from bilibili.com: uploaded videos, show episodes, and whole shows (added like a playlist). It has no channel sources, because yt-dlp can't list an uploader's videos there.
+- **Bilibili profiles** include collections the uploader hides from their uploads list, up to 25 per profile. If TunarrTube can't read every collection, analyzing or syncing that profile fails with an error. It never syncs without them.
+- **Stream on demand** works for YouTube and Internet Archive only. Sources from other sites can't select it, and such a video added to a stream-mode collection is cached on first play instead.
+- **Sign-in.** Vimeo now only serves videos to signed-in clients, so it needs a yt-dlp cookies file from a Vimeo account (Settings → External tools). Without one, every Vimeo video is marked as requiring sign-in. Many Niconico videos need one too. One cookies file can hold cookies for several sites.
+- Only these sites are accepted, on purpose. TunarrTube still won't hand arbitrary URLs to yt-dlp, which would let anyone with access make the server request internal network addresses.
+
+## Fixes
+
+- A custom filename template no longer treats an ID-like bracket inside a title (for example `Mirror [archive.2024]`) as the video's ID. Such files now get the real ID appended, so Tunarr matches them correctly. This applies to new downloads; existing files keep their names.
+- One failing source no longer stops the rest of a scheduled sync run, and the startup sync and hourly cache cleanup no longer crash with unhandled errors.
+- A failed download can no longer leave a video stuck as "downloading", and a problem after a download finishes can no longer mark the completed video as failed.
+- **Update** next to yt-dlp in Settings now explains when your yt-dlp can't update itself. A Homebrew install is told to run `brew upgrade yt-dlp`, instead of getting yt-dlp's misleading "installed with pip" error.
+- Titles and other yt-dlp output in Chinese, Japanese, and other multi-byte scripts are no longer garbled when they arrive in pieces.
+
+## Upgrading
+
+No database changes this time. Back up your database and media directory first, as with any upgrade.
+
+- Native installs now need **Node.js 22.13 or newer**.
+- The Docker image now runs Node.js 25.
+- Dependency updates, including Next.js 16.4.3, Prisma 7.10.1, and React 19.3.1.
+
 # TunarrTube Extended v0.3.0
 
 ## Breaking changes

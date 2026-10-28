@@ -21,7 +21,10 @@ export function resolveEffectiveQuality(sourceOverride: string | null | undefine
 
 /** Format selector for permanent/cache downloads (lib/downloads/service.ts). */
 export function downloadFormatSelector(quality: VideoQuality): string {
-  if (quality === "best") return "bv*[vcodec^=avc]+ba[acodec^=mp4a]/b[ext=mp4]/best";
+  // The trailing split-stream fallbacks only apply when nothing before them matched -- e.g. Niconico, which
+  // serves separate H.264 video and audio tagged "aac" (not "mp4a") with no combined format, so a bare
+  // "best" fails there. The capped presets below already include an equivalent "bv*[height<=N]+ba" step.
+  if (quality === "best") return "bv*[vcodec^=avc]+ba[acodec^=mp4a]/b[ext=mp4]/best/bv*[vcodec^=avc]+ba/bv*+ba";
   const h = HEIGHTS[quality];
   return `bv*[vcodec^=avc][height<=${h}]+ba[acodec^=mp4a]/b[ext=mp4][height<=${h}]/bv*[height<=${h}]+ba/b[height<=${h}]/best[height<=${h}]/best`;
 }

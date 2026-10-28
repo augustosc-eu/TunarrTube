@@ -1,11 +1,11 @@
 {
   "name": "tunarrtube",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
     "predev": "node scripts/prepare-dev.mjs",
@@ -16,9 +16,7 @@
     "start": "next start --hostname 127.0.0.1",
     "start:lan": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "pretest": "node scripts/prepare-test-db.mjs",
     "test": "vitest run",
-    "pretest:watch": "node scripts/prepare-test-db.mjs",
     "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
@@ -28,13 +26,13 @@
     "@anthropic-ai/sdk": "0.135.0",
     "@prisma/adapter-better-sqlite3": "7.10.1",
     "@prisma/client": "7.10.1",
-    "@tanstack/react-virtual": "^3.14.21",
+    "@tanstack/react-virtual": "^3.14.23",
     "better-sqlite3": "13.0.3",
     "clsx": "2.1.1",
-    "lucide-react": "1.60.0",
-    "next": "16.4.2",
-    "openai": "7.39.0",
-    "puppeteer": "25.14.0",
+    "lucide-react": "1.61.0",
+    "next": "16.4.3",
+    "openai": "7.43.0",
+    "puppeteer": "25.16.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "zod": "4.6.7"
@@ -52,9 +50,9 @@
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
     "better-sqlite3@13.0.3": true,
-    "@prisma/engines@7.10.0": true,
-    "prisma@7.10.0": true,
-    "puppeteer@25.14.0": true,
+    "@prisma/engines@7.10.1": true,
+    "prisma@7.10.1": true,
+    "puppeteer@25.16.0": true,
     "fsevents@2.3.3": true
   }
 }

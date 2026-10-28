@@ -102,7 +102,7 @@ export function ChannelItemTable({ channelId, templateId, items }: { channelId: 
   }
 
   if (!items.length) {
-    return <div className="empty"><h2>No media yet</h2><p>Add a local folder, an already-downloaded video, or a YouTube URL above to start building this channel.</p></div>;
+    return <div className="empty"><h2>No media yet</h2><p>Add a local folder, an already-downloaded video, or a video URL above to start building this channel.</p></div>;
   }
 
   return (

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { downloadFormatSelector, resolveEffectiveQuality, streamFormatSelector } from "@/lib/youtube/quality";
 
 describe("video quality", () => {
-  it("reproduces the original fixed selectors for the best preset", () => {
-    expect(downloadFormatSelector("best")).toBe("bv*[vcodec^=avc]+ba[acodec^=mp4a]/b[ext=mp4]/best");
+  it("keeps the original best selectors, with split-stream download fallbacks appended", () => {
+    expect(downloadFormatSelector("best")).toBe("bv*[vcodec^=avc]+ba[acodec^=mp4a]/b[ext=mp4]/best/bv*[vcodec^=avc]+ba/bv*+ba");
     expect(streamFormatSelector("best")).toBe("b[ext=mp4][vcodec^=avc][acodec^=mp4a]/b[ext=mp4]/best");
   });
 

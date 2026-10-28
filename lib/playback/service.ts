@@ -7,6 +7,7 @@ import { touchCacheAsset } from "@/lib/downloads/service";
 import { getSettings } from "@/lib/settings/service";
 import { enqueueUniqueJob } from "@/lib/sources/service";
 import { resolveEffectiveQuality } from "@/lib/youtube/quality";
+import { siteForStoredUrl } from "@/lib/youtube/sites";
 import { resolveStreamUrl } from "@/lib/youtube/ytdlp";
 
 export function parseRange(value: string | null, size: number) {
@@ -26,14 +27,21 @@ export function parseRange(value: string | null, size: number) {
   return { start, end: Math.min(end, size - 1) };
 }
 
+// A stream-mode source can still contain videos from a site that can't stream (a mixed collection --
+// see assertPlaybackModeSupported in lib/sources/service.ts); those are cached on first play instead.
+export function effectivePlaybackMode(sourceMode: string, videoUrl: string) {
+  return sourceMode === "stream" && !siteForStoredUrl(videoUrl).supportsStreaming ? "cache" : sourceMode;
+}
+
 export async function preparePlayback(sourceId: string, videoId: string) {
   const membership = await db.sourceVideo.findUnique({ where: { sourceId_videoId: { sourceId, videoId } }, include: { source: true, video: { include: { cacheAsset: true } } } });
   if (!membership || membership.membershipStatus !== "present") throw new AppError("VIDEO_NOT_IN_SOURCE", "The video is not available in this source.", 404);
   const playbackUrl = `/api/playback/${encodeURIComponent(sourceId)}/${encodeURIComponent(videoId)}`;
+  const mode = effectivePlaybackMode(membership.source.playbackMode, membership.video.youtubeUrl);
   if (membership.localPath && membership.downloadStatus === "complete") return { state: "ready", playbackUrl };
-  if (membership.source.playbackMode === "stream") return { state: "ready", playbackUrl };
-  if (membership.source.playbackMode === "cache" && membership.video.cacheAsset?.status === "complete" && membership.video.cacheAsset.localPath) return { state: "ready", playbackUrl };
-  const type = membership.source.playbackMode === "cache" ? "cache" : "download";
+  if (mode === "stream") return { state: "ready", playbackUrl };
+  if (mode === "cache" && membership.video.cacheAsset?.status === "complete" && membership.video.cacheAsset.localPath) return { state: "ready", playbackUrl };
+  const type = mode === "cache" ? "cache" : "download";
   const job = await enqueueUniqueJob(type, sourceId, videoId, { target: type === "cache" ? "cache" : "permanent" });
   if (type === "download") await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "queued" } });
   const { kickWorker } = await import("@/lib/jobs/runner");
@@ -47,7 +55,7 @@ export async function playbackResponse(sourceId: string, videoId: string, reques
   const cache = membership.video.cacheAsset;
   const localPath = membership.downloadStatus === "complete" && membership.localPath ? membership.localPath : cache?.status === "complete" ? cache.localPath : null;
   if (!localPath) {
-    if (membership.source.playbackMode !== "stream") throw new AppError("PLAYBACK_NOT_READY", "The video is still being prepared.", 409);
+    if (effectivePlaybackMode(membership.source.playbackMode, membership.video.youtubeUrl) !== "stream") throw new AppError("PLAYBACK_NOT_READY", "The video is still being prepared.", 409);
     const settings = await getSettings();
     const quality = resolveEffectiveQuality(membership.source.videoQuality, settings.defaultVideoQuality);
     const upstream = await fetch(await resolveStreamUrl(membership.video.youtubeUrl, quality, request.signal), {
@@ -57,7 +65,7 @@ export async function playbackResponse(sourceId: string, videoId: string, reques
       redirect: "follow",
       cache: "no-store"
     });
-    if (!upstream.ok && upstream.status !== 206) throw new AppError("STREAM_UPSTREAM_FAILED", `YouTube stream returned ${upstream.status}.`, 502);
+    if (!upstream.ok && upstream.status !== 206) throw new AppError("STREAM_UPSTREAM_FAILED", `Upstream stream returned ${upstream.status}.`, 502);
     const headers = new Headers({ "Accept-Ranges": "bytes", "Cache-Control": "private, no-store", "Content-Type": upstream.headers.get("content-type") ?? "video/mp4" });
     for (const name of ["content-length", "content-range"]) { const value = upstream.headers.get(name); if (value) headers.set(name, value); }
     return new Response(head ? null : upstream.body, { status: upstream.status, headers });

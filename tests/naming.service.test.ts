@@ -118,6 +118,60 @@ describe("extractVideoId", () => {
     // original pre-naming-scheme behavior never validated length either, it just used the whole basename.
     expect(extractVideoId("first")).toBe("first");
   });
+
+  it("recovers trailing YouTube and namespaced site IDs", () => {
+    expect(extractVideoId("Title [rtX9Fof1muY]")).toBe("rtX9Fof1muY");
+    expect(extractVideoId("Title [bilibili.BV1bK411W797_p2]")).toBe("bilibili.BV1bK411W797_p2");
+    expect(extractVideoId("Title [archive.ToMyDaughterWithLove1994Pt.1.f0a1b2c3d]")).toBe("archive.ToMyDaughterWithLove1994Pt.1.f0a1b2c3d");
+    expect(extractVideoId("Title [twitch.v123456]")).toBe("twitch.v123456");
+  });
+
+  it("prefers the trailing suffix over an ID-shaped bracket earlier in the title", () => {
+    expect(extractVideoId("Mirror [archive.2024] [rtX9Fof1muY]")).toBe("rtX9Fof1muY");
+    expect(extractVideoId("Clip [abcdefghijk] [bilibili.BV1GJ411x7h7]")).toBe("bilibili.BV1GJ411x7h7");
+  });
+
+  it("still reads an ID placed mid-name by an older template that suppressed the suffix", () => {
+    expect(extractVideoId("[rtX9Fof1muY] My Video")).toBe("rtX9Fof1muY");
+  });
+
+  it("doesn't read non-site prefixes like [feat.Someone] as an ID", () => {
+    expect(extractVideoId("Song [feat.Someone]")).toBe("Song [feat.Someone]");
+  });
+});
+
+describe("video-ID suffix", () => {
+  const source = { name: "My Channel" };
+  const template = (title: string, youtubeId: string) =>
+    resolveVideoPaths({ mediaDirectory: "/m", scheme: "template", template: "{title}", source, video: { youtubeId, title, uploadDate: null } }).basename;
+
+  it("keeps an ID-shaped title bracket as text and still appends the real ID", () => {
+    const basename = template("Mirror [archive.2024]", "rtX9Fof1muY");
+    expect(basename).toBe("Mirror [archive.2024] [rtX9Fof1muY]");
+    expect(extractVideoId(basename)).toBe("rtX9Fof1muY");
+  });
+
+  it("doesn't append when the basename already ends in the correct ID", () => {
+    expect(template("My Video [rtX9Fof1muY]", "rtX9Fof1muY")).toBe("My Video [rtX9Fof1muY]");
+    expect(template("Part two [bilibili.BV1bK411W797_p2]", "bilibili.BV1bK411W797_p2")).toBe("Part two [bilibili.BV1bK411W797_p2]");
+  });
+
+  it("appends the real ID when the basename ends in a different valid-looking ID", () => {
+    const basename = template("Reupload [abcdefghijk]", "rtX9Fof1muY");
+    expect(basename).toBe("Reupload [abcdefghijk] [rtX9Fof1muY]");
+    expect(extractVideoId(basename)).toBe("rtX9Fof1muY");
+  });
+
+  it("treats [feat.Someone] as ordinary title text", () => {
+    const basename = template("Song [feat.Someone]", "bilibili.BV1GJ411x7h7");
+    expect(basename).toBe("Song [feat.Someone] [bilibili.BV1GJ411x7h7]");
+    expect(extractVideoId(basename)).toBe("bilibili.BV1GJ411x7h7");
+  });
+
+  it("applies the same rule to tvshow basenames", () => {
+    const basename = resolveVideoPaths({ mediaDirectory: "/m", scheme: "tvshow", template: "{title}", source, video: { youtubeId: "rtX9Fof1muY", title: "Mirror [archive.2024]", uploadDate: null }, season: 2024, episode: 1 }).basename;
+    expect(basename).toBe("My Channel - S2024E001 - Mirror [archive.2024] [rtX9Fof1muY]");
+  });
 });
 
 describe("assignEpisodeNumber", () => {

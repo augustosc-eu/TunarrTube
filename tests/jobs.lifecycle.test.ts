@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   settings: vi.fn(),
   log: vi.fn()
 }));
+// This file drives the real worker loop (against the mocked db below), so it opts out of the inert
+// kickWorker tests/support/setup.ts installs for every other file.
+(globalThis as { tunarrtubeTestRealWorker?: boolean }).tunarrtubeTestRealWorker = true;
 vi.mock("@/lib/db/client", () => ({ db: mocks }));
 vi.mock("@/lib/settings/service", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/tunarr/service", () => ({ publishSourceToTunarr: mocks.publish }));

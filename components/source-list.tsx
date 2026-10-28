@@ -8,7 +8,7 @@ import { ViewToggle } from "@/components/view-toggle";
 import { BulkBar } from "@/components/bulk-bar";
 import { useViewMode } from "@/lib/hooks/use-view-mode";
 
-type Source = { id: string; name: string; uploaderName: string | null; thumbnailUrl: string | null; thumbnailPath: string | null; sourceType: string; playbackMode: string; count: number; lastSyncedAt: Date | null };
+type Source = { id: string; url: string; name: string; uploaderName: string | null; thumbnailUrl: string | null; thumbnailPath: string | null; sourceType: string; playbackMode: string; count: number; lastSyncedAt: Date | null };
 
 async function message(response: Response) {
   const body = await response.json();

@@ -4,14 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db/client";
 
-// Same rationale as tests/jobs.service.test.ts: addYoutubeUrlToChannel's real job is exercised here
-// via the real, unmodified addVideosToCollection() -- but the *actual* background download draining
-// the resulting job queue (kickWorker's table-wide claim loop) is exactly the shared-DB race that
-// suite avoids, so it's stubbed out the same way.
-vi.mock("@/lib/jobs/runner", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/jobs/runner")>();
-  return { ...actual, kickWorker: vi.fn() };
-});
+// addYoutubeUrlToChannel's real job is exercised here via the real, unmodified addVideosToCollection();
+// the background worker that would drain the resulting queue is kept off by tests/support/setup.ts.
 
 const { attachExistingVideo, addYoutubeUrlToChannel, createChannel, enqueueChannelJob } = await import("@/lib/channels/service");
 

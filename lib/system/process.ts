@@ -31,6 +31,10 @@ export async function runProcess(program: string, args: string[], options: RunOp
       stdio: [options.stdin !== undefined ? "pipe" : "ignore", "pipe", "pipe"]
     });
     if (options.stdin !== undefined) {
+      // A child that exits without reading all of stdin (a bad flag, an auth failure) makes this write
+      // fail with EPIPE. Without a listener that surfaces as an uncaught exception; the "close" handler
+      // below already reports the child's real exit status and stderr.
+      child.stdin!.on("error", () => undefined);
       child.stdin!.end(options.stdin);
     }
     let stdout = "";
@@ -59,13 +63,16 @@ export async function runProcess(program: string, args: string[], options: RunOp
     // Non-null: stdio[1]/[2] are always the literal "pipe" above, but TypeScript can no longer narrow
     // spawn()'s overload to a non-null ChildProcessByStdio once stdio[0] is a runtime-computed value
     // (the stdin ternary) rather than every element being a literal.
-    child.stdout!.on("data", (data: Buffer) => {
-      const chunk = data.toString();
+    // setEncoding decodes through a StringDecoder, which holds back a multi-byte UTF-8 character split
+    // across two pipe chunks instead of turning each half into U+FFFD -- yt-dlp's JSON for a large
+    // playlist arrives in many chunks, and non-ASCII titles would otherwise be corrupted at the seams.
+    child.stdout!.setEncoding("utf8");
+    child.stderr!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => {
       if (stdout.length + chunk.length <= maxOutput) stdout += chunk;
       options.onStdout?.(chunk);
     });
-    child.stderr!.on("data", (data: Buffer) => {
-      const chunk = data.toString();
+    child.stderr!.on("data", (chunk: string) => {
       if (stderr.length + chunk.length <= maxOutput) stderr += chunk;
       options.onStderr?.(chunk);
     });

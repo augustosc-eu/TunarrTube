@@ -10,7 +10,8 @@ import { assignEpisodeNumber, resolveVideoPaths, seasonNumberFor, type NamingSch
 import { assertWithinDirectory, getSettings } from "@/lib/settings/service";
 import { runProcess } from "@/lib/system/process";
 import { downloadFormatSelector, resolveEffectiveQuality, type VideoQuality } from "@/lib/youtube/quality";
-import { challengeSolverArgs, challengeSolverEnv, cookiesArgs, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
+import { siteForStoredId } from "@/lib/youtube/sites";
+import { challengeSolverEnv, cookiesArgs, siteArgsForUrl, getYtDlpPath, isSignInRequiredError, isUnavailableVideoError, unavailabilityReason } from "@/lib/youtube/ytdlp";
 import { CACHE_DIRECTORY_NAME, TEMP_DIRECTORY_NAME } from "@/lib/constants";
 
 // Thrown by downloadVideo()/cacheVideo() below in place of the raw yt-dlp error when the failure means
@@ -22,6 +23,15 @@ import { CACHE_DIRECTORY_NAME, TEMP_DIRECTORY_NAME } from "@/lib/constants";
 // retrying will never succeed; publishSourceToTunarr()'s prefetch loop (lib/tunarr/service.ts) catches it
 // per-video so one dead video doesn't block prefetching the rest of a source's lineup.
 export class VideoUnavailableError extends Error {}
+
+// Only a failed yt-dlp run (runProcess's PROCESS_FAILED, whose message carries yt-dlp's stderr) says
+// anything about the video itself. Every other error in the download/cache path comes from the local
+// filesystem, and its message embeds paths -- every macOS temp path starts with "/private/", and a media
+// root, source folder, or title-based filename can contain "deleted" or "removed" -- which the keyword
+// match below would otherwise read as YouTube reporting the video gone for good, for every source.
+function isPermanentYtDlpFailure(error: unknown, message: string) {
+  return error instanceof AppError && error.code === "PROCESS_FAILED" && (isUnavailableVideoError(message) || isSignInRequiredError(message));
+}
 
 type MembershipVideo = { youtubeId: string; title: string; description: string | null; uploader: string | null; uploadDate: Date | null; thumbnailPath: string | null };
 type MembershipSource = { name: string; mediaDirectory: string; namingScheme: string | null; filenameTemplate: string | null };
@@ -74,7 +84,7 @@ function buildEpisodeNfo(video: { youtubeId: string; title: string; description:
   ];
   if (video.description) lines.push(`  <plot>${xmlEscape(video.description)}</plot>`);
   if (video.uploadDate) lines.push(`  <aired>${video.uploadDate.toISOString().slice(0, 10)}</aired>`);
-  lines.push(`  <uniqueid type="youtube" default="true">${xmlEscape(video.youtubeId)}</uniqueid>`);
+  lines.push(`  <uniqueid type="${siteForStoredId(video.youtubeId).id}" default="true">${xmlEscape(video.youtubeId)}</uniqueid>`);
   lines.push("</episodedetails>");
   return `${lines.join("\n")}\n`;
 }
@@ -188,7 +198,7 @@ async function downloadMp4(youtubeId: string, youtubeUrl: string, target: string
         // span a throttling window instead of all burning within seconds.
         "--retry-sleep", "http:exp=1:30", "--retry-sleep", "fragment:exp=1:30",
         "--merge-output-format", "mp4", "--remux-video", "mp4", "--embed-metadata",
-        ...challengeSolverArgs(),
+        ...siteArgsForUrl(youtubeUrl),
         "-o", path.join(tempDirectory, `${youtubeId}.%(ext)s`), ...await cookiesArgs(), "--", youtubeUrl
       ], { timeoutMs: 12 * 60 * 60_000, signal, env: await challengeSolverEnv() });
       const files = await readdir(tempDirectory);
@@ -239,24 +249,29 @@ export async function downloadVideo(sourceId: string, videoId: string, signal?: 
   const target = await assertWithinDirectory(sourceDir, path.join(resolved.directory, `${resolved.basename}.mp4`));
 
   await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "downloading" } });
-  let reused = await reuseExistingAsset(sourceId, videoId, target);
+  let reused = false;
+  let fileSize: number;
   try {
+    // Inside the try: a failed link/copy must mark the membership failed like any other download error,
+    // not leave it showing "downloading" after the job has given up.
+    reused = await reuseExistingAsset(sourceId, videoId, target);
     if (!reused) {
       const settings = await getSettings();
       const quality = resolveEffectiveQuality(membership.source.videoQuality, settings.defaultVideoQuality);
       await downloadMp4(membership.video.youtubeId, membership.video.youtubeUrl, target, quality, signal);
     }
-    const details = await stat(target);
+    fileSize = (await stat(target)).size;
     await writeSidecarsAndArt(resolved, scheme, sourceDir, membership, season, episode);
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "complete", localPath: target, fileSize: details.size, retentionOrigin: "permanent" } });
-    await writeLog({ category: "download", sourceId, videoId, message: `${reused ? "Linked" : "Downloaded"} ${membership.video.youtubeId}.` });
-    return { localPath: target, fileSize: details.size, reused };
+    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: "complete", localPath: target, fileSize, retentionOrigin: "permanent" } });
   } catch (error) {
     // A user-requested stop (see stopJob() in lib/jobs/service.ts) aborts `signal`, which is what makes
     // runProcess() reject here -- record it as "cancelled" rather than "failed" so it reads like the
     // queued-cancellation case instead of a real error, and so automatic re-enqueue paths leave it alone.
     const message = error instanceof Error ? error.message : String(error);
-    const unavailable = !signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message));
+    const unavailable = !signal?.aborted && isPermanentYtDlpFailure(error, message);
+    // Recorded before the bookkeeping below, any step of which can itself fail: the membership must
+    // never be left showing "downloading" once this attempt is over.
+    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: unavailable ? "unavailable" : signal?.aborted ? "cancelled" : "failed" } });
     if (unavailable) {
       // Gone for good (or -- see isSignInRequiredError -- gated behind a sign-in TunarrTube isn't
       // authenticated for), not a transient failure -- record it on the Video so every source sharing it
@@ -267,10 +282,13 @@ export async function downloadVideo(sourceId: string, videoId: string, signal?: 
       const reason = await unavailabilityReason(membership.video.youtubeUrl, message);
       await db.video.update({ where: { id: membership.video.id }, data: { availability: "unavailable", availabilityReason: reason } });
       await writeLog({ level: "warn", category: "download", sourceId, videoId, message: `${membership.video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
+      throw new VideoUnavailableError(message);
     }
-    await db.sourceVideo.update({ where: { id: membership.id }, data: { downloadStatus: unavailable ? "unavailable" : signal?.aborted ? "cancelled" : "failed" } });
-    throw unavailable ? new VideoUnavailableError(message) : error;
+    throw error;
   }
+  // Outside the try: once the membership reads "complete", a failure here must not rewrite it to "failed".
+  await writeLog({ category: "download", sourceId, videoId, message: `${reused ? "Linked" : "Downloaded"} ${membership.video.youtubeId}.` });
+  return { localPath: target, fileSize, reused };
 }
 
 export async function retagVideo(sourceId: string, videoId: string) {
@@ -330,30 +348,34 @@ export async function cacheVideo(videoId: string, sourceId?: string, signal?: Ab
     create: { videoId, status: "downloading", localPath: target },
     update: { status: "downloading", localPath: target, error: null }
   });
+  let complete;
   try {
     await downloadMp4(video.youtubeId, video.youtubeUrl, target, quality, signal);
     const details = await stat(target);
-    const complete = await db.cacheAsset.update({ where: { id: asset.id }, data: { status: "complete", fileSize: details.size, cachedAt: new Date(), lastAccessedAt: new Date(), error: null } });
-    await writeLog({ category: "cache", videoId, message: `Cached ${video.youtubeId}.` });
-    const { enforceCachePolicy } = await import("@/lib/cache/service");
-    await enforceCachePolicy();
-    return complete;
+    complete = await db.cacheAsset.update({ where: { id: asset.id }, data: { status: "complete", fileSize: details.size, cachedAt: new Date(), lastAccessedAt: new Date(), error: null } });
   } catch (error) {
-    // See the matching comment in downloadVideo() above: a stop request aborts `signal`, and that should
-    // read as "cancelled" rather than a real failure.
+    // See the matching comments in downloadVideo() above: a stop request aborts `signal`, and that should
+    // read as "cancelled" rather than a real failure; the status is recorded before anything else can fail.
     const message = error instanceof Error ? error.message : String(error);
-    const unavailable = !signal?.aborted && (isUnavailableVideoError(message) || isSignInRequiredError(message));
-    if (unavailable) {
-      const reason = await unavailabilityReason(video.youtubeUrl, message);
-      await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason } });
-      await writeLog({ level: "warn", category: "cache", videoId, message: `${video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
-    }
+    const unavailable = !signal?.aborted && isPermanentYtDlpFailure(error, message);
     await db.cacheAsset.update({
       where: { id: asset.id },
       data: signal?.aborted ? { status: "cancelled", error: null } : { status: "failed", error: message.slice(-2000) }
     });
-    throw unavailable ? new VideoUnavailableError(message) : error;
+    if (unavailable) {
+      const reason = await unavailabilityReason(video.youtubeUrl, message);
+      await db.video.update({ where: { id: videoId }, data: { availability: "unavailable", availabilityReason: reason } });
+      await writeLog({ level: "warn", category: "cache", videoId, message: `${video.youtubeId} is unavailable, won't retry automatically: ${reason}` });
+      throw new VideoUnavailableError(message);
+    }
+    throw error;
   }
+  // Outside the try, as in downloadVideo(): a failed log write or eviction pass must not mark the
+  // just-completed cache file "failed".
+  await writeLog({ category: "cache", videoId, message: `Cached ${video.youtubeId}.` });
+  const { enforceCachePolicy } = await import("@/lib/cache/service");
+  await enforceCachePolicy();
+  return complete;
 }
 
 export async function touchCacheAsset(id: string) {

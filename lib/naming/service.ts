@@ -20,6 +20,7 @@
 //               lib/downloads/service.ts alongside the other membership updates.
 
 import { db } from "@/lib/db/client";
+import { SITES } from "@/lib/youtube/sites";
 
 export const NAMING_SCHEMES = ["id", "template", "tvshow"] as const;
 export type NamingScheme = (typeof NAMING_SCHEMES)[number];
@@ -112,22 +113,37 @@ function splitIntoSegments(filled: string): string[] {
     .filter((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
-const VIDEO_ID_BRACKET = /\[([a-zA-Z0-9_-]{11})\]/;
+// A bare 11-character YouTube ID, or a "<site>.<rawId>" ID from another known site (see
+// lib/youtube/sites.ts) -- limited to real site prefixes so a title like "[feat.Someone]" isn't mistaken
+// for an ID.
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+const SITE_ID_PREFIXES = Object.keys(SITES).filter((site) => site !== "youtube").map(escapeRegExp).join("|");
+const VIDEO_ID_PATTERN = `[a-zA-Z0-9_-]{11}|(?:${SITE_ID_PREFIXES})\\.[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}`;
+// Only a bracketed ID that ends the basename is the generated suffix; an ID-shaped bracket elsewhere
+// (a title like "Mirror [archive.2024]") is ordinary title text.
+const TRAILING_VIDEO_ID = new RegExp(`\\[(${VIDEO_ID_PATTERN})\\]$`);
+const ANY_VIDEO_ID = new RegExp(`\\[(${VIDEO_ID_PATTERN})\\]`, "g");
 
 function withVideoIdSuffix(basename: string, videoId: string): string {
-  if (basename === videoId || VIDEO_ID_BRACKET.test(basename)) return basename;
+  if (basename === videoId || basename.match(TRAILING_VIDEO_ID)?.[1] === videoId) return basename;
   return `${basename} [${videoId}]`;
 }
 
 // The inverse of the suffixing above: recovers the raw YouTube ID from a filename basename regardless of
-// which naming scheme produced it. "template"/"tvshow" basenames end with " [videoId]", so a bracket
-// match wins when present; otherwise the whole basename is treated as the id, unchanged from the
-// original (pre-naming-scheme) behavior where the filename basename WAS always the id. Used by
-// lib/tunarr/service.ts:indexProgramsByYoutubeId to reconcile Tunarr's scanned programs (keyed by the
-// filename it read off disk) back to a SourceVideo regardless of naming scheme.
+// which naming scheme produced it. "template"/"tvshow" basenames end with " [videoId]", so a trailing
+// bracket wins when present. Files written before suffixing required the ID at the end may carry it
+// earlier in the name (a template like "[{videoId}] {title}" suppressed the suffix), so the last
+// ID-shaped bracket anywhere is the fallback; otherwise the whole basename is treated as the id,
+// unchanged from the original (pre-naming-scheme) behavior where the filename basename WAS always the
+// id. Used by lib/tunarr/service.ts:indexProgramsByYoutubeId to reconcile Tunarr's scanned programs
+// (keyed by the filename it read off disk) back to a SourceVideo regardless of naming scheme.
 export function extractVideoId(basename: string): string | null {
-  const match = basename.match(VIDEO_ID_BRACKET);
-  if (match) return match[1];
+  const trailing = basename.match(TRAILING_VIDEO_ID);
+  if (trailing) return trailing[1];
+  const legacy = [...basename.matchAll(ANY_VIDEO_ID)].pop();
+  if (legacy) return legacy[1];
   return basename || null;
 }
 
