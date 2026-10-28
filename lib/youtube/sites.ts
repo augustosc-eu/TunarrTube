@@ -25,6 +25,8 @@ export type EntryRef = { rawId: string; url: string };
 // re-validated playlist URL to expand, or null when the entry has the nested shape but not a URL this
 // site accepts -- callers must refuse it rather than drop it.
 export type NestedPlaylistRef = { url: string | null };
+// How much a site needs a signed-in yt-dlp cookies file, shown in Settings → Sites.
+export type SignInLevel = "required" | "recommended" | "optional" | "none";
 
 export type Site = {
   id: SiteId;
@@ -43,6 +45,14 @@ export type Site = {
   multiPartVideos: boolean;
   // Shown when adding a source: a site-specific caveat the operator should know up front.
   note: string | null;
+  // What a cookies file does for this site, shown with signIn.level in Settings → Sites.
+  signIn: { level: SignInLevel; reason: string };
+  // yt-dlp --sleep-requests used when the operator hasn't set one for this site (SiteSetting).
+  defaultSleepRequestsSeconds: number;
+  // yt-dlp error text meaning the site is refusing this connection (rate limit or bot protection)
+  // rather than rejecting one video, on top of the HTTP 429 every site can return. Such failures back
+  // off that site's whole queue instead of burning retries (lib/jobs/runner.ts).
+  blockedSignal: RegExp | null;
   parse(url: URL): ParsedUrl | null;
   channelFeedUrl(base: string, feed: Exclude<ChannelFeed, "all">): string;
   // Maps one yt-dlp entry (a full extraction or a flat-playlist stub) to a raw ID and canonical watch
@@ -104,6 +114,9 @@ const youtube: Site = {
   channelFeeds: ["videos", "shorts", "live", "all"],
   multiPartVideos: false,
   note: null,
+  signIn: { level: "optional", reason: "Only needed for age-restricted videos, members-only content, or when YouTube asks to confirm you're not a bot." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     if (url.searchParams.get("list")) return { url: url.toString(), sourceType: "playlist" };
     const parts = url.pathname.split("/").filter(Boolean);
@@ -158,6 +171,9 @@ const bilibili: Site = {
   channelFeeds: ["videos"],
   multiPartVideos: true,
   note: null,
+  signIn: { level: "recommended", reason: "Without one, Bilibili limits quality to 480p–1080p and blocks bursts of requests (HTTP 412 / “Unable to extract initial state”). A cookies file from a signed-in account avoids both." },
+  defaultSleepRequestsSeconds: 1,
+  blockedSignal: /Request is blocked by server \(412\)|HTTP Error 412|rejected by server \(352\)|exceeded the rate limit|Unable to extract initial state/i,
   parse(url) {
     const path = url.pathname;
     if (url.hostname === "space.bilibili.com") {
@@ -248,6 +264,9 @@ const bilibilitv: Site = {
   channelFeeds: [],
   multiPartVideos: false,
   note: "Many bilibili.tv shows are region-locked, and some videos need a signed-in yt-dlp cookies file (Settings → External tools).",
+  signIn: { level: "optional", reason: "Some shows and videos are only available to signed-in accounts." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     const match = url.pathname.match(BILIBILI_TV_PATH);
     if (!match) return null;
@@ -284,6 +303,9 @@ const archive: Site = {
   // An item with several video files is returned as a playlist of those files.
   multiPartVideos: true,
   note: null,
+  signIn: { level: "none", reason: "Public items download without an account." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     const match = url.pathname.match(/^\/details\/([^/]+)(\/.+)?$/);
     if (!match || !ARCHIVE_IDENTIFIER.test(match[1]) || match[1].includes("..")) return null;
@@ -326,6 +348,9 @@ const vimeo: Site = {
   channelFeeds: ["videos"],
   multiPartVideos: false,
   note: "Vimeo only serves videos to signed-in clients: set a yt-dlp cookies file from a Vimeo account in Settings → External tools, or every video is marked unavailable.",
+  signIn: { level: "required", reason: "Vimeo only serves videos to signed-in clients; without a cookies file every video is marked as requiring sign-in." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     const path = url.pathname;
     const videoId = url.hostname === "player.vimeo.com"
@@ -362,6 +387,9 @@ const dailymotion: Site = {
   channelFeeds: ["videos"],
   multiPartVideos: false,
   note: null,
+  signIn: { level: "none", reason: "Public videos download without an account." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     const path = url.pathname;
     const videoId = url.hostname === "dai.ly"
@@ -410,6 +438,9 @@ const twitch: Site = {
   channelFeeds: ["videos"],
   multiPartVideos: false,
   note: "Twitch deletes past broadcasts after 7–60 days; TunarrTube keeps anything it already downloaded.",
+  signIn: { level: "optional", reason: "Only needed for subscriber-only VODs." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     const clip = twitchClipSlug(url.toString());
     if (clip) return { url: `https://clips.twitch.tv/${clip}`, sourceType: "video" };
@@ -459,6 +490,9 @@ const niconico: Site = {
   channelFeeds: ["videos"],
   multiPartVideos: false,
   note: "Many Niconico videos need a signed-in yt-dlp cookies file (Settings → External tools), and some are only available in Japan.",
+  signIn: { level: "recommended", reason: "Many videos are only available to signed-in accounts." },
+  defaultSleepRequestsSeconds: 0,
+  blockedSignal: null,
   parse(url) {
     const path = url.pathname;
     if (url.hostname === "nico.ms") {

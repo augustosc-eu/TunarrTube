@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { AppError } from "@/lib/api";
 import { sanitizeLogValue } from "@/lib/logging/service";
 
-type RunOptions = {
+export type RunOptions = {
   signal?: AbortSignal;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
