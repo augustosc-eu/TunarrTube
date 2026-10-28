@@ -1,4 +1,4 @@
-# Unreleased
+# TunarrTube Extended v0.5.0
 
 ## Settings → Sites
 
