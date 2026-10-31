@@ -7,3 +7,4 @@ prisma/*.db*
 storage
 npm-debug.log*
 .env*
+dist

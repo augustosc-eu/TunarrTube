@@ -1,6 +1,6 @@
 import path from "node:path";
 import { defineConfig } from "@prisma/config";
-import { DATABASE_FILENAME, migrateLegacyDatabase } from "./scripts/migrate-legacy-database.mjs";
+import { configuredDatabaseUrl, migrateLegacyDatabase } from "./scripts/migrate-legacy-database.mjs";
 
 // Prisma CLI (migrate/studio) config. Prisma 7 no longer reads the connection URL from schema.prisma,
 // so this supplies the same DATABASE_URL convention the app uses at runtime (lib/db/client.ts) --
@@ -21,7 +21,7 @@ function resolveDatabaseUrl(url: string): string {
   return `file:${path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), "prisma", filePath)}`;
 }
 
-const databaseUrl = resolveDatabaseUrl(process.env.DATABASE_URL ?? `file:./${DATABASE_FILENAME}`);
+const databaseUrl = resolveDatabaseUrl(configuredDatabaseUrl());
 
 // Any startup that runs `prisma migrate deploy` itself (rather than npm start or the Docker image, which
 // already do this) must still move a pre-rename ytarr.db first -- otherwise migrate creates an empty

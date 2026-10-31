@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { AppError } from "@/lib/api";
 import { readEnv } from "@/lib/config/env";
 import { runProcess } from "@/lib/system/process";
+import { findOnPath } from "@/lib/system/find-executable";
 
 export type BinaryName = "yt-dlp" | "ffmpeg";
 export type BinaryStatus = { name: BinaryName; found: boolean; path: string | null; version: string | null; error?: string };
@@ -26,11 +27,8 @@ async function executable(candidate: string) {
 export async function discoverBinary(name: BinaryName): Promise<string | null> {
   const override = readEnv(name === "yt-dlp" ? "YTDLP_PATH" : "FFMPEG_PATH");
   if (override && (await executable(override))) return override;
-  try {
-    const result = await runProcess("which", [name], { timeoutMs: 5000 });
-    const candidate = result.stdout.trim().split("\n")[0];
-    if (candidate && (await executable(candidate))) return candidate;
-  } catch {}
+  const onPath = await findOnPath(name);
+  if (onPath) return onPath;
   for (const candidate of fallbacks[name]) if (await executable(candidate)) return candidate;
   return null;
 }

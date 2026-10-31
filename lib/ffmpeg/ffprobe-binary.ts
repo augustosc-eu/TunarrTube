@@ -1,13 +1,14 @@
 // Standalone ffprobe discovery, deliberately not folded into lib/system/binaries.ts's
 // BinaryName union ("yt-dlp" | "ffmpeg") -- ffprobe is only needed by the render pipeline
 // (lib/ffmpeg/probe.ts), so this keeps that existing, shared file untouched. Mirrors its
-// discovery strategy: env override, then `which`, then a hardcoded fallback list.
+// discovery strategy: env override, then PATH (findOnPath), then a hardcoded fallback list.
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import { AppError } from "@/lib/api";
 import { readEnv } from "@/lib/config/env";
 import { runProcess } from "@/lib/system/process";
+import { findOnPath } from "@/lib/system/find-executable";
 
 export type FfprobeStatus = { found: boolean; path: string | null; version: string | null; error?: string };
 
@@ -25,11 +26,8 @@ async function executable(candidate: string) {
 export async function discoverFfprobe(): Promise<string | null> {
   const override = readEnv("FFPROBE_PATH");
   if (override && (await executable(override))) return override;
-  try {
-    const result = await runProcess("which", ["ffprobe"], { timeoutMs: 5000 });
-    const candidate = result.stdout.trim().split("\n")[0];
-    if (candidate && (await executable(candidate))) return candidate;
-  } catch {}
+  const onPath = await findOnPath("ffprobe");
+  if (onPath) return onPath;
   for (const candidate of FALLBACKS) if (await executable(candidate)) return candidate;
   return null;
 }

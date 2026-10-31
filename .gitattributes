@@ -1,0 +1,7 @@
+# Windows batch files must keep CRLF line endings (cmd.exe misparses labels and blocks in LF files).
+*.cmd text eol=crlf
+# The portable release's POSIX launch scripts must stay LF even when checked out on Windows.
+packaging/entry/tunarrtube text eol=lf
+packaging/entry/TunarrTube.command text eol=lf
+# Prisma checksums each migration; keep them byte-identical on every platform.
+prisma/migrations/**/migration.sql text eol=lf

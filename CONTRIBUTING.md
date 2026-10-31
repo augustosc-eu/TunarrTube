@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-See [README.md](README.md) for OS-specific prerequisites and configuration. The local SQLite database and downloaded media are ignored by Git.
+See [README.md](README.md) for OS-specific prerequisites and configuration (users who only want to run TunarrTube can download the portable release instead). The local SQLite database and downloaded media are ignored by Git.
 
 ## Before submitting a change
 
@@ -33,7 +33,8 @@ Update `README.md` for user-facing behavior and `docs/ARCHITECTURE.md` for chang
 2. Set `version` in `package.json` and rename the `# Unreleased` heading in `RELEASE_NOTES.md` to the new version, then commit.
 3. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`. A pre-release uses a suffix, such as `v0.3.0-rc.1`.
 4. The **Docker image** workflow builds `linux/amd64` and `linux/arm64` and publishes `ghcr.io/augustosc-eu/tunarrtube` with the tags described in README's "Published images". Check its run summary for the pull command.
-5. Create the GitHub Release from the tag, using the release-notes section as its description.
+5. The **Portable release** workflow builds Windows, macOS (Apple Silicon and Intel), and Linux (x64 and arm64) archives, smoke-tests each, creates the GitHub Release for the tag if it doesn't exist yet (its description is that version's section of `RELEASE_NOTES.md`), and attaches the archives and their `.sha256` files. If you create the release yourself first, the workflow only attaches the files.
+6. To check a packaging change before tagging, run the **Portable release** workflow manually (Actions → Portable release → Run workflow) or build your own platform locally (README, "Development").
 
 The first time an image is published, check the package's visibility under the repository's **Packages** settings; it may need to be made public before others can pull it.
 

@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
   // statically as "keep" -- that produced `Cannot find module './chunks/<id>.js'` in the
   // standalone build (GitHub issue #7: missing chunk on a clean Docker build).
   outputFileTracingExcludes: {
-    "/*": ["./storage/**/*", "./prisma/*.db", "./prisma/*.db-*", "./.next/cache/**/*"]
+    "/*": ["./storage/**/*", "./prisma/*.db", "./prisma/*.db-*", "./.next/cache/**/*", "./dist/**/*"]
   },
   // Prisma's client and SQLite adapter retain runtime state that must not be rewritten into the
   // Server Component bundle. Bundling the adapter under Next 16.4 drops its connection config and

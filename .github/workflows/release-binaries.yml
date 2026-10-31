@@ -1,0 +1,142 @@
+name: Portable release
+
+# Builds the portable, everything-included release (scripts/package-release.mjs) for each platform and, when a
+# version tag (v1.2.3, v1.2.3-rc.1) is pushed, attaches the archives to that tag's GitHub Release (creating
+# the release if it doesn't exist yet). Pull requests that touch the release inputs build and smoke-test every
+# platform without publishing; a manual run does the same for any ref.
+#
+# Each target builds on its own native runner: the bundle's Node.js, better-sqlite3 binding and Prisma schema
+# engine must match the platform they run on. The release isn't code-signed (see README "Portable release").
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  pull_request:
+    paths:
+      - packaging/**
+      - scripts/package-release.mjs
+      - scripts/smoke-test-release.mjs
+      - scripts/migrate-legacy-database.mjs
+      - package.json
+      - package-lock.json
+      - next.config.ts
+      - prisma/**
+      - lib/constants.ts
+      - lib/system/**
+      - .github/workflows/release-binaries.yml
+  workflow_dispatch: # build and smoke-test the current ref, never published
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-binaries-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-15
+          - target: macos-x64
+            runner: macos-15-intel
+          - target: windows-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # LF on every platform: Prisma checksums migration.sql files, and a CRLF checkout on Windows would make
+      # that release's migrations differ from the ones a library was created with elsewhere.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # The release ships this exact version (package-release.mjs downloads the matching nodejs.org build).
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        # package-release.mjs installs the Chrome Headless Shell build Puppeteer is pinned to into the bundle itself.
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        env:
+          DATABASE_URL: file:${{ runner.temp }}/tunarrtube-build.db
+        run: npm run build
+
+      - name: Package
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # only to avoid GitHub API rate limits when looking up tool releases
+        run: node scripts/package-release.mjs --target ${{ matrix.target }}
+
+      - name: Smoke test the archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          tar -xf dist/TunarrTube-*-${{ matrix.target }}.${{ startsWith(matrix.target, 'windows') && 'zip' || 'tar.gz' }} -C "$RUNNER_TEMP/unpacked"
+          node scripts/smoke-test-release.mjs "$(ls -d "$RUNNER_TEMP"/unpacked/TunarrTube-*)"
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tunarrtube-${{ matrix.target }}
+          path: |
+            dist/TunarrTube-*.tar.gz
+            dist/TunarrTube-*.zip
+            dist/TunarrTube-*.sha256
+          if-no-files-found: error
+          compression-level: 0 # already compressed
+          retention-days: 7
+
+  publish:
+    name: Attach to the GitHub Release
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: RELEASE_NOTES.md
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tunarrtube-*
+          path: release
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            # This version's section of RELEASE_NOTES.md (from its "# ... vX.Y.Z" heading to the next "# "
+            # heading) is the description; GitHub's generated notes if there's none.
+            awk -v tag="$TAG" '/^# / { if (found) exit; found = ($NF == tag) } found' RELEASE_NOTES.md | tail -n +2 > notes.md
+            if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
+            prerelease=$([[ "$TAG" == *-* ]] && echo --prerelease || true)
+            gh release create "$TAG" --verify-tag --title "$TAG" "${notes[@]}" $prerelease
+          fi
+          gh release upload "$TAG" release/* --clobber

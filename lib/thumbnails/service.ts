@@ -4,13 +4,14 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import { AppError } from "@/lib/api";
 import { readEnv } from "@/lib/config/env";
+import { STORAGE_ROOT } from "@/lib/constants";
 import { db } from "@/lib/db/client";
 import { removeWithinDirectory } from "@/lib/settings/service";
 import { SITES } from "@/lib/youtube/sites";
 
 const ALLOWED_HOSTS = Object.values(SITES).flatMap((site) => site.thumbnailHosts);
 
-function thumbnailRoot() { return path.resolve(readEnv("THUMBNAIL_DIR") ?? path.join(process.cwd(), "storage", "thumbnails")); }
+function thumbnailRoot() { return path.resolve(readEnv("THUMBNAIL_DIR") ?? path.join(STORAGE_ROOT, "thumbnails")); }
 function safeRemoteUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "https:" || !ALLOWED_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) throw new AppError("THUMBNAIL_URL_REJECTED", "Thumbnail host is not allowed.", 422);

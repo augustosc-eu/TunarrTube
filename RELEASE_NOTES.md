@@ -1,3 +1,21 @@
+# Unreleased
+
+## Portable release for Windows, macOS, and Linux
+
+- Each release now has a download per platform (Windows x64, macOS Apple Silicon and Intel, Linux x64 and arm64) that includes everything TunarrTube needs: Node.js, yt-dlp, FFmpeg/ffprobe, and a headless Chrome for Channels overlays. Extract it and double-click `TunarrTube.cmd` (Windows) or `TunarrTube.command` (macOS), or run `./tunarrtube` (Linux).
+- The first launch asks where to keep your library: the database, media, thumbnails, and caches. It remembers the choice, and upgrading only replaces the release folder. Run with `--choose-data-dir` to switch folders later. The previous folder is left untouched as a legacy library you can switch back to.
+- Already running TunarrTube from a source checkout? Choose "Open an existing TunarrTube library" and select the checkout to keep using its database and downloads in place.
+- The first time a new release opens a library, it backs up the database to that library's `backups/` folder.
+- The release isn't code-signed yet. See README's "Portable release" for the one-time Windows and macOS prompts.
+
+## Windows
+
+- yt-dlp, FFmpeg, ffprobe, and Claude Code are now found on `PATH` on Windows too. Previously discovery relied on `which`, which Windows doesn't have, so only explicit `TUNARRTUBE_*_PATH` settings worked.
+
+## Configuration
+
+- New `TUNARRTUBE_DATA_DIR` keeps the database and `storage/` together in one folder, and `TUNARRTUBE_STORAGE_DIR` moves just `storage/`. Unset, nothing changes.
+
 # TunarrTube Extended v0.5.0
 
 ## Settings → Sites
