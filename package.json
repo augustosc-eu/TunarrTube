@@ -15,6 +15,7 @@
     "prestart": "node scripts/prepare-dev.mjs",
     "start": "next start --hostname 127.0.0.1",
     "start:lan": "next start --hostname 0.0.0.0",
+    "serve": "node scripts/serve.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
