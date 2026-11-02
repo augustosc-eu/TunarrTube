@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { updateBinary } from "@/lib/system/binaries";
+import { inspectBinary, updateBinary } from "@/lib/system/binaries";
 
 const cleanup: string[] = [];
 
@@ -107,5 +107,32 @@ process.exit(1);
     expect(error).toMatchObject({ code: "YTDLP_SELF_UPDATE_UNSUPPORTED" });
     expect((error as Error).message).toContain("You installed yt-dlp with pip or using the wheel from PyPi; Use that to update");
     expect((error as Error).message).toContain("TUNARRTUBE_YTDLP_PATH");
+  });
+});
+
+describe("inspectBinary", () => {
+  it("reuses a successful version check until the binary changes, unless asked for a fresh one", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tunarrtube-inspect-test-"));
+    cleanup.push(root);
+    const counter = path.join(root, "runs");
+    const script = (version: string) => `
+const fs = require("fs");
+const counter = ${JSON.stringify(counter)};
+fs.appendFileSync(counter, "x");
+process.stdout.write("${version}\\n");
+`;
+    const binary = await fakeYtDlp(root, script("2024.01.01"));
+    const runs = async () => (await import("node:fs/promises")).readFile(counter, "utf8").then((text) => text.length);
+
+    expect((await inspectBinary("yt-dlp")).version).toBe("2024.01.01");
+    expect((await inspectBinary("yt-dlp")).version).toBe("2024.01.01");
+    expect(await runs()).toBe(1);
+
+    await inspectBinary("yt-dlp", { fresh: true });
+    expect(await runs()).toBe(2);
+
+    await writeFile(binary, `#!/usr/bin/env node\n${script("2099.01.01")}\n`);
+    expect((await inspectBinary("yt-dlp")).version).toBe("2099.01.01");
+    expect(await runs()).toBe(3);
   });
 });

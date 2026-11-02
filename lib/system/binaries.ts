@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { AppError } from "@/lib/api";
 import { readEnv } from "@/lib/config/env";
@@ -33,13 +33,33 @@ export async function discoverBinary(name: BinaryName): Promise<string | null> {
   return null;
 }
 
-export async function inspectBinary(name: BinaryName): Promise<BinaryStatus> {
+// yt-dlp's standalone builds (the ones the portable release and Docker image ship) are PyInstaller
+// one-file executables that unpack themselves on every launch -- `--version` takes ~5s on macOS. A
+// version can only change when the file does, so successful results are remembered per binary, keyed
+// by its resolved path, size and mtime: replacing or self-updating it invalidates the entry for free.
+type CachedStatus = { key: string; status: BinaryStatus };
+const versionCache = ((globalThis as typeof globalThis & { __tunarrtubeBinaryVersions?: Map<BinaryName, CachedStatus> }).__tunarrtubeBinaryVersions ??= new Map());
+
+async function fileKey(path: string) {
+  const resolved = await realpath(path).catch(() => path);
+  const info = await stat(resolved).catch(() => null);
+  return info ? `${resolved}:${info.size}:${info.mtimeMs}` : null;
+}
+
+/** `fresh` skips the cache -- for the explicit Settings "Test" buttons and the self-updater. */
+export async function inspectBinary(name: BinaryName, options: { fresh?: boolean } = {}): Promise<BinaryStatus> {
   const path = await discoverBinary(name);
   if (!path) return { name, found: false, path: null, version: null, error: `${name} was not found.` };
+  const key = await fileKey(path);
+  const cached = versionCache.get(name);
+  if (!options.fresh && key && cached?.key === key) return cached.status;
   try {
     const result = await runProcess(path, [name === "ffmpeg" ? "-version" : "--version"], { timeoutMs: 30_000 });
-    return { name, found: true, path, version: result.stdout.trim().split("\n")[0] || basename(path) };
+    const status: BinaryStatus = { name, found: true, path, version: result.stdout.trim().split("\n")[0] || basename(path) };
+    if (key) versionCache.set(name, { key, status });
+    return status;
   } catch (error) {
+    versionCache.delete(name);
     return { name, found: true, path, version: null, error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -70,14 +90,14 @@ export async function updateBinary(name: BinaryName): Promise<BinaryUpdateResult
   if (name !== "yt-dlp") throw new AppError("UPDATE_UNSUPPORTED", `${name} has no self-update; update it with your system package manager.`, 400);
   const path = await discoverBinary(name);
   if (!path) throw new AppError("BINARY_NOT_FOUND", "yt-dlp was not found.", 404);
-  const before = await inspectBinary(name);
+  const before = await inspectBinary(name, { fresh: true });
   try {
     await runProcess(path, ["--update"], { timeoutMs: 120_000 });
   } catch (error) {
     if (error instanceof AppError && error.code === "PROCESS_FAILED" && SELF_UPDATE_REFUSED.test(error.message)) throw await selfUpdateRefusedError(path, error.message);
     throw error;
   }
-  const after = await inspectBinary(name);
+  const after = await inspectBinary(name, { fresh: true });
   const updated = Boolean(after.version && before.version && after.version !== before.version);
   const message = updated
     ? `Updated yt-dlp from ${before.version} to ${after.version}.`
