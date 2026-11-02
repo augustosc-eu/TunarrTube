@@ -100,7 +100,8 @@ jobs:
         run: |
           hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" dist/TunarrTube-*-${{ matrix.target }}.dmg
           node scripts/smoke-test-release.mjs "$RUNNER_TEMP/dmg"
-          hdiutil detach "$RUNNER_TEMP/dmg"
+          # macOS may still be scanning the just-run app; the runner is thrown away either way.
+          hdiutil detach "$RUNNER_TEMP/dmg" || hdiutil detach -force "$RUNNER_TEMP/dmg" || true
 
       - name: Smoke test the AppImage
         if: startsWith(matrix.target, 'linux')

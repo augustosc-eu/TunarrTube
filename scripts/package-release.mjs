@@ -64,8 +64,22 @@ function sha256(file) {
 
 const githubHeaders = { "User-Agent": "tunarrtube-release", ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) };
 
+// A few tries: Node's fetch reuses kept-alive connections, and one a server closed while packaging was busy
+// elsewhere (the archive step takes a while) fails with "other side closed".
+async function fetchWithRetry(url, options) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (attempt === 3) throw error;
+      console.log(`GET ${url} failed (${error.cause?.message ?? error.message}); retrying.`);
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
+  }
+}
+
 async function fetchText(url, headers = {}) {
-  const response = await fetch(url, { headers });
+  const response = await fetchWithRetry(url, { headers });
   if (!response.ok) throw new Error(`GET ${url}: HTTP ${response.status}`);
   return response.text();
 }
@@ -76,7 +90,7 @@ async function download(url, fileName, expectedSha256) {
   const file = path.join(cacheDir, fileName);
   if (!existsSync(file) || sha256(file) !== expectedSha256) {
     console.log(`Downloading ${url}`);
-    const response = await fetch(url, { headers: { "User-Agent": "tunarrtube-release" } });
+    const response = await fetchWithRetry(url, { headers: { "User-Agent": "tunarrtube-release" } });
     if (!response.ok) throw new Error(`GET ${url}: HTTP ${response.status}`);
     writeFileSync(file, Buffer.from(await response.arrayBuffer()));
   }
@@ -135,7 +149,7 @@ async function bundleFfmpeg(notices) {
     let release;
     for (const binary of ["ffmpeg", "ffprobe"]) {
       // The "latest" URL redirects to a versioned one, which has the .sha256 file next to it.
-      const redirect = await fetch(`https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/${binary}.zip`, { redirect: "manual" });
+      const redirect = await fetchWithRetry(`https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/${binary}.zip`, { redirect: "manual" });
       const location = redirect.headers.get("location");
       if (!location) throw new Error(`martin-riedl.de: no download for macOS ${arch} ${binary}.`);
       const url = new URL(location, "https://ffmpeg.martin-riedl.de").toString();
@@ -247,8 +261,16 @@ function bundleApp() {
   cpSync(path.join(root, "prisma", "migrations"), path.join(app, "prisma", "migrations"), { recursive: true });
   mkdirSync(path.join(app, "scripts"), { recursive: true });
   copyFileSync(path.join(root, "scripts", "migrate-legacy-database.mjs"), path.join(app, "scripts", "migrate-legacy-database.mjs"));
+  // The checkout's empty storage/ skeleton (.gitkeep placeholders) is harmless; the tracer can pick it up
+  // where next.config.ts's "./storage/**/*" exclude doesn't match (Windows paths).
+  const traced = path.join(app, "storage");
+  if (existsSync(traced) && onlyPlaceholders(traced)) rmSync(traced, { recursive: true });
   const leaked = findLeaks(app);
   if (leaked.length) fail(`Refusing to package local data found in the build output:\n${leaked.join("\n")}`);
+}
+
+function onlyPlaceholders(directory) {
+  return readdirSync(directory, { withFileTypes: true }).every((entry) => entry.isDirectory() ? onlyPlaceholders(path.join(directory, entry.name)) : entry.name === ".gitkeep");
 }
 
 // A database, media, or credentials that tracing picked up from this checkout.
