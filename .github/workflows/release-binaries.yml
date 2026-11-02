@@ -149,18 +149,28 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Create or update the release
+      # The repository has immutable releases: once a release is published, nothing can be uploaded to it
+      # or changed. So the release is created as a draft, the downloads are attached, and only then is it
+      # published. A re-run finds the draft and finishes it; a release that's already published can't
+      # take the files, so that fails with an explanation instead of half-updating anything.
+      - name: Create, fill and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
+          if ! draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
             # This version's section of RELEASE_NOTES.md (from its "# ... vX.Y.Z" heading to the next "# "
-            # heading) is the description; GitHub's generated notes if there's none.
-            awk -v tag="$TAG" '/^# / { if (found) exit; found = ($NF == tag) } found' RELEASE_NOTES.md | tail -n +2 > notes.md
+            # heading) is the description, and its heading the title; GitHub's generated notes if there's none.
+            awk -v tag="$TAG" '/^# / { if (found) exit; found = ($NF == tag) } found' RELEASE_NOTES.md > section.md
+            title=$(head -n 1 section.md | sed 's/^# //')
+            tail -n +2 section.md > notes.md
             if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
             prerelease=$([[ "$TAG" == *-* ]] && echo --prerelease || true)
-            gh release create "$TAG" --verify-tag --title "$TAG" "${notes[@]}" $prerelease
+            gh release create "$TAG" --draft --verify-tag --title "${title:-$TAG}" "${notes[@]}" $prerelease
+          elif [ "$draft" != "true" ]; then
+            echo "::error::Release $TAG is already published, and published releases are immutable here, so its downloads can't be attached. Delete it (or release a new version) and re-run."
+            exit 1
           fi
           gh release upload "$TAG" release/* --clobber
+          gh release edit "$TAG" --draft=false

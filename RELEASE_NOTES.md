@@ -1,3 +1,7 @@
+# TunarrTube Extended v0.6.1
+
+The downloads for v0.6.0. Its release was published before the files could be attached, and published releases can't be changed afterward, so the Windows, macOS and Linux apps ship as v0.6.1. Nothing else changed; see v0.6.0 below for what's new.
+
 # TunarrTube Extended v0.6.0
 
 ## Desktop apps for Windows, macOS, and Linux
