@@ -105,10 +105,14 @@ function checksumFor(sums, fileName) {
   return line.trim().split(/\s+/)[0].toLowerCase();
 }
 
+// Windows' own bsdtar by full path: under Git Bash (as on the GitHub runner) "tar" is GNU tar, which reads
+// "D:\..." as a remote host and can't handle zip at all.
+const tar = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+
 function extract(archive, destination) {
   mkdirSync(destination, { recursive: true });
   // bsdtar (macOS, Windows' tar.exe) reads zip as well; GNU tar on Linux only ever gets .tar.xz here.
-  execFileSync("tar", ["-xf", archive, "-C", destination], { stdio: "inherit" });
+  execFileSync(tar, ["-xf", archive, "-C", destination], { stdio: "inherit" });
 }
 
 function findFile(directory, fileName) {
@@ -333,7 +337,7 @@ function archive() {
   const output = path.join(outDir, windows ? `${name}.zip` : `${name}.tar.gz`);
   rmSync(output, { force: true });
   // bsdtar picks the zip format from the .zip extension with -a; Windows ships bsdtar as tar.exe.
-  execFileSync("tar", windows ? ["-a", "-cf", output, name] : ["-czf", output, name], { cwd: outDir, stdio: "inherit" });
+  execFileSync(tar, windows ? ["-a", "-cf", output, name] : ["-czf", output, name], { cwd: outDir, stdio: "inherit" });
   writeChecksum(output);
 }
 

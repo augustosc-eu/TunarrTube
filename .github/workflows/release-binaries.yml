@@ -91,7 +91,9 @@ jobs:
       - name: Smoke test the archive
         run: |
           mkdir -p "$RUNNER_TEMP/unpacked"
-          tar -xf dist/TunarrTube-*-${{ matrix.target }}.${{ startsWith(matrix.target, 'windows') && 'zip' || 'tar.gz' }} -C "$RUNNER_TEMP/unpacked"
+          # Windows' own bsdtar: Git Bash's GNU tar can't read zip.
+          tar=tar; [ "$RUNNER_OS" = Windows ] && tar=/c/Windows/System32/tar.exe
+          "$tar" -xf dist/TunarrTube-*-${{ matrix.target }}.${{ startsWith(matrix.target, 'windows') && 'zip' || 'tar.gz' }} -C "$RUNNER_TEMP/unpacked"
           node scripts/smoke-test-release.mjs "$(ls -d "$RUNNER_TEMP"/unpacked/TunarrTube-*)"
 
       # Both run read-only, as people use them: the disk image mounted, the AppImage's squashfs extracted.
