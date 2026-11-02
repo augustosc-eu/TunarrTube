@@ -12,6 +12,16 @@ export const DATABASE_FILENAME = "tunarrtube.db";
 const LEGACY_DATABASE_FILENAME = "ytarr.db";
 const SQLITE_SUFFIXES = ["", "-wal", "-shm", "-journal"];
 
+// The database URL every entry point uses when DATABASE_URL is unset: <TUNARRTUBE_DATA_DIR>/tunarrtube.db
+// when a data directory is configured (the portable release's launcher always sets one -- see
+// packaging/launcher/), otherwise prisma/tunarrtube.db in the project directory.
+export function configuredDatabaseUrl(env = process.env) {
+  if (env.DATABASE_URL) return env.DATABASE_URL;
+  if (!env.TUNARRTUBE_DATA_DIR) return `file:./${DATABASE_FILENAME}`;
+  // Forward slashes even on Windows: Prisma's schema engine parses this as a URL.
+  return `file:${path.resolve(env.TUNARRTUBE_DATA_DIR, DATABASE_FILENAME).replaceAll("\\", "/")}`;
+}
+
 // Same convention as lib/db/client.ts and prisma.config.ts: relative file: URLs resolve against prisma/.
 export function resolveDatabasePath(url, projectRoot = process.cwd()) {
   if (!url.startsWith("file:")) return null;
@@ -34,5 +44,5 @@ export function migrateLegacyDatabase(databasePath) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  migrateLegacyDatabase(resolveDatabasePath(process.env.DATABASE_URL || `file:./${DATABASE_FILENAME}`));
+  migrateLegacyDatabase(resolveDatabasePath(configuredDatabaseUrl()));
 }

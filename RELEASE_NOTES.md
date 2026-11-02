@@ -1,3 +1,36 @@
+# TunarrTube Extended v0.6.0
+
+## Desktop apps for Windows, macOS, and Linux
+
+- Each release now has a download per platform (Windows x64, macOS Apple Silicon and Intel, Linux x64 and arm64) that includes everything TunarrTube needs: Node.js, yt-dlp, FFmpeg/ffprobe, and a headless Chrome for Channels overlays.
+- They run like regular apps, with no terminal window: `TunarrTube.exe` on Windows (in a .zip), `TunarrTube.app` on macOS (in a .dmg), and an AppImage on Linux that adds itself to the applications menu. TunarrTube opens in your browser; **Quit TunarrTube** at the bottom of the sidebar stops it, along with any yt-dlp or FFmpeg it started. macOS and Linux also get a `.tar.gz` of the release folder for servers and scripted installs.
+- The first launch asks where to keep your library: the database, media, thumbnails, and caches. It remembers the choice, and upgrading only replaces the app. Run with `--choose-data-dir` to switch folders later. The previous folder is left untouched as a legacy library you can switch back to.
+- Already running TunarrTube from a source checkout? Choose "Open an existing TunarrTube library" and select the checkout to keep using its database and downloads in place.
+- The first time a new release opens a library, it backs up the database to that library's `backups/` folder.
+- The release isn't code-signed yet. See README's "Portable release" for the one-time Windows and macOS prompts.
+
+## Setup wizard
+
+- A new install opens a short setup wizard: pick where videos are stored, enter your Tunarr URL (with a connection test), and confirm yt-dlp and FFmpeg are installed. Existing installs skip it. Run it again from **Settings → Run setup wizard**.
+- A **Browse** button next to the media folder, in the wizard and in Settings, lists folders on the machine TunarrTube runs on, shows free space, and can create a new folder.
+
+## Fixes
+
+- Settings and the setup wizard open quickly. They used to wait several seconds every time for yt-dlp to report its version.
+- TunarrTube has a browser tab icon.
+- Pressing **Stop** just as a download or cache fill finished could mark the finished video as cancelled, keeping it out of Tunarr until you retried it by hand. A finished video now stays finished. (#32)
+- A temporary yt-dlp failure, such as a network error or HTTP 403, could mark a video as permanently unavailable when the yt-dlp path, the media folder, or the video's title contained a word like "private", "deleted", or "removed". Only yt-dlp's own verdict on the video counts now. (#33)
+- yt-dlp, FFmpeg, ffprobe, and Claude Code are now found on `PATH` on Windows too. Previously discovery relied on `which`, which Windows doesn't have, so only explicit `TUNARRTUBE_*_PATH` settings worked.
+
+## Configuration
+
+- New `TUNARRTUBE_DATA_DIR` keeps the database and `storage/` together in one folder, and `TUNARRTUBE_STORAGE_DIR` moves just `storage/`. Unset, nothing changes.
+- `npm run serve` backs up the database and rebuilds only when the source changed.
+
+## Upgrading
+
+Adds one database column to record that setup is done; it's added automatically on start, and existing installs are marked as already set up.
+
 # TunarrTube Extended v0.5.0
 
 ## Settings → Sites

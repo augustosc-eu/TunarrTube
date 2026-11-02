@@ -1,0 +1,30 @@
+#!/bin/sh
+# The AppImage's entry point (Linux): starts the launcher with the bundled Node.js. Started from the desktop
+# (no terminal), the launcher asks with zenity/kdialog dialogs, the web UI's Quit button stops it, and all
+# output goes to ~/.local/state/TunarrTube/launcher.log. Run from a terminal, it behaves like ./tunarrtube.
+HERE="$(dirname "$(readlink -f "$0")")"
+export TUNARRTUBE_APP=1
+
+# Add TunarrTube to the applications menu, pointing at wherever this AppImage now lives (refreshed when it moves).
+if [ -n "$APPIMAGE" ]; then
+  DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+  ENTRY="$DATA_HOME/applications/tunarrtube.desktop"
+  if ! grep -qF "Exec=\"$APPIMAGE\"" "$ENTRY" 2>/dev/null; then
+    mkdir -p "$DATA_HOME/applications" "$DATA_HOME/icons/hicolor/256x256/apps"
+    cp -f "$HERE/tunarrtube.png" "$DATA_HOME/icons/hicolor/256x256/apps/tunarrtube.png" 2>/dev/null
+    sed "s|^Exec=.*|Exec=\"$APPIMAGE\"|" "$HERE/tunarrtube.desktop" >"$ENTRY" 2>/dev/null
+    update-desktop-database "$DATA_HOME/applications" >/dev/null 2>&1 || true
+  fi
+fi
+
+if [ -t 0 ] && [ -t 1 ]; then
+  exec "$HERE/runtime/node" "$HERE/launcher/launcher.mjs" "$@"
+fi
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/TunarrTube"
+LOG="$LOG_DIR/launcher.log"
+mkdir -p "$LOG_DIR"
+# Keep one previous log once this one passes 5 MB.
+if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 5000000 ]; then mv -f "$LOG" "$LOG.1"; fi
+printf '\n=== %s TunarrTube starting\n' "$(date '+%Y-%m-%d %H:%M:%S')" >>"$LOG"
+export TUNARRTUBE_LOG_FILE="$LOG"
+exec "$HERE/runtime/node" "$HERE/launcher/launcher.mjs" "$@" >>"$LOG" 2>&1

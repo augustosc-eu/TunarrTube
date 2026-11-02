@@ -8,6 +8,7 @@ prisma/*.db
 prisma/*.db-journal
 prisma/*.db-wal
 prisma/*.db-shm
+prisma/backups/
 prisma/*.bak
 storage/*
 !storage/.gitkeep
@@ -21,3 +22,6 @@ Thumbs.db
 .claude/hooks/
 .claude/settings.json
 .codex/
+
+# Portable release output (scripts/package-release.mjs)
+dist/

@@ -4,6 +4,8 @@ node_modules
 .vexp
 coverage
 prisma/*.db*
+prisma/backups
 storage
 npm-debug.log*
 .env*
+dist

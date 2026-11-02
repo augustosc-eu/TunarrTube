@@ -1,6 +1,6 @@
 {
   "name": "tunarrtube",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -15,6 +15,7 @@
     "prestart": "node scripts/prepare-dev.mjs",
     "start": "next start --hostname 127.0.0.1",
     "start:lan": "next start --hostname 0.0.0.0",
+    "serve": "node scripts/serve.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -42,7 +43,9 @@
     "@types/node": "26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "postject": "1.0.0-alpha.6",
     "prisma": "7.10.1",
+    "resedit": "3.1.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vitest": "5.0.5"

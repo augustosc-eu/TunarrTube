@@ -17,6 +17,7 @@ import { sanitizeLogValue } from "@/lib/logging/service";
 import { runProcess } from "@/lib/system/process";
 import { writeLog } from "@/lib/logging/service";
 import type { AIAvailability, AIResponse } from "@/lib/ai/types";
+import { findOnPath } from "@/lib/system/find-executable";
 
 // Input length protection: bounds how much prompt text (system + user, combined) TunarrTube will ever
 // hand to the CLI in one call. The user-supplied prompt travels over the child's stdin (see
@@ -61,12 +62,14 @@ async function executable(candidate: string) {
 // Resolution order: an explicit override (AppSettings.aiClaudeCodePath, passed in by callers -- highest
 // priority since it's a deliberate operator choice made through the Settings UI), then the
 // TUNARRTUBE_CLAUDE_PATH env var (matching the TUNARRTUBE_YTDLP_PATH/TUNARRTUBE_FFMPEG_PATH convention
-// in lib/system/binaries.ts), then `which claude`, then a short list of common install locations
+// in lib/system/binaries.ts), then PATH (findOnPath), then a short list of common install locations
 // (npm global installs, and Claude Code's own self-managed installer, which places the binary under
 // ~/.claude/local/ and symlinks it onto PATH -- listed here only as a fallback for a shell that didn't
 // pick up that symlink, e.g. this app running under a different user/service account).
 async function fallbackPaths() {
   const home = os.homedir();
+  // Claude Code's native Windows installer puts claude.exe in %USERPROFILE%\.local\bin.
+  if (process.platform === "win32") return [path.join(home, ".local", "bin", "claude.exe")];
   return [
     path.join(home, ".claude", "local", "claude"),
     path.join(home, ".npm-global", "bin", "claude"),
@@ -82,11 +85,8 @@ export async function discoverClaudeExecutable(overridePath?: string | null): Pr
   if (overridePath) return null; // an explicit override that doesn't resolve is not worth falling back past
   const envOverride = process.env.TUNARRTUBE_CLAUDE_PATH;
   if (envOverride && (await executable(envOverride))) return envOverride;
-  try {
-    const result = await runProcess("which", ["claude"], { timeoutMs: 5000 });
-    const candidate = result.stdout.trim().split("\n")[0];
-    if (candidate && (await executable(candidate))) return candidate;
-  } catch {}
+  const onPath = await findOnPath("claude");
+  if (onPath) return onPath;
   for (const candidate of await fallbackPaths()) if (await executable(candidate)) return candidate;
   return null;
 }

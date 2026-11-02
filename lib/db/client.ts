@@ -1,9 +1,9 @@
 import path from "node:path";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@prisma/client";
-import { DATABASE_FILENAME, migrateLegacyDatabase } from "@/scripts/migrate-legacy-database.mjs";
+import { configuredDatabaseUrl, migrateLegacyDatabase } from "@/scripts/migrate-legacy-database.mjs";
 
-process.env.DATABASE_URL ??= `file:./${DATABASE_FILENAME}`;
+process.env.DATABASE_URL ??= configuredDatabaseUrl();
 
 // Prisma 7 requires a driver adapter, and the SQLite one resolves a relative path against the working
 // directory. Keep resolving it against prisma/ instead (where Prisma 6 did, and where

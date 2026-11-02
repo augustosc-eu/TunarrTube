@@ -20,6 +20,10 @@ export async function register() {
       const { writeLog } = await import("@/lib/logging/service");
       await writeLog({ level: "warn", category: "maintenance", message }).catch(() => undefined);
     }
+    // Warm the binary-version cache in the background so the first Settings/Setup visit doesn't wait
+    // on yt-dlp's slow self-unpacking `--version` (see lib/system/binaries.ts).
+    const { inspectBinary } = await import("@/lib/system/binaries");
+    void Promise.all([inspectBinary("yt-dlp"), inspectBinary("ffmpeg")]).catch(() => undefined);
     const { kickWorker } = await import("@/lib/jobs/runner");
     kickWorker();
     const { startScheduler } = await import("@/lib/jobs/scheduler");

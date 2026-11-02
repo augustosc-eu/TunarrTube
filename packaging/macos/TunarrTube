@@ -1,0 +1,18 @@
+#!/bin/sh
+# TunarrTube.app's executable (Contents/MacOS/TunarrTube): starts the launcher with the bundled Node.js from
+# Contents/Resources. There's no terminal, so the launcher asks with dialogs, the web UI's Quit button stops
+# it, and all output goes to ~/Library/Logs/TunarrTube/launcher.log (open it in Console.app).
+RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+LOG_DIR="$HOME/Library/Logs/TunarrTube"
+LOG="$LOG_DIR/launcher.log"
+mkdir -p "$LOG_DIR"
+# Keep one previous log once this one passes 5 MB.
+if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG")" -gt 5000000 ]; then mv -f "$LOG" "$LOG.1"; fi
+# The release isn't code-signed: once you've chosen to open the app, clear the download quarantine from the
+# rest of it so the bundled tools can run. Only when it's there -- walking every file in the bundle takes
+# minutes on a slow drive, and after the first launch there's nothing left to clear.
+BUNDLE="$(cd "$RESOURCES/../.." && pwd)"
+if xattr -p com.apple.quarantine "$BUNDLE" >/dev/null 2>&1; then xattr -dr com.apple.quarantine "$BUNDLE" 2>/dev/null || true; fi
+printf '\n=== %s TunarrTube.app starting\n' "$(date '+%Y-%m-%d %H:%M:%S')" >>"$LOG"
+export TUNARRTUBE_APP=1 TUNARRTUBE_LOG_FILE="$LOG"
+exec "$RESOURCES/runtime/node" "$RESOURCES/launcher/launcher.mjs" "$@" >>"$LOG" 2>&1

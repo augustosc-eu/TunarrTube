@@ -217,7 +217,7 @@ h1, h2, h3, p, .meta, .error, .log > span { overflow-wrap: anywhere; }
 .nav a:hover { color: var(--text); background: var(--panel-2); transform: translateX(2px); }
 .nav a[aria-current="page"] { color: var(--accent); background: var(--accent-subtle); font-weight: 650; }
 .nav a[aria-current="page"]::before { content: ""; position: absolute; left: -16px; top: 9px; bottom: 9px; width: 3px; border-radius: var(--radius-full); background: var(--accent); }
-.sidebar-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); display: flex; }
+.sidebar-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
 .theme-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; padding: 9px 12px; border-radius: var(--radius-md); background: transparent; border: 0; color: var(--text-muted); font-size: 13px; font-weight: 550; transition: color .15s ease, background-color .15s ease; }
 .theme-toggle:hover { color: var(--text); background: var(--panel-2); }
 .content { width: 100%; max-width: 1540px; min-width: 0; padding: 42px clamp(24px, 4.5vw, 72px) 72px; }
@@ -516,7 +516,7 @@ tr:last-child td { border-bottom: 0; }
   .nav a { min-width: 40px; min-height: 38px; }
   .nav a:hover { transform: none; }
   .nav a[aria-current="page"]::before { left: 7px; right: 7px; top: auto; bottom: 0; height: 3px; width: auto; }
-  .sidebar-footer { margin-top: 0; padding: 0 0 0 4px; border: 0; }
+  .sidebar-footer { margin-top: 0; padding: 0 0 0 4px; border: 0; flex-direction: row; }
   .theme-toggle { width: 40px; min-height: 38px; padding: 0; }
   .content { padding: 26px 16px 52px; }
   .page-header { align-items: flex-start; flex-direction: column; gap: 18px; margin-bottom: 24px; }
@@ -597,3 +597,42 @@ tr:last-child td { border-bottom: 0; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 .form-card + .form-card { margin-top: 24px; }
+
+/* Storage picker (components/directory-picker.tsx) */
+.directory-picker { display: grid; gap: 10px; }
+.directory-picker-input { display: flex; gap: 8px; }
+.directory-picker-input .input { flex: 1 1 auto; }
+.directory-browser { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); padding: 12px; display: grid; gap: 10px; }
+.directory-browser .error { margin: 0; }
+.directory-roots { display: flex; flex-wrap: wrap; gap: 6px; }
+.directory-root { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--text-muted); cursor: pointer; }
+.directory-root:hover { border-color: var(--border-strong); color: var(--text); }
+.directory-root.active { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+.directory-current { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.directory-current .code { overflow-wrap: anywhere; }
+.directory-current .button { padding-inline: 9px; }
+.directory-list { list-style: none; margin: 0; padding: 4px; max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
+.directory-list li.meta { padding: 8px; }
+.directory-list button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font: inherit; font-size: 13px; padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); cursor: pointer; }
+.directory-list button:hover { background: var(--accent-subtle); }
+.directory-list svg { color: var(--text-subtle); flex: none; }
+.directory-footer { display: grid; gap: 8px; }
+.directory-footer .toolbar { margin-bottom: 0; }
+.directory-footer .toolbar > .input { min-width: 160px; }
+.error-text { color: var(--error); }
+
+/* First-run setup wizard (components/setup-wizard.tsx) */
+.setup-steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0 0 22px; }
+.setup-steps li { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); }
+.setup-steps li.current { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); font-weight: 650; }
+.setup-steps li.done { color: var(--success); }
+.setup-actions { display: flex; gap: 10px; align-items: center; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+.setup-actions .spacer { flex: 1 1 auto; }
+.setup-summary { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
+.setup-summary dt { font-size: 12px; font-weight: 650; }
+.setup-summary dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Shown after Quit TunarrTube (components/sidebar.tsx) -- the server is gone, so nothing else works. */
+.quit-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: var(--overlay); }
+.quit-overlay .card { max-width: 420px; text-align: center; }
+.quit-overlay h2 { margin-top: 0; }

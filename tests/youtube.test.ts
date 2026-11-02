@@ -112,3 +112,21 @@ describe("sign-in-required classification", () => {
     expect(isSignInRequiredError("ERROR: [youtube] abc: Video unavailable")).toBe(false);
   });
 });
+
+// Issue #33: a PROCESS_FAILED message starts with the yt-dlp path and can quote output paths and titles,
+// none of which say anything about whether the video itself is gone.
+describe("unavailable classification ignores paths and titles", () => {
+  it.each([
+    "/private/var/folders/xy/T/TunarrTube/tools/yt-dlp failed: ERROR: [youtube] abc: Unable to download webpage: HTTP Error 403: Forbidden",
+    "/opt/yt-dlp failed: ERROR: unable to write to /media/Deleted Scenes/Removed Clips (Private).mp4.part: No space left on device",
+    "/Users/me/private-tools/yt-dlp failed (SIGTERM): [download] Destination: /media/Unavailable Live/clip.mp4\nRead timed out"
+  ])("treats %s as a transient failure", (message) => {
+    expect(isUnavailableVideoError(message)).toBe(false);
+    expect(isSignInRequiredError(message)).toBe(false);
+  });
+
+  it("still recognises yt-dlp's own verdict behind a /private/ binary path", () => {
+    expect(isUnavailableVideoError("/private/tmp/yt-dlp failed: [youtube] abc: Downloading webpage\nERROR: [youtube] abc: Private video. Sign in if you've been granted access to this video")).toBe(true);
+    expect(isUnavailableVideoError("/private/tmp/yt-dlp failed: ERROR: [youtube] abc: Video unavailable")).toBe(true);
+  });
+});

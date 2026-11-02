@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
   job: { findMany: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() },
   sourceVideo: { updateMany: vi.fn() },
   cacheAsset: { updateMany: vi.fn() },
+  source: { findUnique: vi.fn() },
   publish: vi.fn(),
+  download: vi.fn(),
   settings: vi.fn(),
   log: vi.fn()
 }));
@@ -14,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db/client", () => ({ db: mocks }));
 vi.mock("@/lib/settings/service", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/tunarr/service", () => ({ publishSourceToTunarr: mocks.publish }));
+vi.mock("@/lib/downloads/service", async (importOriginal) => ({ ...await importOriginal<object>(), downloadVideo: mocks.download }));
 vi.mock("@/lib/logging/service", () => ({ writeLog: mocks.log, sanitizeLogValue: (s: string) => s }));
 
 import { recoverJobs, kickWorker, requestJobStop, handleJobFailure } from "@/lib/jobs/runner";
@@ -129,5 +132,35 @@ describe("job lifecycle", () => {
     expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "complete")).toBe(false);
     expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "cancelled")).toBe(true);
     expect(state.tunarrtubeControllers!.size).toBe(0);
+  });
+
+  // Issue #32: downloadVideo() rejects on an abort, so its resolving means the file is already in place.
+  it("completes a download whose handler finished before a late Stop reached it", async () => {
+    state.tunarrtubeRecovered = true;
+    const job = { id: "download", type: "download", status: "running", sourceId: "source", videoId: "video" };
+    let claimed = false;
+    mocks.settings.mockResolvedValue({ jobsPaused: false });
+    mocks.job.findFirst.mockImplementation(async ({ where }) => {
+      if (!claimed && where.type?.in?.includes("download")) { claimed = true; return job; }
+      return null;
+    });
+    mocks.job.findUnique.mockResolvedValue(job);
+    mocks.source.findUnique.mockResolvedValue({ tunarrChannelId: null });
+    const started = deferred<void>();
+    const result = deferred<void>();
+    mocks.download.mockImplementation(() => { started.resolve(); return result.promise; });
+    kickWorker();
+    const lanes = [...state.tunarrtubeLanes!.values()];
+    await started.promise;
+    expect(requestJobStop(job.id)).toBe(true);
+    mocks.settings.mockResolvedValue({ jobsPaused: true });
+    result.resolve();
+    await Promise.all(lanes);
+    expect(mocks.job.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "download", status: { in: ["running", "cancelled"] } },
+      data: expect.objectContaining({ status: "complete" })
+    }));
+    expect(mocks.job.updateMany.mock.calls.some(([arg]) => arg.data.status === "cancelled")).toBe(false);
+    expect(mocks.source.findUnique).toHaveBeenCalled();
   });
 });

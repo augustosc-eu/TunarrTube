@@ -1,14 +1,17 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ListVideo, Plus } from "lucide-react";
 import { db } from "@/lib/db/client";
 import { PageHeader } from "@/components/page-header";
 import { SourceCard } from "@/components/source-card";
+import { isSetupComplete } from "@/lib/settings/service";
 
 export const dynamic = "force-dynamic";
 
 const DASHBOARD_SOURCE_LIMIT = 8;
 
 export default async function DashboardPage() {
+  if (!(await isSetupComplete())) redirect("/setup");
   const [sourceCount, sources, videoCount, downloadedCount] = await Promise.all([
     db.source.count(),
     db.source.findMany({ orderBy: { updatedAt: "desc" }, include: { _count: { select: { videos: { where: { membershipStatus: "present" } } } } }, take: DASHBOARD_SOURCE_LIMIT }),

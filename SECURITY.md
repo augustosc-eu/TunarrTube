@@ -8,7 +8,7 @@ TunarrTube is pre-1.0 software. Security fixes are applied to the latest commit 
 
 TunarrTube is a single-user, local-first application. **Its only authentication is an optional shared password (`TUNARRTUBE_AUTH_PASSWORD`, HTTP Basic) and it has no authorization layer; it must not be exposed directly to the public internet or an untrusted LAN.** Its API can start downloads, change writable media paths, and modify a configured Tunarr server.
 
-The supplied Compose configuration publishes TunarrTube and its optional Tunarr service on `127.0.0.1` only. The `npm start` command does the same. If you deliberately bind TunarrTube to another interface, set `TUNARRTUBE_AUTH_PASSWORD` at minimum, and preferably put an HTTPS reverse proxy or VPN in front of it and restrict access to trusted users — Basic authentication over plain HTTP sends the password in cleartext. TLS termination and rate limiting also belong at that boundary.
+The supplied Compose configuration publishes TunarrTube and its optional Tunarr service on `127.0.0.1` only. The `npm start` command does the same, and so does the portable release's launcher unless it's started with `--lan`. If you deliberately bind TunarrTube to another interface, set `TUNARRTUBE_AUTH_PASSWORD` at minimum, and preferably put an HTTPS reverse proxy or VPN in front of it and restrict access to trusted users — Basic authentication over plain HTTP sends the password in cleartext. TLS termination and rate limiting also belong at that boundary.
 
 TunarrTube accepts only public HTTPS YouTube URLs. It does not accept account credentials directly, and never has: the one supported authentication path is an optional, opt-in `yt-dlp` cookies file (Settings → External tools/`TUNARRTUBE_YTDLP_COOKIES`) whose *path* TunarrTube is told about — it never receives, stores, or displays the file's contents, only passes the path to `yt-dlp`. Because anyone who can reach the API can point this at any file readable inside the container, treat API access as equivalent to access to that YouTube account's session, and treat the cookies file itself like a password (see README's "Age-restricted or sign-in-required videos"). Never add credentials to YouTube URLs, command-line overrides, logs, issues, or diagnostics.
 
@@ -26,6 +26,7 @@ Allow the maintainers a reasonable opportunity to investigate and release a fix 
 ## Operational recommendations
 
 - Run one TunarrTube instance per SQLite database and keep `/config` and media mounts writable only by the container/user that needs them.
+- Download portable releases only from the repository's GitHub Releases and check them against the published `.sha256` file. They aren't code-signed yet, so Windows SmartScreen and macOS Gatekeeper warn on first launch (see README's "Portable release"). The release bundles yt-dlp, FFmpeg, and Chrome Headless Shell, each verified against its publisher's checksum at build time; replace the release to pick up their security updates (Settings → Update updates yt-dlp in place).
 - Pin container image tags or digests for reproducible deployments and apply updates regularly.
 - Back up the SQLite database and media directory before upgrades.
 - Review `npm audit` and container-image scan results before releases.

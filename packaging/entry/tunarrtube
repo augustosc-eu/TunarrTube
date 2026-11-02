@@ -1,0 +1,4 @@
+#!/bin/sh
+# Starts TunarrTube from the portable release (Linux). Options: ./tunarrtube --help
+DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$DIR/runtime/node" "$DIR/launcher/launcher.mjs" "$@"

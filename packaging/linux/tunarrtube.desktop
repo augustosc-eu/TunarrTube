@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=TunarrTube
+Comment=Turn YouTube and other video sites into Tunarr channels
+Exec=AppRun
+Icon=tunarrtube
+Terminal=false
+Categories=AudioVideo;Video;Network;
+StartupNotify=false

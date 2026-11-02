@@ -23,7 +23,7 @@ TunarrTube is a self-hosted, local-first companion for Tunarr. It discovers vide
 - Translate media paths when TunarrTube and Tunarr use different host or container paths.
 - Monitor background work, cache usage, and sanitized logs from the web interface, with an explicit **Published**/**Publish incomplete** status per channel — see **Known issues**.
 - Recover interrupted jobs after a restart without deleting previously completed media.
-- Run natively on macOS, Linux, or Windows, or use the included Docker configuration.
+- Download a ready-to-run release for Windows, macOS, or Linux with everything included (Node.js, `yt-dlp`, FFmpeg, and a headless Chrome), run it from source, or use the included Docker configuration.
 
 ## Known issues
 
@@ -55,9 +55,57 @@ yt-dlp analysis ──► SQLite catalog ──► background job queue
 
 TunarrTube does not upload video metadata directly into Tunarr. Tunarr scans the shared media directory and reads the generated `.nfo` sidecars. It then matches scanned programs back to TunarrTube records using the video ID recovered from each filename (the whole filename under the default naming scheme, or a trailing `[videoId]` under a custom one — see "Naming" below).
 
+## Portable release (Windows, macOS, Linux)
+
+The simplest way to run TunarrTube on a desktop or laptop. Each [release](https://github.com/augustosc-eu/TunarrTube/releases) has a download per platform that includes everything TunarrTube needs: Node.js, `yt-dlp`, FFmpeg/ffprobe, and Chrome Headless Shell for Channels overlays. You don't install anything else.
+
+| Platform | Download |
+|---|---|
+| Windows 10/11 (x64) | `TunarrTube-<version>-windows-x64.zip` |
+| macOS, Apple Silicon | `TunarrTube-<version>-macos-arm64.dmg` |
+| macOS, Intel | `TunarrTube-<version>-macos-x64.dmg` |
+| Linux x64 | `TunarrTube-<version>-linux-x64.AppImage` |
+| Linux arm64 (e.g. Raspberry Pi 4/5 with a 64-bit OS) | `TunarrTube-<version>-linux-arm64.AppImage` |
+
+Each download has a matching `.sha256` file. macOS and Linux also have a `.tar.gz` of the same release folder, for servers and scripted installs. Each one is a regular app with no terminal window:
+
+- **Windows:** extract the zip anywhere and double-click `TunarrTube.exe`. `TunarrTube.cmd` next to it starts the same thing in a console window, for the options below.
+- **macOS:** open the `.dmg`, drag `TunarrTube` into Applications, and open it like any other app. `TunarrTube.command` (in the `.tar.gz`) starts the same thing in Terminal.
+- **Linux:** make the AppImage executable (`chmod +x TunarrTube-*.AppImage`, or Properties → Permissions in your file manager) and double-click it. The first launch adds TunarrTube to your applications menu. The dialogs use `zenity` or `kdialog`, which most desktops have; run it from a terminal for the terminal prompts instead. From the `.tar.gz`, run `./tunarrtube` in a terminal.
+
+TunarrTube opens in your browser. There's no Dock or taskbar icon: **Quit TunarrTube** at the bottom of the sidebar stops it (started from a terminal, Ctrl+C works too). The app's output goes to a log file: `~/Library/Logs/TunarrTube/launcher.log` on macOS, `%LOCALAPPDATA%\TunarrTube\Logs\launcher.log` on Windows, `~/.local/state/TunarrTube/launcher.log` on Linux.
+
+The first time, TunarrTube asks where to keep your **library folder**: the database, downloaded media, thumbnails, and caches all go there. It offers `TunarrTube` in your home folder or a folder dialog to pick another (a terminal prompt where there's no dialog). Choose a drive with room for your videos and outside the extracted release, so replacing the release when you upgrade never touches your library. TunarrTube remembers the choice and opens your browser at [http://127.0.0.1:3000](http://127.0.0.1:3000).
+
+**Already running TunarrTube?** Choose **Open an existing TunarrTube library** and select either a library folder or your source checkout (the folder with `package.json` and `prisma/tunarrtube.db`). TunarrTube opens a checkout in place, keeping its database, `storage/`, and `.env`, so downloads and Tunarr path mappings keep working. Stop `npm start` first: only one TunarrTube may run against a database. Docker installs keep their data in Docker volumes and aren't opened this way.
+
+**Changing the library folder later:** run TunarrTube with `--choose-data-dir` (Windows: `TunarrTube.exe --choose-data-dir`; macOS: `open -a TunarrTube --args --choose-data-dir`; Linux: `./TunarrTube-*.AppImage --choose-data-dir`). If the remembered library folder is missing (an unplugged drive, say), the app tells you and offers the same choice. You can keep the current folder, choose a new one, or open another existing library. When you switch, TunarrTube never moves or deletes anything: the previous folder stays untouched as a **legacy library**, and the same menu lets you switch back to it. Files in a library refer to each other by absolute path, so move a library to another drive by choosing a new folder, not by copying the old one.
+
+Other launcher options (`--help` lists them all):
+
+| Option | Effect |
+|---|---|
+| `--data-dir <folder>` | Use that library folder without asking (it's created if needed) and remember it |
+| `--port <number>` | Listen on another port (default `3000`) |
+| `--lan` | Listen on all network interfaces. Set a password first (below) |
+| `--no-open` | Don't open the browser |
+| `--no-dialog` | Type folder paths instead of using a folder dialog, e.g. over SSH |
+
+Environment settings such as `TUNARRTUBE_TUNARR_URL` or `TUNARRTUBE_AUTH_PASSWORD` (see [Configuration](#configuration)) go in a `tunarrtube.env` file in the library folder, one `NAME=value` per line. A source checkout opened in place uses its existing `.env` instead. Variables set in the environment you start the launcher from take precedence over both.
+
+**Upgrading:** quit TunarrTube and replace the app (or release folder) with the new one. The first time a new version opens a library, it backs up the database to the library's `backups/` folder (the last 10 are kept) before applying migrations. **Update** next to `yt-dlp` in Settings works in the portable release too, and the update lasts until you replace the release — except in the AppImage, which is read-only: there, a new TunarrTube release brings the new `yt-dlp`.
+
+The release isn't code-signed yet, so your system warns the first time:
+
+- **Windows:** SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
+- **macOS:** if macOS says `TunarrTube.app` can't be opened, go to System Settings → Privacy & Security and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/TunarrTube.app` once in Terminal. On its first launch the app removes the download quarantine from the rest of its bundle, so the bundled tools can run. The first launch also takes a little longer while macOS scans the app.
+- **Linux arm64:** Chrome for Testing has no Linux arm64 build, so this release doesn't include a browser. For Channels overlays, install your distribution's `chromium` package; the launcher finds it on `PATH`.
+
+The bundled FFmpeg builds are GPL-licensed, and the other bundled tools have their own licenses. Each release lists them in `THIRD-PARTY-NOTICES.txt`.
+
 ## Quick start with Docker
 
-Docker is the simplest option. The TunarrTube image includes Node.js, `yt-dlp`, and FFmpeg.
+Docker is the simplest option on a server. The TunarrTube image includes Node.js, `yt-dlp`, and FFmpeg.
 
 ### TunarrTube and Tunarr together
 
@@ -94,16 +142,16 @@ The commands above build the image from your checkout. Each release is also publ
 
 | Tag | Meaning |
 |---|---|
-| `ghcr.io/augustosc-eu/tunarrtube:0.5.0` | That exact release (recommended, so upgrades happen only when you choose) |
+| `ghcr.io/augustosc-eu/tunarrtube:0.6.0` | That exact release (recommended, so upgrades happen only when you choose) |
 | `ghcr.io/augustosc-eu/tunarrtube:0.3` | The newest patch release of 0.3 |
 | `ghcr.io/augustosc-eu/tunarrtube:latest` | The newest stable release |
 
-Pre-releases (for example `0.5.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
+Pre-releases (for example `0.6.0-rc.1`) are published only under their exact version. See [Releases](https://github.com/augustosc-eu/TunarrTube/releases) for the available versions and what changed.
 
 To use one with the supplied `compose.yaml`, add the image to `.env`:
 
 ```dotenv
-TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.5.0
+TUNARRTUBE_IMAGE=ghcr.io/augustosc-eu/tunarrtube:0.6.0
 ```
 
 Then pull it and start without building:
@@ -144,6 +192,8 @@ TunarrTube needs write access; Tunarr only needs read access. The TunarrTube con
 > The Channels overlay-render feature needs a working headless Chromium in addition to `yt-dlp`/FFmpeg. The Docker image installs Debian's own `chromium` package for this (rather than Puppeteer's own bundled download) and points Puppeteer at it — no extra setup needed.
 
 ## Native installation
+
+Run TunarrTube from a source checkout. You install Node.js, `yt-dlp`, and FFmpeg yourself (see the [portable release](#portable-release-windows-macos-linux) for a download that includes them).
 
 ### Requirements
 
@@ -193,6 +243,8 @@ npm start
 ```
 
 To skip the build when nothing changed, use `npm run serve` instead (`npm run serve -- --lan` for all interfaces, `-- --rebuild` to force a build). It backs up the database to `prisma/backups/` (keeping the last 10), runs `npm run build` only if the source changed since the last build, then runs `npm start`.
+
+On the first start, TunarrTube opens a short **setup wizard** at `/setup`: pick where videos are stored, enter your Tunarr URL (with a connection test), and confirm `yt-dlp` and FFmpeg are installed. The storage step has a **Browse** button that lists folders on the machine TunarrTube runs on (inside the container under Docker), shows free space, and can create a new folder; the same picker is on the Settings page next to the media directory. Run the wizard again any time from **Settings → Run setup wizard**.
 
 Both development and production startup generate Prisma Client and apply committed SQLite migrations automatically. `npm start` listens on `127.0.0.1`; `npm run start:lan` deliberately listens on all interfaces — set `TUNARRTUBE_AUTH_PASSWORD` before using it (see [Optional password](#optional-password)).
 
@@ -329,15 +381,17 @@ curl -X POST http://localhost:3000/api/sources/analyze \
 
 ## Configuration
 
-Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature — plus toggles to enable/disable the MusicBrainz and iTunes lookups individually and an **auto-apply confidence threshold** (0-100) controlling how sure the automatic artist lookup (see above) needs to be before it applies a match on its own; anything scoring below the threshold is left for you to resolve manually via **Look up**.
+Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start (they pre-fill the setup wizard); afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature — plus toggles to enable/disable the MusicBrainz and iTunes lookups individually and an **auto-apply confidence threshold** (0-100) controlling how sure the automatic artist lookup (see above) needs to be before it applies a match on its own; anything scoring below the threshold is left for you to resolve manually via **Look up**.
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `DATABASE_URL` | Prisma SQLite connection | `file:./tunarrtube.db` |
+| `TUNARRTUBE_DATA_DIR` | Keep the database (`tunarrtube.db`) and `storage/` (media, thumbnails, caches) together in this folder instead of the project directory. The portable release's launcher always sets it to the library folder | Unset (project directory) |
+| `TUNARRTUBE_STORAGE_DIR` | Folder for TunarrTube's own files: default media root, thumbnails, render and `yt-dlp` caches | `<TUNARRTUBE_DATA_DIR>/storage`, else `storage/` |
+| `DATABASE_URL` | Prisma SQLite connection | `file:<TUNARRTUBE_DATA_DIR>/tunarrtube.db`, else `file:./tunarrtube.db` (`prisma/tunarrtube.db`) |
 | `TUNARRTUBE_YTDLP_PATH` | Absolute `yt-dlp` executable path | Auto-discovered |
 | `TUNARRTUBE_FFMPEG_PATH` | Absolute FFmpeg executable path | Auto-discovered |
-| `TUNARRTUBE_MEDIA_DIR` | Initial media root | `storage/media` |
-| `TUNARRTUBE_THUMBNAIL_DIR` | Thumbnail storage root | `storage/thumbnails` |
+| `TUNARRTUBE_MEDIA_DIR` | Initial media root | `<storage>/media` |
+| `TUNARRTUBE_THUMBNAIL_DIR` | Thumbnail storage root | `<storage>/thumbnails` |
 | `TUNARRTUBE_YTDLP_COOKIES` | Initial `yt-dlp` cookies file path (see "Age-restricted or sign-in-required videos" below) | None (unauthenticated) |
 | `TUNARRTUBE_TUNARR_URL` | Initial Tunarr base URL | `http://127.0.0.1:8000` native; `http://tunarr:8000` in Compose |
 | `TUNARRTUBE_GENERAL_WORKERS` | How many lightweight non-download/cache/render jobs run concurrently | `3` |
@@ -351,7 +405,7 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 | `TUNARRTUBE_ANTHROPIC_MODEL` | Anthropic model used for AI Programming | `claude-opus-5-5` |
 | `TUNARRTUBE_OPENAI_MODEL` | OpenAI model used for AI Programming (must support structured outputs) | `gpt-5` |
 | `TUNARRTUBE_CLAUDE_PATH` | Absolute `claude` (Claude Code CLI) executable path, used when Settings' own path override is unset | Auto-discovered |
-| `TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium |
+| `TUNARRTUBE_PUPPETEER_EXECUTABLE_PATH` | Absolute Chrome/Chromium path for Channels overlay rendering | Puppeteer's own bundled Chromium (the portable release's bundled Chrome Headless Shell) |
 | `TUNARRTUBE_PORT` | Docker host port | `3000` |
 | `TUNARR_PORT` | Optional Tunarr Docker host port | `8000` |
 | `TUNARRTUBE_IMAGE` | Published TunarrTube image to run instead of building this checkout (see [Published images](#published-images)) | `tunarrtube:local` (built from source) |
@@ -360,9 +414,11 @@ Copy `.env.example` to `.env` only when you need overrides. Environment settings
 
 The pre-rename `YTARR_*` names (and `YTARR_PORT` for Compose) still work as fallbacks, but are deprecated: TunarrTube logs a warning at startup naming each one it finds, so you can rename it to the `TUNARRTUBE_*` equivalent.
 
-Native defaults:
+In the portable release, the launcher sets the tool paths to the bundled `yt-dlp`, FFmpeg, ffprobe, and Chrome unless you set them yourself.
 
-- Database: `prisma/tunarrtube.db`
+Native defaults (inside `TUNARRTUBE_DATA_DIR` when it's set, as in the portable release, otherwise the project directory):
+
+- Database: `prisma/tunarrtube.db` (`tunarrtube.db` in a data directory)
 - Media: `storage/media/`
 - Thumbnails: `storage/thumbnails/`
 - Source files: `<media-root>/<source-directory>/<youtubeId>.mp4` by default (see "Naming" below for custom filename/folder layouts)
@@ -394,11 +450,19 @@ Downloads are written to temporary paths and renamed into place only after `yt-d
 
 ### `yt-dlp` or FFmpeg is not found
 
-Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_PATH` or `TUNARRTUBE_FFMPEG_PATH` to `.env` if automatic discovery fails, then restart TunarrTube.
+Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_PATH` or `TUNARRTUBE_FFMPEG_PATH` to `.env` if automatic discovery fails, then restart TunarrTube. On Windows, automatic discovery only finds `.exe` files on `PATH`, not `.cmd`/`.bat` wrappers. The portable release always uses its bundled tools unless you override them in `tunarrtube.env`.
+
+### The portable release doesn't start
+
+- **"Your TunarrTube library folder … is missing":** the remembered library folder isn't there, for example because its drive isn't connected. TunarrTube never starts an empty library in its place. Reconnect the drive, or run the launcher with `--choose-data-dir`.
+- **"Something is already listening on port 3000":** another program, or a TunarrTube started with `npm start`, is using the port. Stop it, or start with `--port 3001`.
+- **"TunarrTube is already running for …":** that library is already open, so the launcher only opens your browser on it. Each library runs once.
+- **macOS says a bundled tool "can't be opened" or "is damaged":** the download quarantine is still set. Run `xattr -dr com.apple.quarantine` on the release folder (see [Portable release](#portable-release-windows-macos-linux)).
+- **Nothing seems to happen when you open the app:** read its log file (see [Portable release](#portable-release-windows-macos-linux)), or start it from a terminal (`TunarrTube.cmd`, `TunarrTube.command`, or the AppImage) to see the output directly.
 
 ### Downloads fail with "No supported JavaScript runtime" or HTTP 403/500
 
-Current `yt-dlp` needs a JavaScript runtime (plus its `yt-dlp-ejs` solver scripts) to extract YouTube formats; without one, downloads fail with the warning above, and metadata jobs can intermittently fail with `The page needs to be reloaded`. TunarrTube itself always passes `--js-runtimes node --remote-components ejs:github` to every `yt-dlp` invocation (so it uses the Node.js it's already running on, and actually downloads the solver script instead of only warning it was skipped), and caches that download under its own persisted storage (`/config` in Docker, alongside the database; the project directory's `storage/` folder for a host install) rather than `yt-dlp`'s default `~/.cache`, which isn't guaranteed to exist or be writable. The Docker image also ships the dependencies from `yt-dlp[default]` (the extra that includes `yt-dlp-ejs`) — rebuild and redeploy it if you see this on an older image. For a host install, `pip install "yt-dlp[default]"` (or install [Deno](https://deno.com), which `yt-dlp` auto-detects as an alternative runtime). See the [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+Current `yt-dlp` needs a JavaScript runtime (plus its `yt-dlp-ejs` solver scripts) to extract YouTube formats; without one, downloads fail with the warning above, and metadata jobs can intermittently fail with `The page needs to be reloaded`. TunarrTube itself always passes `--js-runtimes node --remote-components ejs:github` to every `yt-dlp` invocation (so it uses the Node.js it's already running on, and actually downloads the solver script instead of only warning it was skipped), and caches that download under its own persisted storage (`/config` in Docker, alongside the database; the `storage/` folder of the project directory, or of the library folder in the portable release, for a host install) rather than `yt-dlp`'s default `~/.cache`, which isn't guaranteed to exist or be writable. The portable release puts its bundled Node.js on `PATH` for `yt-dlp` and ships yt-dlp's official standalone build, so this works with no setup there. The Docker image also ships the dependencies from `yt-dlp[default]` (the extra that includes `yt-dlp-ejs`) — rebuild and redeploy it if you see this on an older image. For a host install, `pip install "yt-dlp[default]"` (or install [Deno](https://deno.com), which `yt-dlp` auto-detects as an alternative runtime). See the [yt-dlp EJS wiki](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 
 ### A URL cannot be analyzed
 
@@ -417,7 +481,7 @@ One cookies file can hold cookies for several of these sites at once, or give ea
 
 Other sites `yt-dlp` supports aren't accepted on purpose: letting `yt-dlp` fetch arbitrary URLs would let anyone with access to TunarrTube make the server request internal network addresses. Sites are added one at a time (see `lib/youtube/sites.ts`). Private/unlisted, account-only, and members-only media are not supported — TunarrTube can't browse a signed-in account's library, only analyze a URL you already have. Age-restricted and bot-checked *public* videos are supported if you configure a cookies file (see "Age-restricted or sign-in-required videos" below); without one they're marked unavailable instead of failing repeatedly.
 
-YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), it can't update itself, and **Update** says so and tells you how to update it instead. For Homebrew (the usual macOS install), run `brew upgrade yt-dlp`, then click **Test**. To use **Update** outside Docker, point `TUNARRTUBE_YTDLP_PATH` at a standalone `yt-dlp` release binary. In Docker, the image ships yt-dlp's official self-updating build, so **Update** works there too; an update lasts until the container is recreated, and rebuilding the image picks up the latest release.
+YouTube changes its extraction behavior regularly. In Settings, click **Update** next to `yt-dlp` to self-update it (no restart needed — TunarrTube re-discovers the binary on each use), then use **Sync Now**. An existing empty source does not need to be recreated. If `yt-dlp` was installed with a package manager (Homebrew, apt, pip), it can't update itself, and **Update** says so and tells you how to update it instead. For Homebrew (the usual macOS install), run `brew upgrade yt-dlp`, then click **Test**. To use **Update** outside Docker, point `TUNARRTUBE_YTDLP_PATH` at a standalone `yt-dlp` release binary. The portable release already bundles one. In Docker, the image ships yt-dlp's official self-updating build, so **Update** works there too; an update lasts until the container is recreated, and rebuilding the image picks up the latest release.
 
 ### A download failed
 
@@ -514,6 +578,16 @@ npm run build
 ```
 
 Use `npm run test:watch` during development and `npm run db:migrate` after editing `prisma/schema.prisma`. Commit generated migrations with schema changes.
+
+To build the portable release for the machine you're on (the only target it can build) and smoke-test it:
+
+```bash
+npm run build
+node scripts/package-release.mjs            # dist/TunarrTube-<version>-<target>/, its archive, and the .dmg / .AppImage
+node scripts/smoke-test-release.mjs dist/TunarrTube-<version>-<target>
+```
+
+`--skip-tools` leaves out the downloaded tools, and `--no-archive` skips the archive, `.dmg` and `.AppImage`. Pushing a `vX.Y.Z` tag builds all five targets on GitHub Actions and attaches them to the release (`.github/workflows/release-binaries.yml`).
 
 Architecture and product context live in:
 

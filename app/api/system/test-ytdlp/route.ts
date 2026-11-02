@@ -3,7 +3,7 @@ import { inspectBinary } from "@/lib/system/binaries";
 
 export async function POST() {
   try {
-    return ok(await inspectBinary("yt-dlp"));
+    return ok(await inspectBinary("yt-dlp", { fresh: true }));
   } catch (error) {
     return toErrorResponse(error);
   }

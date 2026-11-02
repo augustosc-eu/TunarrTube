@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>TunarrTube</string>
+  <key>CFBundleDisplayName</key>
+  <string>TunarrTube</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.github.augustosc-eu.tunarrtube</string>
+  <key>CFBundleExecutable</key>
+  <string>TunarrTube</string>
+  <key>CFBundleIconFile</key>
+  <string>TunarrTube</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>{{version}}</string>
+  <key>CFBundleVersion</key>
+  <string>{{version}}</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <!-- A background agent: no Dock icon or menu bar for a process that has no window of its own. The UI is
+       the browser tab it opens; Quit TunarrTube in the sidebar stops it. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>MIT License</string>
+</dict>
+</plist>

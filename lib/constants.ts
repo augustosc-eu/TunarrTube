@@ -1,7 +1,14 @@
 import path from "node:path";
 
 export const PROJECT_ROOT = process.cwd();
-export const DEFAULT_MEDIA_ROOT = path.join(PROJECT_ROOT, "storage", "media");
+// TunarrTube's own files (default media directory, thumbnails, render and yt-dlp caches). TUNARRTUBE_STORAGE_DIR
+// wins; otherwise <TUNARRTUBE_DATA_DIR>/storage when a data directory is configured (the portable release's
+// launcher always sets one -- see packaging/launcher/); otherwise storage/ in the project directory.
+export const STORAGE_ROOT = path.resolve(
+  process.env.TUNARRTUBE_STORAGE_DIR ||
+    (process.env.TUNARRTUBE_DATA_DIR ? path.join(process.env.TUNARRTUBE_DATA_DIR, "storage") : path.join(PROJECT_ROOT, "storage"))
+);
+export const DEFAULT_MEDIA_ROOT = path.join(STORAGE_ROOT, "media");
 
 // Channel-generator domain roots. RENDER_CACHE_ROOT/RENDERS_ROOT are render-cache-shaped (freely
 // rebuildable, hardlinked into a channel's own storage directory at publish time) and stay under
@@ -10,7 +17,7 @@ export const DEFAULT_MEDIA_ROOT = path.join(PROJECT_ROOT, "storage", "media");
 // mediaDirectory) is instead derived per-call from the *configurable* AppSettings.mediaBaseDirectory
 // -- see lib/channels/service.ts -- namespaced under "_channels" so it can never collide with a
 // Source's own directoryName (a plain slugify() output, which never starts with "_").
-export const RENDER_CACHE_ROOT = path.join(PROJECT_ROOT, "storage", "render-cache");
+export const RENDER_CACHE_ROOT = path.join(STORAGE_ROOT, "render-cache");
 export const RENDERS_ROOT = path.join(DEFAULT_MEDIA_ROOT, "_renders");
 
 // yt-dlp's own cache (notably the yt-dlp-ejs challenge-solver script it downloads on first use -- see
@@ -18,7 +25,7 @@ export const RENDERS_ROOT = path.join(DEFAULT_MEDIA_ROOT, "_renders");
 // guaranteed to exist, be writable, or persist across restarts. Same process-relative-storage pattern as
 // RENDER_CACHE_ROOT above so it persists identically in a native install (under the project directory)
 // and in Docker (the tunarrtube-storage volume already mounted over /app/storage in compose.yaml).
-export const YTDLP_CACHE_ROOT = path.join(PROJECT_ROOT, "storage", "yt-dlp-cache");
+export const YTDLP_CACHE_ROOT = path.join(STORAGE_ROOT, "yt-dlp-cache");
 // Hidden work directories TunarrTube creates inside media directories: the playback cache (under the
 // media base directory) and per-download temp roots (next to each download target). Dot-prefixed so Tunarr
 // and other media scanners skip them.
