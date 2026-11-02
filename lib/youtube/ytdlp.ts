@@ -333,8 +333,23 @@ export function isTransientNetworkError(message: string) {
 // lib/downloads/service.ts) should record it and stop rather than burn retries on it.
 const UNAVAILABLE_SIGNAL = /private|unavailable|deleted|removed|does not exist/i;
 
+// The part of a failure message that is yt-dlp's verdict on the video itself: the reason in its
+// extractor errors ("ERROR: [youtube] <id>: Private video ..."), with any path- or URL-like token removed.
+// A PROCESS_FAILED message (lib/system/process.ts) starts with the yt-dlp binary's path -- every macOS
+// temp path is under /private/ -- and its stderr can carry output paths and title-based filenames
+// (including in non-extractor errors such as "ERROR: unable to write to <path>"), any of which can contain
+// "private", "deleted" or "removed" and would otherwise turn a transient failure into a permanent
+// "unavailable" (issue #33). A message with no ERROR: line at all (not from yt-dlp's stderr) is read
+// whole, minus a leading "<program> failed:" prefix.
+function ytDlpVerdict(message: string) {
+  const stderr = message.replace(/^[^\n]*? failed(?: \([^)]*\))?: /, "");
+  if (!/^\s*ERROR:/im.test(stderr)) return stderr.replace(/\S*[\\/]\S*/g, " ");
+  const reasons = [...stderr.matchAll(/^\s*ERROR:\s*\[[^\]\n]+\]\s+[^\s:]+:\s*(.+)$/gim)].map((match) => match[1]);
+  return reasons.join("\n").replace(/\S*[\\/]\S*/g, " ");
+}
+
 export function isUnavailableVideoError(message: string) {
-  return UNAVAILABLE_SIGNAL.test(message);
+  return UNAVAILABLE_SIGNAL.test(ytDlpVerdict(message));
 }
 
 // yt-dlp's message when YouTube demands authentication before it'll serve the video at all: age-gated
@@ -348,7 +363,7 @@ export function isUnavailableVideoError(message: string) {
 const SIGN_IN_REQUIRED_SIGNAL = /sign in to confirm|only works when logged-in|provide account credentials|login required|requires? (?:a )?login/i;
 
 export function isSignInRequiredError(message: string) {
-  return SIGN_IN_REQUIRED_SIGNAL.test(message);
+  return SIGN_IN_REQUIRED_SIGNAL.test(ytDlpVerdict(message));
 }
 
 // Pulls yt-dlp's own one-line reason out of its stderr ("ERROR: [youtube] <id>: <reason>") for use when a
