@@ -97,6 +97,7 @@ function laneKind(id: string): LaneKind {
 // "thumbnail" (a couple of quick image fetches) don't check it, so stopping one wouldn't do anything
 // but leave the UI showing a request that never lands. Exported so lib/jobs/service.ts's stopJob() can
 // reject those up front instead of silently no-oping.
+const MEDIA_JOB_TYPES = ["download", "cache"];
 export const STOPPABLE_JOB_TYPES = ["download", "cache", "sync", "metadata", "metadata_lookup", "tunarr_publish", "tunarr_refresh", "render", "channel_publish", "content_select", "channel_brief"];
 
 // Called by stopJob() (lib/jobs/service.ts) for a job that's currently claimed as "running". Returns
@@ -228,15 +229,17 @@ async function handleJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
 // Shared by the runner's stop-abort path below and cancelJob() (lib/jobs/service.ts, the queued-job
 // case) so both land on the same terminal state: the Job row cancelled, and the SourceVideo/CacheAsset
 // it was working on marked "cancelled" (sticky, so syncSource/materializeForTunarr's automatic
-// re-enqueue paths leave it alone until an explicit retry).
+// re-enqueue paths leave it alone until an explicit retry). A media row that already reads "complete"
+// is left alone: Stop can land after downloadVideo()/cacheVideo() has renamed the file into place, and
+// marking that "cancelled" would keep a finished video out of Tunarr until someone retried it by hand.
 export async function markJobCancelled(job: { id: string; type: string; sourceId: string | null; videoId: string | null }, message: string) {
   const changed = await db.job.updateMany({ where: { id: job.id, status: { in: ["queued", "running"] } }, data: { status: "cancelled", activeKey: null, error: message, finishedAt: new Date() } });
   if (!changed.count) return false;
   if (job.type === "download" && job.sourceId && job.videoId) {
-    await db.sourceVideo.update({ where: { sourceId_videoId: { sourceId: job.sourceId, videoId: job.videoId } }, data: { downloadStatus: "cancelled" } }).catch(() => undefined);
+    await db.sourceVideo.updateMany({ where: { sourceId: job.sourceId, videoId: job.videoId, downloadStatus: { not: "complete" } }, data: { downloadStatus: "cancelled" } }).catch(() => undefined);
   }
   if (job.type === "cache" && job.videoId) {
-    await db.cacheAsset.updateMany({ where: { videoId: job.videoId }, data: { status: "cancelled", error: null } });
+    await db.cacheAsset.updateMany({ where: { videoId: job.videoId, status: { not: "complete" } }, data: { status: "cancelled", error: null } });
   }
   return true;
 }
@@ -328,10 +331,18 @@ async function work(lane: LaneKind) {
       // Stop can arrive between the claim and controller registration.
       if ((await db.job.findUnique({ where: { id: job.id } }))?.status !== "running") continue;
       await handleJob(job, controller.signal);
-      controller.signal.throwIfAborted();
+      // downloadVideo()/cacheVideo() reject on an abort, so their returning means the file is already in
+      // place: a Stop that stopJob() recorded after that lost the race (issue #32), so record the job as
+      // complete and still run the Tunarr follow-up below. Any other job type a late Stop reached is
+      // treated as stopped.
+      const finishedDespiteStop = controller.signal.aborted && MEDIA_JOB_TYPES.includes(job.type);
+      if (!finishedDespiteStop) controller.signal.throwIfAborted();
       const hitsBySite = globalWorker.tunarrtubeRateLimitHits;
       if (SITE_BACKOFF_JOB_TYPES.includes(job.type) && hitsBySite && Object.keys(hitsBySite).length) delete hitsBySite[(await jobSite(job)).id];
-      const completed = await db.job.updateMany({ where: { id: job.id, status: "running" }, data: { status: "complete", activeKey: null, finishedAt: new Date() } });
+      const completed = await db.job.updateMany({
+        where: { id: job.id, status: finishedDespiteStop ? { in: ["running", "cancelled"] } : "running" },
+        data: { status: "complete", activeKey: null, error: null, finishedAt: new Date() }
+      });
       if (!completed.count) continue;
       if (["download", "cache", "retag"].includes(job.type) && job.sourceId) {
         const linked = await db.source.findUnique({ where: { id: job.sourceId }, select: { tunarrChannelId: true } });

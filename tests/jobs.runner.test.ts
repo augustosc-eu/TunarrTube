@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db/client";
-import { recoverJobs } from "@/lib/jobs/runner";
+import { markJobCancelled, recoverJobs } from "@/lib/jobs/runner";
 
 describe("recoverJobs (startup recovery)", () => {
   const cleanupVideoIds: string[] = [];
@@ -46,5 +46,49 @@ describe("recoverJobs (startup recovery)", () => {
 
     const reloaded = await db.cacheAsset.findUniqueOrThrow({ where: { id: asset.id } });
     expect(reloaded.activeReaders).toBe(1);
+  });
+});
+
+describe("markJobCancelled", () => {
+  const cleanup: { sourceIds: string[]; videoIds: string[] } = { sourceIds: [], videoIds: [] };
+
+  afterEach(async () => {
+    await db.job.deleteMany({ where: { sourceId: { in: cleanup.sourceIds } } });
+    await db.source.deleteMany({ where: { id: { in: cleanup.sourceIds.splice(0) } } });
+    await db.job.deleteMany({ where: { videoId: { in: cleanup.videoIds } } });
+    await db.video.deleteMany({ where: { id: { in: cleanup.videoIds.splice(0) } } });
+  });
+
+  async function fixture(downloadStatus: string, cacheStatus: string) {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const source = await db.source.create({ data: { name: "Stop race", url: `https://youtube.com/playlist?list=${suffix}`, youtubeId: suffix, directoryName: `stop-${suffix}`, mediaDirectory: `/tmp/stop-${suffix}` } });
+    const video = await db.video.create({ data: { youtubeId: `stop-${suffix}`, title: "Stop race video", youtubeUrl: `https://www.youtube.com/watch?v=stop-${suffix}` } });
+    cleanup.sourceIds.push(source.id);
+    cleanup.videoIds.push(video.id);
+    await db.sourceVideo.create({ data: { sourceId: source.id, videoId: video.id, downloadStatus } });
+    await db.cacheAsset.create({ data: { videoId: video.id, status: cacheStatus } });
+    return { source, video };
+  }
+
+  // Issue #32: Stop can arrive after downloadVideo()/cacheVideo() has already put the file in place.
+  it.each(["download", "cache"])("leaves a %s that already completed recorded as complete", async (type) => {
+    const { source, video } = await fixture("complete", "complete");
+    const job = await db.job.create({ data: { type, status: "running", sourceId: source.id, videoId: video.id } });
+
+    expect(await markJobCancelled(job, "Stopped by user.")).toBe(true);
+
+    expect((await db.job.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("cancelled");
+    expect((await db.sourceVideo.findFirstOrThrow({ where: { sourceId: source.id, videoId: video.id } })).downloadStatus).toBe("complete");
+    expect((await db.cacheAsset.findFirstOrThrow({ where: { videoId: video.id } })).status).toBe("complete");
+  });
+
+  it("still marks an in-progress download and cache as cancelled", async () => {
+    const { source, video } = await fixture("downloading", "downloading");
+    for (const type of ["download", "cache"]) {
+      const job = await db.job.create({ data: { type, status: "running", sourceId: source.id, videoId: video.id } });
+      await markJobCancelled(job, "Stopped by user.");
+    }
+    expect((await db.sourceVideo.findFirstOrThrow({ where: { sourceId: source.id, videoId: video.id } })).downloadStatus).toBe("cancelled");
+    expect((await db.cacheAsset.findFirstOrThrow({ where: { videoId: video.id } })).status).toBe("cancelled");
   });
 });
