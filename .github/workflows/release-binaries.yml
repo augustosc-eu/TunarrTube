@@ -1,7 +1,8 @@
 name: Portable release
 
-# Builds the portable, everything-included release (scripts/package-release.mjs) for each platform and, when a
-# version tag (v1.2.3, v1.2.3-rc.1) is pushed, attaches the archives to that tag's GitHub Release (creating
+# Builds the portable, everything-included release (scripts/package-release.mjs) for each platform -- a .zip with
+# TunarrTube.exe on Windows, a .dmg with TunarrTube.app (and a .tar.gz) on macOS, an .AppImage and a .tar.gz on
+# Linux -- and, when a version tag (v1.2.3, v1.2.3-rc.1) is pushed, attaches them to that tag's GitHub Release (creating
 # the release if it doesn't exist yet). Pull requests that touch the release inputs build and smoke-test every
 # platform without publishing; a manual run does the same for any ref.
 #
@@ -15,6 +16,7 @@ on:
       - packaging/**
       - scripts/package-release.mjs
       - scripts/smoke-test-release.mjs
+      - scripts/windows-exe.mjs
       - scripts/migrate-legacy-database.mjs
       - package.json
       - package-lock.json
@@ -92,6 +94,23 @@ jobs:
           tar -xf dist/TunarrTube-*-${{ matrix.target }}.${{ startsWith(matrix.target, 'windows') && 'zip' || 'tar.gz' }} -C "$RUNNER_TEMP/unpacked"
           node scripts/smoke-test-release.mjs "$(ls -d "$RUNNER_TEMP"/unpacked/TunarrTube-*)"
 
+      # Both run read-only, as people use them: the disk image mounted, the AppImage's squashfs extracted.
+      - name: Smoke test the disk image
+        if: startsWith(matrix.target, 'macos')
+        run: |
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" dist/TunarrTube-*-${{ matrix.target }}.dmg
+          node scripts/smoke-test-release.mjs "$RUNNER_TEMP/dmg"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+
+      - name: Smoke test the AppImage
+        if: startsWith(matrix.target, 'linux')
+        run: |
+          mkdir -p "$RUNNER_TEMP/appimage"
+          cp dist/TunarrTube-*-${{ matrix.target }}.AppImage "$RUNNER_TEMP/appimage/"
+          cd "$RUNNER_TEMP/appimage" && ./TunarrTube-*.AppImage --appimage-extract > /dev/null
+          chmod -R a-w squashfs-root
+          node "$GITHUB_WORKSPACE/scripts/smoke-test-release.mjs" squashfs-root
+
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -99,6 +118,8 @@ jobs:
           path: |
             dist/TunarrTube-*.tar.gz
             dist/TunarrTube-*.zip
+            dist/TunarrTube-*.dmg
+            dist/TunarrTube-*.AppImage
             dist/TunarrTube-*.sha256
           if-no-files-found: error
           compression-level: 0 # already compressed

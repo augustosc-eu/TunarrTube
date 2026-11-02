@@ -2,17 +2,22 @@
 //
 //   node scripts/smoke-test-release.mjs dist/TunarrTube-<version>-<target>
 //
-// Starts the launcher with the bundled Node.js against a throwaway library folder (and a throwaway home, so
-// the operator's real launcher.json is never touched), waits for /api/health, checks the app finds the
-// bundled yt-dlp and FFmpeg, renders a page with the bundled Chrome Headless Shell, then stops it again.
-// Used by .github/workflows/release-binaries.yml on every target.
+// Starts the release the way a double-click does -- TunarrTube.app's executable, TunarrTube.exe, or AppRun in an
+// extracted AppImage -- or else the launcher with the bundled Node.js (the Linux .tar.gz), against a throwaway
+// library folder (and a throwaway home, so the operator's real launcher.json is never touched). It waits for
+// /api/health, checks the app finds the bundled yt-dlp and FFmpeg, renders a page with the bundled Chrome
+// Headless Shell, then stops it again. Used by .github/workflows/release-binaries.yml on every target, also
+// against the mounted .dmg and the extracted AppImage.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-const release = path.resolve(process.argv[2] ?? "");
+const folder = path.resolve(process.argv[2] ?? "");
+// The macOS release keeps the launcher, runtime and tools inside TunarrTube.app.
+const appResources = path.join(folder, "TunarrTube.app", "Contents", "Resources");
+const release = existsSync(appResources) ? appResources : folder;
 if (!existsSync(path.join(release, "launcher", "launcher.mjs"))) {
   console.error("Usage: node scripts/smoke-test-release.mjs <unpacked release folder>");
   process.exit(1);
@@ -23,7 +28,23 @@ const scratch = mkdtempSync(path.join(os.tmpdir(), "tunarrtube-smoke-"));
 const library = path.join(scratch, "library");
 const port = 39_000 + Math.floor(Math.random() * 1000);
 const url = `http://127.0.0.1:${port}`;
-const env = { ...process.env, HOME: scratch, USERPROFILE: scratch, APPDATA: path.join(scratch, "AppData"), XDG_CONFIG_HOME: path.join(scratch, ".config") };
+const env = {
+  ...process.env,
+  HOME: scratch,
+  USERPROFILE: scratch,
+  APPDATA: path.join(scratch, "AppData", "Roaming"),
+  LOCALAPPDATA: path.join(scratch, "AppData", "Local"),
+  XDG_CONFIG_HOME: path.join(scratch, ".config"),
+  XDG_DATA_HOME: path.join(scratch, ".local", "share"),
+  XDG_STATE_HOME: path.join(scratch, ".local", "state")
+};
+// The desktop app entry points and the log file each writes the launcher's output to.
+const appEntries = [
+  [path.join(folder, "TunarrTube.app", "Contents", "MacOS", "TunarrTube"), path.join(scratch, "Library", "Logs", "TunarrTube", "launcher.log")],
+  [path.join(folder, "TunarrTube.exe"), path.join(env.LOCALAPPDATA, "TunarrTube", "Logs", "launcher.log")],
+  [path.join(folder, "AppRun"), path.join(env.XDG_STATE_HOME, "TunarrTube", "launcher.log")]
+];
+const [entry, appLog] = appEntries.find(([file]) => existsSync(file)) ?? [];
 
 let launcher;
 function check(condition, message) {
@@ -73,7 +94,10 @@ function stop() {
 }
 
 try {
-  launcher = spawn(node, [path.join(release, "launcher", "launcher.mjs"), "--data-dir", library, "--port", String(port), "--no-open"], { env, stdio: ["ignore", "inherit", "inherit"] });
+  // --no-dialog: an error must fail the run, not wait for someone to dismiss a dialog.
+  const options = ["--data-dir", library, "--port", String(port), "--no-open", "--no-dialog"];
+  console.log(`Starting ${entry ? path.relative(folder, entry) : "the launcher"}`);
+  launcher = entry ? spawn(entry, options, { env, stdio: "ignore" }) : spawn(node, [path.join(release, "launcher", "launcher.mjs"), ...options], { env, stdio: ["ignore", "inherit", "inherit"] });
   await waitForHealth();
   check(true, `server is healthy at ${url}`);
   check(existsSync(path.join(library, "tunarrtube.db")), "the database was created in the chosen library folder");
@@ -87,6 +111,7 @@ try {
 } catch (error) {
   await stop();
   console.error(`not ok - ${error.message}`);
+  if (appLog && existsSync(appLog)) console.error(`\n--- ${appLog}\n${readFileSync(appLog, "utf8")}`);
   process.exitCode = 1;
 } finally {
   rmSync(scratch, { recursive: true, force: true, maxRetries: 5 });

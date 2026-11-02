@@ -62,22 +62,24 @@ The simplest way to run TunarrTube on a desktop or laptop. Each [release](https:
 | Platform | Download |
 |---|---|
 | Windows 10/11 (x64) | `TunarrTube-<version>-windows-x64.zip` |
-| macOS, Apple Silicon | `TunarrTube-<version>-macos-arm64.tar.gz` |
-| macOS, Intel | `TunarrTube-<version>-macos-x64.tar.gz` |
-| Linux x64 | `TunarrTube-<version>-linux-x64.tar.gz` |
-| Linux arm64 (e.g. Raspberry Pi 4/5 with a 64-bit OS) | `TunarrTube-<version>-linux-arm64.tar.gz` |
+| macOS, Apple Silicon | `TunarrTube-<version>-macos-arm64.dmg` |
+| macOS, Intel | `TunarrTube-<version>-macos-x64.dmg` |
+| Linux x64 | `TunarrTube-<version>-linux-x64.AppImage` |
+| Linux arm64 (e.g. Raspberry Pi 4/5 with a 64-bit OS) | `TunarrTube-<version>-linux-arm64.AppImage` |
 
-Each download has a matching `.sha256` file. To start TunarrTube, extract the archive anywhere and run:
+Each download has a matching `.sha256` file. macOS and Linux also have a `.tar.gz` of the same release folder, for servers and scripted installs. Each one is a regular app with no terminal window:
 
-- **Windows:** double-click `TunarrTube.cmd`.
-- **macOS:** double-click `TunarrTube.command`.
-- **Linux:** run `./tunarrtube` in a terminal.
+- **Windows:** extract the zip anywhere and double-click `TunarrTube.exe`. `TunarrTube.cmd` next to it starts the same thing in a console window, for the options below.
+- **macOS:** open the `.dmg`, drag `TunarrTube` into Applications, and open it like any other app. `TunarrTube.command` (in the `.tar.gz`) starts the same thing in Terminal.
+- **Linux:** make the AppImage executable (`chmod +x TunarrTube-*.AppImage`, or Properties → Permissions in your file manager) and double-click it. The first launch adds TunarrTube to your applications menu. The dialogs use `zenity` or `kdialog`, which most desktops have; run it from a terminal for the terminal prompts instead. From the `.tar.gz`, run `./tunarrtube` in a terminal.
 
-The first time, TunarrTube asks where to keep your **library folder**: the database, downloaded media, thumbnails, and caches all go there. It offers `TunarrTube` in your home folder or a folder dialog to pick another (a terminal prompt where there's no dialog). Choose a drive with room for your videos and outside the extracted release, so replacing the release when you upgrade never touches your library. TunarrTube remembers the choice, opens your browser at [http://127.0.0.1:3000](http://127.0.0.1:3000), and keeps running while its window is open. Press Ctrl+C or close the window to stop it.
+TunarrTube opens in your browser. There's no Dock or taskbar icon: **Quit TunarrTube** at the bottom of the sidebar stops it (started from a terminal, Ctrl+C works too). The app's output goes to a log file: `~/Library/Logs/TunarrTube/launcher.log` on macOS, `%LOCALAPPDATA%\TunarrTube\Logs\launcher.log` on Windows, `~/.local/state/TunarrTube/launcher.log` on Linux.
+
+The first time, TunarrTube asks where to keep your **library folder**: the database, downloaded media, thumbnails, and caches all go there. It offers `TunarrTube` in your home folder or a folder dialog to pick another (a terminal prompt where there's no dialog). Choose a drive with room for your videos and outside the extracted release, so replacing the release when you upgrade never touches your library. TunarrTube remembers the choice and opens your browser at [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
 **Already running TunarrTube?** Choose **Open an existing TunarrTube library** and select either a library folder or your source checkout (the folder with `package.json` and `prisma/tunarrtube.db`). TunarrTube opens a checkout in place, keeping its database, `storage/`, and `.env`, so downloads and Tunarr path mappings keep working. Stop `npm start` first: only one TunarrTube may run against a database. Docker installs keep their data in Docker volumes and aren't opened this way.
 
-**Changing the library folder later:** run the launcher with `--choose-data-dir` (Windows: `TunarrTube.cmd --choose-data-dir` from a terminal). You can keep the current folder, choose a new one, or open another existing library. When you switch, TunarrTube never moves or deletes anything: the previous folder stays untouched as a **legacy library**, and the same menu lets you switch back to it. Files in a library refer to each other by absolute path, so move a library to another drive by choosing a new folder, not by copying the old one.
+**Changing the library folder later:** run TunarrTube with `--choose-data-dir` (Windows: `TunarrTube.exe --choose-data-dir`; macOS: `open -a TunarrTube --args --choose-data-dir`; Linux: `./TunarrTube-*.AppImage --choose-data-dir`). If the remembered library folder is missing (an unplugged drive, say), the app tells you and offers the same choice. You can keep the current folder, choose a new one, or open another existing library. When you switch, TunarrTube never moves or deletes anything: the previous folder stays untouched as a **legacy library**, and the same menu lets you switch back to it. Files in a library refer to each other by absolute path, so move a library to another drive by choosing a new folder, not by copying the old one.
 
 Other launcher options (`--help` lists them all):
 
@@ -91,12 +93,12 @@ Other launcher options (`--help` lists them all):
 
 Environment settings such as `TUNARRTUBE_TUNARR_URL` or `TUNARRTUBE_AUTH_PASSWORD` (see [Configuration](#configuration)) go in a `tunarrtube.env` file in the library folder, one `NAME=value` per line. A source checkout opened in place uses its existing `.env` instead. Variables set in the environment you start the launcher from take precedence over both.
 
-**Upgrading:** stop TunarrTube, extract the new release, and start that one instead. You can delete the old release folder. The first time a new version opens a library, it backs up the database to the library's `backups/` folder (the last 10 are kept) before applying migrations. **Update** next to `yt-dlp` in Settings works in the portable release too, and the update lasts until you replace the release.
+**Upgrading:** quit TunarrTube and replace the app (or release folder) with the new one. The first time a new version opens a library, it backs up the database to the library's `backups/` folder (the last 10 are kept) before applying migrations. **Update** next to `yt-dlp` in Settings works in the portable release too, and the update lasts until you replace the release — except in the AppImage, which is read-only: there, a new TunarrTube release brings the new `yt-dlp`.
 
 The release isn't code-signed yet, so your system warns the first time:
 
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
-- **macOS:** if macOS says `TunarrTube.command` can't be opened, go to System Settings → Privacy & Security and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /path/to/TunarrTube-<version>-macos-arm64` once in Terminal. When the script runs, it removes the download quarantine from the rest of its own folder, so the bundled tools can run.
+- **macOS:** if macOS says `TunarrTube.app` can't be opened, go to System Settings → Privacy & Security and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/TunarrTube.app` once in Terminal. On its first launch the app removes the download quarantine from the rest of its bundle, so the bundled tools can run. The first launch also takes a little longer while macOS scans the app.
 - **Linux arm64:** Chrome for Testing has no Linux arm64 build, so this release doesn't include a browser. For Channels overlays, install your distribution's `chromium` package; the launcher finds it on `PATH`.
 
 The bundled FFmpeg builds are GPL-licensed, and the other bundled tools have their own licenses. Each release lists them in `THIRD-PARTY-NOTICES.txt`.
@@ -242,6 +244,8 @@ npm start
 
 To skip the build when nothing changed, use `npm run serve` instead (`npm run serve -- --lan` for all interfaces, `-- --rebuild` to force a build). It backs up the database to `prisma/backups/` (keeping the last 10), runs `npm run build` only if the source changed since the last build, then runs `npm start`.
 
+On the first start, TunarrTube opens a short **setup wizard** at `/setup`: pick where videos are stored, enter your Tunarr URL (with a connection test), and confirm `yt-dlp` and FFmpeg are installed. The storage step has a **Browse** button that lists folders on the machine TunarrTube runs on (inside the container under Docker), shows free space, and can create a new folder; the same picker is on the Settings page next to the media directory. Run the wizard again any time from **Settings → Run setup wizard**.
+
 Both development and production startup generate Prisma Client and apply committed SQLite migrations automatically. `npm start` listens on `127.0.0.1`; `npm run start:lan` deliberately listens on all interfaces — set `TUNARRTUBE_AUTH_PASSWORD` before using it (see [Optional password](#optional-password)).
 
 ## Connect to Tunarr
@@ -377,7 +381,7 @@ curl -X POST http://localhost:3000/api/sources/analyze \
 
 ## Configuration
 
-Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start; afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature — plus toggles to enable/disable the MusicBrainz and iTunes lookups individually and an **auto-apply confidence threshold** (0-100) controlling how sure the automatic artist lookup (see above) needs to be before it applies a match on its own; anything scoring below the threshold is left for you to resolve manually via **Look up**.
+Copy `.env.example` to `.env` only when you need overrides. Environment settings seed the application on its first start (they pre-fill the setup wizard); afterward, change the media directory and Tunarr URL in the Settings page. The Settings page also has a **MusicBrainz contact email** field — MusicBrainz's API usage policy requires a real contact identifier in the request `User-Agent` for the Channels metadata-lookup feature — plus toggles to enable/disable the MusicBrainz and iTunes lookups individually and an **auto-apply confidence threshold** (0-100) controlling how sure the automatic artist lookup (see above) needs to be before it applies a match on its own; anything scoring below the threshold is left for you to resolve manually via **Look up**.
 
 | Variable | Purpose | Default |
 |---|---|---|
@@ -454,7 +458,7 @@ Open Settings to inspect the detected paths and versions. Add `TUNARRTUBE_YTDLP_
 - **"Something is already listening on port 3000":** another program, or a TunarrTube started with `npm start`, is using the port. Stop it, or start with `--port 3001`.
 - **"TunarrTube is already running for …":** that library is already open, so the launcher only opens your browser on it. Each library runs once.
 - **macOS says a bundled tool "can't be opened" or "is damaged":** the download quarantine is still set. Run `xattr -dr com.apple.quarantine` on the release folder (see [Portable release](#portable-release-windows-macos-linux)).
-- **A double-clicked window closes immediately (Windows):** start `TunarrTube.cmd` from a terminal to read the error. It also pauses on errors, so the message should stay visible.
+- **Nothing seems to happen when you open the app:** read its log file (see [Portable release](#portable-release-windows-macos-linux)), or start it from a terminal (`TunarrTube.cmd`, `TunarrTube.command`, or the AppImage) to see the output directly.
 
 ### Downloads fail with "No supported JavaScript runtime" or HTTP 403/500
 
@@ -579,11 +583,11 @@ To build the portable release for the machine you're on (the only target it can 
 
 ```bash
 npm run build
-node scripts/package-release.mjs            # dist/TunarrTube-<version>-<target>/ plus its archive
+node scripts/package-release.mjs            # dist/TunarrTube-<version>-<target>/, its archive, and the .dmg / .AppImage
 node scripts/smoke-test-release.mjs dist/TunarrTube-<version>-<target>
 ```
 
-`--skip-tools` leaves out the downloaded tools, and `--no-archive` skips the archive. Pushing a `vX.Y.Z` tag builds all five targets on GitHub Actions and attaches them to the release (`.github/workflows/release-binaries.yml`).
+`--skip-tools` leaves out the downloaded tools, and `--no-archive` skips the archive, `.dmg` and `.AppImage`. Pushing a `vX.Y.Z` tag builds all five targets on GitHub Actions and attaches them to the release (`.github/workflows/release-binaries.yml`).
 
 Architecture and product context live in:
 

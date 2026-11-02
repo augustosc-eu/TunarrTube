@@ -1,5 +1,6 @@
-// Entry point of the portable release (scripts/package-release.mjs builds it; the TunarrTube.cmd /
-// TunarrTube.command / tunarrtube scripts next to it start it with the bundled Node.js). It picks the library
+// Entry point of the portable release (scripts/package-release.mjs builds it; the desktop apps -- TunarrTube.app,
+// TunarrTube.exe, the AppImage -- and the TunarrTube.cmd / TunarrTube.command / tunarrtube scripts start it with
+// the bundled Node.js). It picks the library
 // folder (asking the first time), backs up and migrates the database, starts the Next.js standalone server
 // with the bundled yt-dlp/FFmpeg/Chromium, and opens the browser. Run with --help for options.
 import { spawn, spawnSync } from "node:child_process";
@@ -21,7 +22,7 @@ import {
   serverEnvironment,
   writeLauncherConfig
 } from "./library.mjs";
-import { chooseFolderWithDialog } from "./picker.mjs";
+import { chooseFolderWithDialog, showAlert, showButtons } from "./picker.mjs";
 
 const bundleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appDir = path.join(bundleRoot, "app");
@@ -47,6 +48,8 @@ Usage: TunarrTube [options]
 `;
 
 const { values: args } = parseArgs({
+  // Finder can pass a -psn_<process serial number> argument to an app it launches.
+  args: process.argv.slice(2).filter((arg) => !arg.startsWith("-psn_")),
   options: {
     "data-dir": { type: "string" },
     "choose-data-dir": { type: "boolean" },
@@ -64,6 +67,21 @@ const { values: args } = parseArgs({
 class LauncherError extends Error {}
 
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+// Started by a desktop app -- TunarrTube.app (packaging/macos/TunarrTube), TunarrTube.exe
+// (packaging/windows/sea-main.cjs) or the AppImage (packaging/linux/AppRun): no terminal, so questions and
+// errors go through native dialogs, output goes to a log file (TUNARRTUBE_LOG_FILE), and the web UI's Quit
+// button is how TunarrTube is stopped.
+const app = process.env.TUNARRTUBE_APP === "1";
+const logFile = process.env.TUNARRTUBE_LOG_FILE;
+// On macOS and Linux the app's server leads its own process group (see serve()); Windows has no process
+// groups, and a detached server there would have no console for yt-dlp/FFmpeg to inherit, so each of them
+// would open a console window.
+const serverGroup = app && process.platform !== "win32";
+
+// --no-dialog also keeps errors out of dialogs, e.g. for an automated run of a desktop app.
+function alert(title, message) {
+  if (!args["no-dialog"]) showAlert(title, message);
+}
 let readline;
 async function ask(question) {
   readline ??= createInterface({ input: process.stdin, output: process.stdout });
@@ -164,6 +182,47 @@ async function chooseLibraryInteractively(config) {
   }
 }
 
+// chooseLibraryInteractively's counterpart for the desktop apps, with dialogs instead of a typed menu. A legacy
+// library is reopened through "Open Existing…". Without a dialog tool (a Linux desktop without zenity or
+// kdialog), the default folder is used, as when there's no terminal to ask in.
+async function chooseLibraryWithDialogs(config) {
+  const current = config.current ? libraryLocation(config.current.dataDirectory, config.current.layout) : null;
+  const fallback = defaultDataDirectory();
+  for (;;) {
+    const choice = current
+      ? showButtons(`TunarrTube currently uses the library in ${current.dataDirectory}.\n\nA new folder leaves that one untouched; you can switch back with Open Existing.`, ["Open Existing…", "Choose New Folder…", "Keep Using It"])
+      : showButtons(`Welcome to TunarrTube.\n\nChoose the folder for your library: its database, thumbnails and caches (you pick where videos go next, in the browser). Use ${fallback}, or choose another folder.\n\nAlready run TunarrTube from a source checkout? Choose Open Existing and select that folder.`, ["Open Existing…", "Choose Folder…", "Use Default"]);
+    if (choice === undefined) {
+      console.log(`No dialog tool to ask with; using ${fallback}. Pass --data-dir <folder> to use another.`);
+      return detectLibrary(fallback) ?? prepareNewLibrary(fallback);
+    }
+    if (choice === null) throw new LauncherError("No library folder chosen.");
+    try {
+      if (choice === "Keep Using It") return current;
+      if (choice === "Open Existing…") {
+        const picked = chooseFolderWithDialog("Choose the folder of your existing TunarrTube library");
+        if (!picked) continue;
+        const found = detectLibrary(path.resolve(picked));
+        if (found) return found;
+        alert("No TunarrTube library there", `Choose the folder that contains tunarrtube.db, or the source checkout with prisma/tunarrtube.db.`);
+        continue;
+      }
+      const picked = choice === "Use Default" ? fallback : chooseFolderWithDialog("Choose a folder for your TunarrTube library");
+      if (!picked) continue;
+      const directory = path.resolve(picked);
+      const found = detectLibrary(directory);
+      if (found) {
+        if (showButtons(`${found.dataDirectory} already holds a TunarrTube library.`, ["Choose Another Folder", "Keep Using It"]) === "Keep Using It") return found;
+        continue;
+      }
+      return prepareNewLibrary(directory);
+    } catch (error) {
+      if (!(error instanceof LauncherError)) throw error;
+      alert("TunarrTube", error.message);
+    }
+  }
+}
+
 function openRemembered(config) {
   const location = libraryLocation(config.current.dataDirectory, config.current.layout);
   // Never silently start an empty library in place of a missing one (an unplugged drive, a renamed folder).
@@ -183,9 +242,19 @@ async function resolveLibrary(configPath) {
     const directory = path.resolve(args["data-dir"]);
     location = detectLibrary(directory) ?? prepareNewLibrary(directory);
   } else if (config.current && !args["choose-data-dir"]) {
-    location = openRemembered(config);
+    try {
+      location = openRemembered(config);
+    } catch (error) {
+      if (!app || !(error instanceof LauncherError)) throw error;
+      // No terminal to rerun with --choose-data-dir from: say what's wrong, then offer the choice right away
+      // (without "Keep Using It" -- that folder is the missing one).
+      alert("Library folder not found", error.message.replace(/(,? or|\.) run TunarrTube with --choose-data-dir.*$/is, ". Otherwise, choose another library next."));
+      location = await chooseLibraryWithDialogs({ ...config, current: null });
+    }
   } else if (interactive) {
     location = await chooseLibraryInteractively(config);
+  } else if (app && !args["no-dialog"]) {
+    location = await chooseLibraryWithDialogs(config);
   } else if (args["choose-data-dir"]) {
     throw new LauncherError("--choose-data-dir needs a terminal to ask in. Pass --data-dir <folder> instead.");
   } else {
@@ -329,6 +398,8 @@ async function main() {
   try {
     if (await answering(url)) throw new LauncherError(`Something is already listening on port ${port}. Start TunarrTube with --port <number> to use another port.`);
     const env = serverEnvironment({ baseEnv: process.env, location, appDir, runtimeDir, tools: bundledTools(), host, port });
+    // Shows the web UI's Quit button (lib/system/quit.ts): without a terminal there's no Ctrl+C.
+    if (app) env.TUNARRTUBE_QUIT_ENABLED = "1";
     await backupBeforeUpgrade(location, config.lastVersion);
     migrate(location, env);
     writeLauncherConfig(configPath, { ...config, lastVersion: version });
@@ -340,8 +411,19 @@ async function main() {
 
 function serve(env, url) {
   return new Promise((resolve, reject) => {
-    const server = spawn(nodeExecutable, [path.join(appDir, "server.js")], { cwd: appDir, env, stdio: "inherit" });
-    const forward = (signal) => () => server.kill(signal);
+    // In the macOS and Linux apps the server leads its own process group, so stopping it (Quit in the web UI,
+    // or this launcher being signalled) also stops the yt-dlp/FFmpeg/Chrome processes it started -- the job a
+    // terminal's Ctrl+C does for the other entry points. On Windows, Quit ends the server's process tree
+    // (lib/system/quit.ts). Interrupted jobs are requeued on the next start.
+    const server = spawn(nodeExecutable, [path.join(appDir, "server.js")], { cwd: appDir, env, stdio: "inherit", detached: serverGroup, windowsHide: true });
+    const forward = (signal) => () => {
+      try {
+        if (serverGroup) process.kill(-server.pid, signal);
+        else server.kill(signal);
+      } catch {
+        // already gone
+      }
+    };
     for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, forward(signal));
     server.on("error", (error) => reject(new LauncherError(`Could not start the server: ${error.message}`)));
     server.on("exit", (code, signal) => {
@@ -354,7 +436,7 @@ function serve(env, url) {
         if (await healthy(url)) {
           console.log(`\nTunarrTube ${version} is running at ${url}`);
           console.log(`Library: ${env.TUNARRTUBE_DATA_DIR}`);
-          console.log("Keep this window open while you use TunarrTube. Press Ctrl+C to stop it.\n");
+          console.log(app ? "Use Quit TunarrTube in the sidebar to stop it.\n" : "Keep this window open while you use TunarrTube. Press Ctrl+C to stop it.\n");
           if (!args["no-open"]) openBrowser(url);
           return;
         }
@@ -370,5 +452,8 @@ main().catch((error) => {
   // Ctrl+C or Ctrl+D at a prompt.
   if (error?.name === "AbortError") console.error("\nCancelled.");
   else console.error(`\n${error instanceof LauncherError ? error.message : error?.stack ?? error}`);
+  if (app && error?.name !== "AbortError") {
+    alert("TunarrTube couldn't start", `${error instanceof LauncherError ? error.message : error?.message ?? error}${logFile ? `\n\nDetails are in ${logFile}.` : ""}`);
+  }
   process.exitCode = 1;
 });

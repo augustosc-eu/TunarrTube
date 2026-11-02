@@ -6,23 +6,28 @@ Chrome for Channels overlays are all inside it. Nothing else needs to be install
 
 Start it
 --------
-  Windows:  double-click TunarrTube.cmd
-  macOS:    double-click TunarrTube.command
-  Linux:    run ./tunarrtube in a terminal
+  Windows:  double-click TunarrTube.exe. Its output goes to
+            %LOCALAPPDATA%\TunarrTube\Logs\launcher.log. TunarrTube.cmd starts it in a console instead.
+  macOS:    drag TunarrTube.app into Applications and open it. Its output goes to
+            ~/Library/Logs/TunarrTube/launcher.log. TunarrTube.command starts it in Terminal instead.
+  Linux:    run ./tunarrtube in a terminal (or download the .AppImage for a double-clickable app)
+
+The apps open no terminal window: use Quit TunarrTube at the bottom of the sidebar to stop them.
 
 The first time, TunarrTube asks which folder to keep your library in (its database, downloaded
 media, thumbnails and caches). Pick a drive with room for your videos, and keep it outside this
 folder so that upgrading never touches it. If you already run TunarrTube from a source checkout,
 choose "Open an existing TunarrTube library" and select that checkout's folder to keep using it.
 
-Your browser opens on http://127.0.0.1:3000 once TunarrTube is ready. Keep the window open while
-you use it; close the window or press Ctrl+C to stop it.
+Your browser opens on http://127.0.0.1:3000 once TunarrTube is ready. Started from a terminal window
+(TunarrTube.cmd, TunarrTube.command, ./tunarrtube), keep the window open while you use it; close the
+window or press Ctrl+C to stop it.
 
 The release isn't code-signed yet, so the first launch needs one extra step:
   Windows:  if SmartScreen says "Windows protected your PC", click "More info", then "Run anyway".
-  macOS:    if macOS says the script "cannot be opened", open System Settings > Privacy & Security
-            and click "Open Anyway" for TunarrTube.command, or run this once in Terminal:
-              xattr -dr com.apple.quarantine /path/to/this/folder
+  macOS:    if macOS says TunarrTube "cannot be opened", open System Settings > Privacy & Security
+            and click "Open Anyway", or run this once in Terminal:
+              xattr -dr com.apple.quarantine /path/to/TunarrTube.app
 
 Options
 -------
@@ -35,7 +40,8 @@ Options
   --no-open             Don't open the browser.
   --help                All options.
 
-Windows: run them from a terminal, e.g.  TunarrTube.cmd --choose-data-dir
+Windows: run them from a terminal, e.g.  TunarrTube.exe --choose-data-dir
+macOS:   open -a TunarrTube --args --choose-data-dir   (or ./TunarrTube.command --choose-data-dir)
 
 Settings that TunarrTube reads from the environment (TUNARRTUBE_TUNARR_URL, TUNARRTUBE_AUTH_PASSWORD,
 ...; see the README linked below) can go in a tunarrtube.env file in your library folder, one

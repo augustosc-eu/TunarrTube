@@ -7,15 +7,25 @@
 // and native modules (better-sqlite3, Prisma's schema engine) come from this machine's install.
 // .github/workflows/release-binaries.yml runs it once per target on a native runner.
 //
-// Output: dist/TunarrTube-<version>-<target>/ and its .tar.gz (.zip on Windows) plus a .sha256 file. The
+// Each platform gets a regular double-clickable app with no terminal window, and keeps a script that starts
+// the same launcher from a terminal:
+// - macOS: the release's contents go inside TunarrTube.app (Contents/Resources), also shipped as a .dmg;
+//   TunarrTube.command next to it.
+// - Windows: TunarrTube.exe (scripts/windows-exe.mjs); TunarrTube.cmd next to it.
+// - Linux: a TunarrTube-<version>-<target>.AppImage of the release folder (packaging/linux/AppRun);
+//   ./tunarrtube in the .tar.gz.
+//
+// Output: dist/TunarrTube-<version>-<target>/ and its .tar.gz (.zip on Windows), the .dmg / .AppImage, each
+// with a .sha256 file. The
 // folder holds the launcher (packaging/launcher/), the Next.js standalone server, a Prisma CLI for
 // `migrate deploy`, Node.js, and the tools TunarrTube runs -- yt-dlp, FFmpeg/ffprobe and Chrome Headless
 // Shell -- each downloaded from its official release and checked against its published SHA-256.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { buildWindowsExe } from "./windows-exe.mjs";
 
 const root = process.cwd();
 const { values: args } = parseArgs({
@@ -266,18 +276,99 @@ function bundleLauncher() {
   copyFileSync(path.join(root, "LICENSE"), path.join(stage, "LICENSE"));
 }
 
-function archive() {
-  const file = windows ? `${name}.zip` : `${name}.tar.gz`;
-  const output = path.join(outDir, file);
-  rmSync(output, { force: true });
-  // bsdtar picks the zip format from the .zip extension with -a; Windows ships bsdtar as tar.exe.
-  execFileSync("tar", windows ? ["-a", "-cf", output, name] : ["-czf", output, name], { cwd: outDir, stdio: "inherit" });
-  writeFileSync(`${output}.sha256`, `${sha256(output)}  ${file}\n`);
+// Moves the staged release into TunarrTube.app/Contents/Resources. The launcher finds app/, runtime/ and
+// tools/ relative to its own folder, so it runs unchanged from inside the bundle.
+function bundleMacApp() {
+  const contents = path.join(stage, "TunarrTube.app", "Contents");
+  const resources = path.join(contents, "Resources");
+  mkdirSync(path.join(contents, "MacOS"), { recursive: true });
+  mkdirSync(resources, { recursive: true });
+  for (const entry of ["app", "runtime", "tools", "launcher"]) renameSync(path.join(stage, entry), path.join(resources, entry));
+  const macos = path.join(root, "packaging", "macos");
+  copyFileSync(path.join(macos, "TunarrTube"), path.join(contents, "MacOS", "TunarrTube"));
+  chmodSync(path.join(contents, "MacOS", "TunarrTube"), 0o755);
+  copyFileSync(path.join(macos, "TunarrTube.icns"), path.join(resources, "TunarrTube.icns"));
+  writeFileSync(path.join(contents, "Info.plist"), readFileSync(path.join(macos, "Info.plist"), "utf8").replaceAll("{{version}}", version));
+}
+
+function bundleWindowsExe() {
+  return buildWindowsExe({
+    nodeExe: path.join(stage, "runtime", "node.exe"),
+    output: path.join(stage, "TunarrTube.exe"),
+    icon: path.join(root, "packaging", "windows", "TunarrTube.ico"),
+    main: path.join(root, "packaging", "windows", "sea-main.cjs"),
+    version,
+    workDir: path.join(outDir, `.sea-${target}`)
+  });
+}
+
+function writeChecksum(output) {
+  writeFileSync(`${output}.sha256`, `${sha256(output)}  ${path.basename(output)}\n`);
   console.log(`\n${output} (${(statSync(output).size / 1024 / 1024).toFixed(0)} MB)`);
 }
 
+function archive() {
+  const output = path.join(outDir, windows ? `${name}.zip` : `${name}.tar.gz`);
+  rmSync(output, { force: true });
+  // bsdtar picks the zip format from the .zip extension with -a; Windows ships bsdtar as tar.exe.
+  execFileSync("tar", windows ? ["-a", "-cf", output, name] : ["-czf", output, name], { cwd: outDir, stdio: "inherit" });
+  writeChecksum(output);
+}
+
+// The usual macOS download: open it, drag TunarrTube onto the Applications shortcut next to it.
+function buildDmg() {
+  const output = path.join(outDir, `${name}.dmg`);
+  rmSync(output, { force: true });
+  const shortcut = path.join(stage, "Applications");
+  symlinkSync("/Applications", shortcut);
+  try {
+    execFileSync("hdiutil", ["create", "-volname", `TunarrTube ${version}`, "-srcfolder", stage, "-fs", "HFS+", "-format", "ULFO", "-ov", output], { stdio: "inherit" });
+  } finally {
+    rmSync(shortcut);
+  }
+  writeChecksum(output);
+}
+
+// An AppImage of the release folder: one file that runs from anywhere, adding itself to the applications menu
+// (packaging/linux/AppRun). appimagetool and the AppImage runtime come from their GitHub releases, checked
+// against the SHA-256 digests GitHub publishes for each asset.
+async function appImageAsset(repository, tag, assetName) {
+  const release = JSON.parse(await fetchText(`https://api.github.com/repos/${repository}/releases/tags/${tag}`, githubHeaders));
+  const asset = release.assets.find((candidate) => candidate.name === assetName);
+  if (!asset?.digest?.startsWith("sha256:")) throw new Error(`${repository}: no ${assetName} with a published SHA-256.`);
+  const digest = asset.digest.slice("sha256:".length);
+  const file = await download(asset.browser_download_url, `${digest.slice(0, 12)}-${assetName}`, digest);
+  chmodSync(file, 0o755);
+  return file;
+}
+
+async function buildAppImage() {
+  const arch = target === "linux-x64" ? "x86_64" : "aarch64";
+  const appimagetool = await appImageAsset("AppImage/appimagetool", "continuous", `appimagetool-${arch}.AppImage`);
+  const runtime = await appImageAsset("AppImage/type2-runtime", "continuous", `runtime-${arch}`);
+  const output = path.join(outDir, `${name}.AppImage`);
+  rmSync(output, { force: true });
+  const added = ["AppRun", "tunarrtube.desktop", "tunarrtube.png"];
+  for (const entry of added) copyFileSync(path.join(root, "packaging", "linux", entry), path.join(stage, entry));
+  chmodSync(path.join(stage, "AppRun"), 0o755);
+  try {
+    // Extract-and-run: CI runners (and containers) have no FUSE to mount appimagetool's own AppImage with.
+    execFileSync(appimagetool, ["--no-appstream", "--runtime-file", runtime, stage, output], { stdio: "inherit", env: { ...process.env, ARCH: arch, APPIMAGE_EXTRACT_AND_RUN: "1" } });
+  } finally {
+    for (const entry of added) rmSync(path.join(stage, entry), { force: true });
+  }
+  writeChecksum(output);
+}
+
 step(`Packaging ${name}`);
-rmSync(stage, { recursive: true, force: true });
+try {
+  rmSync(stage, { recursive: true, force: true });
+} catch (error) {
+  // macOS App Management: once TunarrTube.app has been opened, only apps allowed to manage other apps
+  // (System Settings > Privacy & Security > App Management) may change or delete what's inside it.
+  if (error.code !== "EPERM") throw error;
+  fail(`Can't remove the previous ${stage}: macOS protects an app bundle once it has been opened. Delete it in Finder, or allow your terminal under System Settings > Privacy & Security > App Management, then run this again.`);
+}
 mkdirSync(tools, { recursive: true });
 const notices = [`TunarrTube ${version} -- MIT (LICENSE)`];
 step("App");
@@ -298,8 +389,25 @@ if (!args["skip-tools"]) {
 writeFileSync(path.join(tools, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 step("Launcher");
 bundleLauncher();
-writeFileSync(path.join(stage, "THIRD-PARTY-NOTICES.txt"), `TunarrTube ${version} (${target}) bundles the following software, each under its own license.\nLicense texts are in runtime/LICENSE, tools/licenses/ and the projects linked below.\n\n${notices.map((notice) => `- ${notice}`).join("\n")}\n`);
+const macApp = target.startsWith("macos");
+if (macApp) {
+  step("TunarrTube.app");
+  bundleMacApp();
+}
+if (windows) {
+  step("TunarrTube.exe");
+  await bundleWindowsExe();
+}
+const licenseRoot = macApp ? "TunarrTube.app/Contents/Resources/" : "";
+writeFileSync(path.join(stage, "THIRD-PARTY-NOTICES.txt"), `TunarrTube ${version} (${target}) bundles the following software, each under its own license.\nLicense texts are in ${licenseRoot}runtime/LICENSE, ${licenseRoot}tools/licenses/ and the projects linked below.\n\n${notices.map((notice) => `- ${notice}`).join("\n")}\n`);
 if (!args["no-archive"]) {
   step("Archive");
   archive();
+  if (macApp) {
+    step("Disk image");
+    buildDmg();
+  } else if (!windows) {
+    step("AppImage");
+    await buildAppImage();
+  }
 }

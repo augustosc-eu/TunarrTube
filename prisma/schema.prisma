@@ -221,6 +221,9 @@ model AppSettings {
   // lib/naming/service.ts.
   defaultNamingScheme        String   @default("id")
   defaultFilenameTemplate    String   @default("{title}")
+  // When the first-run setup wizard (app/setup/) was finished. Null sends the dashboard to /setup;
+  // the migration that added it backfills existing rows so upgraded installs skip the wizard.
+  setupCompletedAt           DateTime?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 }

@@ -155,6 +155,19 @@ export async function updateSettings(input: { mediaBaseDirectory?: string; tunar
   return { ...settings, pathMappings: await db.tunarrPathMapping.findMany({ orderBy: { position: "asc" } }), updatedSources: sources.length };
 }
 
+// First-run setup wizard (app/setup/): saves the two settings it asks for through updateSettings() --
+// same validation and source-destination handling as Settings -- then records that setup is done.
+export async function isSetupComplete() {
+  return (await getSettings()).setupCompletedAt !== null;
+}
+
+export async function completeSetup(input: { mediaBaseDirectory: string; tunarrUrl: string }) {
+  await updateSettings(input);
+  const settings = await db.appSettings.update({ where: { id: 1 }, data: { setupCompletedAt: new Date() } });
+  await writeLog({ category: "settings", message: "Setup wizard completed." });
+  return settings;
+}
+
 export function translatePathWithMappings(input: string, mappings: Array<{ tunarrtubePrefix: string; tunarrPrefix: string }>) {
   const normalized = path.resolve(input);
   if (!mappings.length) return normalized;
