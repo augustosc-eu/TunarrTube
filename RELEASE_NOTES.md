@@ -1,3 +1,11 @@
+# TunarrTube Extended v0.7.0
+
+## Browse for paths in Settings
+
+- Every path field in Settings now has a **Browse** button, so you no longer have to type paths by hand: the yt-dlp cookies file (External tools), each site's cookies file (Settings → Sites), the Claude executable, and the TunarrTube side of a Tunarr path mapping. Typing a path still works.
+- Like the media folder picker, these list what's on the machine TunarrTube runs on (inside the container under Docker), which is where these paths have to work. File pickers show folders plus only the matching files, `.txt` files for cookies and executables for Claude; click a file to use it. TunarrTube lists file names only and never opens or shows a cookies file's contents.
+- The Tunarr side of a path mapping stays a text field, since it's a path on Tunarr's machine.
+
 # TunarrTube Extended v0.6.1
 
 The downloads for v0.6.0. Its release was published before the files could be attached, and published releases can't be changed afterward, so the Windows, macOS and Linux apps ship as v0.6.1. Nothing else changed; see v0.6.0 below for what's new.
