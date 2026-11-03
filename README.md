@@ -244,7 +244,7 @@ npm start
 
 To skip the build when nothing changed, use `npm run serve` instead (`npm run serve -- --lan` for all interfaces, `-- --rebuild` to force a build). It backs up the database to `prisma/backups/` (keeping the last 10), runs `npm run build` only if the source changed since the last build, then runs `npm start`.
 
-On the first start, TunarrTube opens a short **setup wizard** at `/setup`: pick where videos are stored, enter your Tunarr URL (with a connection test), and confirm `yt-dlp` and FFmpeg are installed. The storage step has a **Browse** button that lists folders on the machine TunarrTube runs on (inside the container under Docker), shows free space, and can create a new folder; the same picker is on the Settings page next to the media directory. Run the wizard again any time from **Settings → Run setup wizard**.
+On the first start, TunarrTube opens a short **setup wizard** at `/setup`: pick where videos are stored, enter your Tunarr URL (with a connection test), and confirm `yt-dlp` and FFmpeg are installed. The storage step has a **Browse** button that lists folders on the machine TunarrTube runs on (inside the container under Docker), shows free space, and can create a new folder; the same picker is on the Settings page next to the media directory. Other path fields in Settings — the cookies files (global and per site), the Claude executable, and the TunarrTube side of a path mapping — have a **Browse** button too; file pickers list only folders and matching files (`.txt` for cookies, executables for Claude) by name, never their contents. Run the wizard again any time from **Settings → Run setup wizard**.
 
 Both development and production startup generate Prisma Client and apply committed SQLite migrations automatically. `npm start` listens on `127.0.0.1`; `npm run start:lan` deliberately listens on all interfaces — set `TUNARRTUBE_AUTH_PASSWORD` before using it (see [Optional password](#optional-password)).
 
@@ -493,7 +493,7 @@ If the error is YouTube reporting the video itself as private, deleted, or other
 
 `yt-dlp` reports age-restricted and bot-checked videos with messages like `Sign in to confirm your age` or `Sign in to confirm you're not a bot`. TunarrTube recognizes these, marks the video "unavailable" with that explanation instead of retrying it forever (same recovery as above — **Retry** it from Queue once fixed, or **Remove** it), and won't spam Logs with the same failure on every sync.
 
-To actually download these videos instead of skipping them, configure **yt-dlp cookies file** in Settings → External tools with an absolute path (inside the TunarrTube container/host) to a Netscape-format `cookies.txt`:
+To actually download these videos instead of skipping them, configure **yt-dlp cookies file** in Settings → External tools with an absolute path (inside the TunarrTube container/host) to a Netscape-format `cookies.txt` — type it, or click **Browse** to pick it:
 
 1. Export cookies for `youtube.com` from a signed-in browser session, on a machine you control, using a browser extension (e.g. "Get cookies.txt LOCALLY"). Use an account you're comfortable authenticating a background download tool as — not a primary/shared account.
 2. Make the file available inside the container. With Docker Compose, bind-mount it read-only:

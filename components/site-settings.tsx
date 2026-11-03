@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import { FilePicker } from "@/components/directory-picker";
 import type { SiteSettingView } from "@/lib/settings/service";
 
 // Settings → Sites: each supported site's requirements (from lib/youtube/sites.ts) and its own yt-dlp
@@ -63,7 +64,7 @@ function SiteRow({ initial }: { initial: SiteSettingView }) {
     <div className="form-grid">
       <div className="field">
         <label htmlFor={`site-cookies-${view.site}`}>Cookies file for {view.label}</label>
-        <input className="input code" id={`site-cookies-${view.site}`} value={cookiesPath} onChange={(event) => setCookiesPath(event.target.value)} placeholder={cookiesFallback} />
+        <FilePicker kind="cookies" id={`site-cookies-${view.site}`} value={cookiesPath} onChange={setCookiesPath} placeholder={cookiesFallback} />
         <span className="meta">Absolute path to a Netscape-format cookies.txt exported from a signed-in browser. Leave empty to fall back to the global file under External tools, if one is set.</span>
       </div>
       <div className="field">

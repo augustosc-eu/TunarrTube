@@ -598,7 +598,7 @@ tr:last-child td { border-bottom: 0; }
 }
 .form-card + .form-card { margin-top: 24px; }
 
-/* Storage picker (components/directory-picker.tsx) */
+/* Folder and file pickers (components/directory-picker.tsx) */
 .directory-picker { display: grid; gap: 10px; }
 .directory-picker-input { display: flex; gap: 8px; }
 .directory-picker-input .input { flex: 1 1 auto; }
@@ -615,6 +615,7 @@ tr:last-child td { border-bottom: 0; }
 .directory-list li.meta { padding: 8px; }
 .directory-list button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font: inherit; font-size: 13px; padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); cursor: pointer; }
 .directory-list button:hover { background: var(--accent-subtle); }
+.directory-list button.active { background: var(--accent-subtle); color: var(--accent); }
 .directory-list svg { color: var(--text-subtle); flex: none; }
 .directory-footer { display: grid; gap: 8px; }
 .directory-footer .toolbar { margin-bottom: 0; }

@@ -5,12 +5,14 @@ import { browseDirectoryQuerySchema, createDirectorySchema } from "@/lib/validat
 
 export const runtime = "nodejs";
 
-// Lists the subdirectories of ?path= (default: the current media directory) for the storage picker.
+// Lists the subdirectories of ?path= (default: the current media directory) for the folder and file
+// pickers; ?files=cookies|executable also lists that kind of file.
 export async function GET(request: Request) {
   try {
-    const query = browseDirectoryQuerySchema.parse({ path: new URL(request.url).searchParams.get("path") ?? undefined });
+    const params = new URL(request.url).searchParams;
+    const query = browseDirectoryQuerySchema.parse({ path: params.get("path") ?? undefined, files: params.get("files") ?? undefined });
     const { mediaBaseDirectory } = await getSettings();
-    return ok(await browseDirectory(query.path ?? mediaBaseDirectory, mediaBaseDirectory));
+    return ok(await browseDirectory(query.path ?? mediaBaseDirectory, mediaBaseDirectory, query.files));
   } catch (error) {
     return toErrorResponse(error);
   }

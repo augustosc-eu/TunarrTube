@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppError } from "@/lib/api";
 import { db } from "@/lib/db/client";
@@ -14,6 +14,11 @@ beforeAll(async () => {
   await mkdir(path.join(root, "Movies"));
   await mkdir(path.join(root, "anime"));
   await mkdir(path.join(root, ".hidden"));
+  await writeFile(path.join(root, "cookies.txt"), "# Netscape HTTP Cookie File\n");
+  await writeFile(path.join(root, "notes.md"), "");
+  await writeFile(path.join(root, ".hidden-cookies.txt"), "");
+  await writeFile(path.join(root, "claude"), "#!/bin/sh\n");
+  await chmod(path.join(root, "claude"), 0o755);
 });
 
 afterAll(async () => {
@@ -29,6 +34,28 @@ describe("browseDirectory", () => {
     expect(listing.directories.map((directory) => directory.name)).toEqual(["anime", "Movies"]);
     expect(listing.freeBytes).toBeGreaterThan(0);
     expect(listing.roots.length).toBeGreaterThan(0);
+  });
+
+  it("lists no files unless a file kind is requested", async () => {
+    const listing = await browseDirectory(root);
+    expect(listing).not.toHaveProperty("files");
+  });
+
+  it("lists visible .txt files for the cookies kind", async () => {
+    const listing = await browseDirectory(root, null, "cookies");
+    expect(listing.files?.map((file) => file.name)).toEqual(["cookies.txt"]);
+    expect(listing.files?.[0].path).toBe(path.join(root, "cookies.txt"));
+  });
+
+  it.skipIf(process.platform === "win32")("lists files with the execute bit for the executable kind", async () => {
+    const listing = await browseDirectory(root, null, "executable");
+    expect(listing.files?.map((file) => file.name)).toEqual(["claude"]);
+  });
+
+  it("opens a file's containing folder only when a file kind is requested", async () => {
+    const listing = await browseDirectory(path.join(root, "cookies.txt"), null, "cookies");
+    expect(listing.path).toBe(root);
+    await expect(browseDirectory(path.join(root, "cookies.txt"))).rejects.toMatchObject({ code: "NOT_A_DIRECTORY" });
   });
 
   it("rejects relative and missing paths", async () => {
