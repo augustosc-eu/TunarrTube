@@ -99,7 +99,7 @@ export const publishTunarrSchema = z.object({
 
 export const testTunarrSchema = z.object({ tunarrUrl: z.string().trim().url() });
 export const completeSetupSchema = z.object({ mediaBaseDirectory: z.string().trim().min(1), tunarrUrl: z.string().trim().url() });
-export const browseDirectoryQuerySchema = z.object({ path: z.string().trim().min(1).optional() });
+export const browseDirectoryQuerySchema = z.object({ path: z.string().trim().min(1).optional(), files: z.enum(["cookies", "executable"]).optional() });
 export const createDirectorySchema = z.object({ parent: z.string().trim().min(1), name: z.string().trim().min(1).max(255) });
 
 export const preparePlaybackSchema = z.object({ sourceId: z.string().min(1), videoId: z.string().min(1) });

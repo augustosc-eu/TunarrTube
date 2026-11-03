@@ -5,12 +5,14 @@ import { constants } from "node:fs";
 import { AppError } from "@/lib/api";
 import { DEFAULT_MEDIA_ROOT, STORAGE_ROOT } from "@/lib/constants";
 
-// Backs the storage picker in Settings and the setup wizard (components/directory-picker.tsx). It lists
-// directory *names* only -- never files or their contents -- so the operator can pick a media directory
-// on a mounted drive without typing its path. Dot-prefixed directories are hidden: they're config/cache
-// directories, never a sensible media root.
+// Backs the folder and file pickers in Settings and the setup wizard (components/directory-picker.tsx).
+// It lists directory *names*, plus -- only when a file picker asks, via `files` -- the names of files of
+// one kind (cookies .txt files, or executables). It never opens or reads a file, so a cookies file's
+// contents can't leave the server through it. Dot-prefixed entries are hidden: they're config/cache
+// entries, never a sensible media root.
 
 export type StorageRoot = { label: string; path: string };
+export type BrowseFileKind = "cookies" | "executable";
 
 async function isDirectory(input: string) {
   return stat(input).then((stats) => stats.isDirectory(), () => false);
@@ -20,14 +22,36 @@ async function isWritable(input: string) {
   return access(input, constants.R_OK | constants.W_OK).then(() => true, () => false);
 }
 
-async function readableChildDirectories(input: string) {
-  let entries;
+async function readVisibleEntries(input: string) {
   try {
-    entries = await readdir(input, { withFileTypes: true });
+    return (await readdir(input, { withFileTypes: true })).filter((entry) => !entry.name.startsWith("."));
   } catch {
     throw new AppError("DIRECTORY_UNREADABLE", "TunarrTube can't read that directory.", 400);
   }
-  return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).map((entry) => path.join(input, entry.name));
+}
+
+async function readableChildDirectories(input: string) {
+  return (await readVisibleEntries(input)).filter((entry) => entry.isDirectory()).map((entry) => path.join(input, entry.name));
+}
+
+// Whether `file` (a regular file, or a symlink to one) is the kind a file picker asked for. Cookies files
+// are matched by their .txt extension only; executables by the execute bit (by extension on Windows,
+// where spawn without a shell runs only .exe/.com -- see lib/system/find-executable.ts).
+async function matchesFileKind(file: string, kind: BrowseFileKind) {
+  if (!(await stat(file).then((stats) => stats.isFile(), () => false))) return false;
+  if (kind === "cookies") return path.extname(file).toLowerCase() === ".txt";
+  if (process.platform === "win32") return [".exe", ".com"].includes(path.extname(file).toLowerCase());
+  return access(file, constants.X_OK).then(() => true, () => false);
+}
+
+async function childFiles(input: string, kind: BrowseFileKind) {
+  const candidates = (await readVisibleEntries(input)).filter((entry) => entry.isFile() || entry.isSymbolicLink()).map((entry) => path.join(input, entry.name));
+  const matches = await Promise.all(candidates.map((file) => matchesFileKind(file, kind)));
+  return candidates.filter((_, index) => matches[index]);
+}
+
+function byName(items: string[]) {
+  return items.map((item) => ({ name: path.basename(item), path: item })).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base", numeric: true }));
 }
 
 async function childDirectories(input: string) {
@@ -73,7 +97,9 @@ export async function listStorageRoots(currentMediaDirectory?: string | null): P
   return roots;
 }
 
-export async function browseDirectory(input: string, currentMediaDirectory?: string | null) {
+// With `files`, also lists that kind of file, and a file path opens its containing folder (so a file
+// picker can start from the file already entered).
+export async function browseDirectory(input: string, currentMediaDirectory?: string | null, files?: BrowseFileKind) {
   if (!path.isAbsolute(input)) throw new AppError("INVALID_DIRECTORY", "Directory path must be absolute.");
   let resolved: string;
   try {
@@ -81,8 +107,11 @@ export async function browseDirectory(input: string, currentMediaDirectory?: str
   } catch {
     throw new AppError("DIRECTORY_NOT_FOUND", "That directory doesn't exist.", 404);
   }
-  if (!(await isDirectory(resolved))) throw new AppError("NOT_A_DIRECTORY", "That path isn't a directory.", 400);
-  const directories = await readableChildDirectories(resolved);
+  if (!(await isDirectory(resolved))) {
+    if (!files) throw new AppError("NOT_A_DIRECTORY", "That path isn't a directory.", 400);
+    resolved = path.dirname(resolved);
+  }
+  const [directories, fileEntries] = await Promise.all([readableChildDirectories(resolved), files ? childFiles(resolved, files) : Promise.resolve(null)]);
   const parent = path.dirname(resolved);
   const [writable, space, roots] = await Promise.all([isWritable(resolved), diskSpace(resolved), listStorageRoots(currentMediaDirectory)]);
   return {
@@ -91,7 +120,8 @@ export async function browseDirectory(input: string, currentMediaDirectory?: str
     writable,
     freeBytes: space?.freeBytes ?? null,
     totalBytes: space?.totalBytes ?? null,
-    directories: directories.map((directory) => ({ name: path.basename(directory), path: directory })).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base", numeric: true })),
+    directories: byName(directories),
+    ...(fileEntries ? { files: byName(fileEntries) } : {}),
     roots
   };
 }

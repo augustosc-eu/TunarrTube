@@ -117,7 +117,7 @@ Next.js App Router, file-system based. All data-driven pages set `export const d
 | `POST /api/settings/naming-preview` | `resolveVideoPaths` against a sample video, no DB access | `lib/naming/service.ts` |
 | `POST /api/setup` | `completeSetup` (`updateSettings` + sets `setupCompletedAt`) | `lib/settings/service.ts` |
 | `GET/POST /api/system/quit` | `quitAvailable` / `requestQuit` (macOS app only; 409 elsewhere) | `lib/system/quit.ts` |
-| `GET/POST /api/system/directories` | `browseDirectory` / `createDirectory` (storage picker: subdirectory names, writability, free space, quick roots; never file contents) | `lib/settings/storage.ts` |
+| `GET/POST /api/system/directories` | `browseDirectory` / `createDirectory` (folder and file pickers: subdirectory names, writability, free space, quick roots; `?files=cookies\|executable` also lists `.txt` / executable file names; never file contents) | `lib/settings/storage.ts` |
 | `POST /api/system/test-ytdlp`, `/test-ffmpeg` | `inspectBinary` | `lib/system/binaries.ts` |
 | `POST /api/system/test-tunarr` | `testTunarrConnection` | `lib/tunarr/service.ts` |
 | `GET /api/thumbnails/[kind]/[id]` | `thumbnailResponse` | `lib/thumbnails/service.ts` (`kind`: `source`/`video`/`render`) |
@@ -175,9 +175,9 @@ All under `components/`. Most are `"use client"`; three (`page-header.tsx`, `sou
 - **`video-selection-table.tsx`** *(client)* — per-video table with select/download-selected, per-row play (inline `<video>` player), and status badges. Search/sort/page controls write URL search parameters; `app/sources/[id]/page.tsx` applies them to narrow Prisma `select` and count queries (50 rows by default).
 - **`cache-dashboard.tsx`** *(client)* — cache usage stats, per-asset pin/unpin/evict/play, and "enforce limits"/"clear evictable" actions.
 - **`setup-wizard.tsx`** *(client)* — the `/setup` wizard: welcome → storage (`DirectoryPicker`) → Tunarr URL + test → `yt-dlp`/FFmpeg check → finish (`POST /api/setup`).
-- **`directory-picker.tsx`** *(client)* — path input plus an in-page folder browser over `/api/system/directories` (server-side filesystem, so it works the same under Docker); used by the wizard and `settings-form.tsx`.
+- **`directory-picker.tsx`** *(client)* — path input plus an in-page browser over `/api/system/directories` (server-side filesystem, so it works the same under Docker). `DirectoryPicker` picks a folder (writable-only with folder creation for the media directory in the wizard and `settings-form.tsx`; any folder for a path mapping's TunarrTube prefix); `FilePicker` picks a cookies `.txt` file (global and per-site cookies fields) or an executable (Claude executable path).
 - **`settings-form.tsx`** *(client)* — media directory, `yt-dlp`/FFmpeg detection, Tunarr URL + connectivity test, cache limits, default video quality, default naming scheme/filename template with a live preview (`POST /api/settings/naming-preview`), and the path-mapping editor with live preview. Exports `VIDEO_QUALITY_OPTIONS`/`NAMING_SCHEME_OPTIONS`, reused by `add-source-form.tsx`/`source-settings.tsx` for their per-source override dropdowns.
-- **`site-settings.tsx`** *(client)* — Settings → Sites: one row per `lib/youtube/sites.ts` site showing its `signIn` requirement (required/recommended/optional/none), caveat `note`, Stream/channel capabilities, and editable per-site cookies file path and request delay (`PATCH /api/settings/sites/[site]`; an empty field saves `null`, falling back to the global file / built-in delay).
+- **`site-settings.tsx`** *(client)* — Settings → Sites: one row per `lib/youtube/sites.ts` site showing its `signIn` requirement (required/recommended/optional/none), caveat `note`, Stream/channel capabilities, and editable per-site cookies file path (with a `FilePicker`) and request delay (`PATCH /api/settings/sites/[site]`; an empty field saves `null`, falling back to the global file / built-in delay).
 
 ## Important services (`lib/`)
 
