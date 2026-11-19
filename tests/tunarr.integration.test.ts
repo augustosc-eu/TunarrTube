@@ -88,9 +88,11 @@ describe("Tunarr publish pipeline", () => {
       if (url.pathname === "/api/media-sources" && method === "GET") return Response.json([{ id: "source-1", name: "TunarrTube - Renumber test", type: "local", paths: [mediaDirectory], libraries: [{ id: "library-1", name: mediaDirectory, mediaType: "other_videos", externalKey: mediaDirectory, enabled: true }] }]);
       if (url.pathname.endsWith("/scan") && method === "POST") return Response.json({}, { status: 202 });
       if (url.pathname.endsWith("/status")) return Response.json({ state: "not_scanning" });
-      if (url.pathname === "/api/media-libraries/library-1/programs") return Response.json([{ type: "content", id: "program-1", duration: 60_000, program: { externalId: `${mediaDirectory}/${video.youtubeId}.mp4` } }]);
+      // Tunarr 2026.11.2+ shape: a paged object rather than a bare array.
+      if (url.pathname === "/api/media-libraries/library-1/programs") return Response.json({ total: 1, offset: 0, size: 1, result: [{ type: "content", id: "program-1", duration: 60_000, program: { externalId: `${mediaDirectory}/${video.youtubeId}.mp4` } }] });
       // Another channel already occupies a higher number, so a naive "next available" computation would bump us past it.
-      if (url.pathname === "/api/channels" && method === "GET") return Response.json([{ id: existingChannelId, name: "Renumber Test TV", number: 5 }, { id: "other-channel", name: "Other", number: 9 }]);
+      // The 2026.x-only fields on the existing channel must survive the republish.
+      if (url.pathname === "/api/channels" && method === "GET") return Response.json([{ id: existingChannelId, name: "Renumber Test TV", number: 5, useEtvNext: true, streamSelectionProfileId: "0b6f1c1e-4d7c-4a43-9a51-2a9e4d1f6c11", subtitlePreferences: [] }, { id: "other-channel", name: "Other", number: 9 }]);
       if (url.pathname === "/api/transcode_configs") return Response.json([{ id: "07925780-d3ba-476e-ba5c-bf0d89c58245", isDefault: true }]);
       if (url.pathname === `/api/channels/${existingChannelId}` && method === "PUT") {
         updatePayload = JSON.parse(String(init?.body));
@@ -104,7 +106,9 @@ describe("Tunarr publish pipeline", () => {
     try {
       const result = await publishSourceToTunarr(source.id, { channelName: "Renumber Test TV", programmingOrder: "playlist" });
       expect(result.channelNumber).toBe(5);
-      expect(updatePayload).toMatchObject({ number: 5 });
+      expect(updatePayload).toMatchObject({ number: 5, useEtvNext: true, streamSelectionProfileId: "0b6f1c1e-4d7c-4a43-9a51-2a9e4d1f6c11" });
+      // Tunarr rejects an empty subtitlePreferences list, so it must not be echoed back.
+      expect(updatePayload).not.toHaveProperty("subtitlePreferences");
     } finally {
       await db.source.delete({ where: { id: source.id } });
       await db.video.delete({ where: { id: video.id } });

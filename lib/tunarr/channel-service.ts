@@ -95,7 +95,14 @@ function channelPayload(name: string, id: string, number: number, duration: numb
     // what makes that survive every future publish untouched.
     ...(existing?.watermark ? { watermark: existing.watermark } : {}),
     ...(existing?.onDemand ? { onDemand: existing.onDemand } : {}),
-    ...(Array.isArray(existing?.subtitlePreferences) ? { subtitlePreferences: existing.subtitlePreferences } : {})
+    // Tunarr's schema requires a non-empty list when present (2026.x), so an empty one is dropped.
+    ...(Array.isArray(existing?.subtitlePreferences) && existing.subtitlePreferences.length ? { subtitlePreferences: existing.subtitlePreferences } : {}),
+    // Tunarr 2026.x: `useEtvNext` defaults to false when omitted, so a republish that dropped it would
+    // silently take a channel the user moved to the ErsatzTV Next backend back off it. The stream
+    // selection profile is only echoed when set (omitting it leaves Tunarr's assignment unchanged).
+    // Older Tunarr never returns these fields, so they're never sent to it.
+    ...(typeof existing?.useEtvNext === "boolean" ? { useEtvNext: existing.useEtvNext } : {}),
+    ...(typeof existing?.streamSelectionProfileId === "string" ? { streamSelectionProfileId: existing.streamSelectionProfileId } : {})
   };
 }
 

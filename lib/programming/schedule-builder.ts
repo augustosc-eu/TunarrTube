@@ -133,13 +133,17 @@ export async function buildTunarrSchedule(input: {
     flexPreference: "end",
     latenessMs: 5 * 60_000,
     maxDays: input.plan.period === "week" ? 14 : 2,
-    padMs: 0,
+    // 1ms = "don't pad", the same value Tunarr's own slot editor sends. Not 0: since Tunarr 1.3.15 /
+    // 2026.9.0 the programming and preview endpoints validate time schedules with
+    // StrictTimeSlotScheduleSchema, which requires a positive integer padMs (0 is what produced NaN
+    // durations in distributeFlex), so padMs: 0 is now a 400 on every dayparts publish.
+    padMs: 1,
     period: input.plan.period,
     slots,
-    // Node's getTimezoneOffset() is minutes *behind* UTC (positive west of Greenwich); Tunarr's own
-    // source code comments this field "tz offset in...minutes, i think?" -- i.e. even Tunarr's authors
-    // aren't fully certain of the sign/units. Unverified against a live "time"-scheduled channel; if
-    // dayparts land an hour or more off, this is the first thing to check.
+    // Node's getTimezoneOffset() is minutes *behind* UTC (positive west of Greenwich) -- exactly what
+    // Tunarr's own web UI sends for this field (web/src/pages/channels/TimeSlotEditorPage.tsx), so the
+    // sign/units match. Note this is TunarrTube's process timezone: in Docker set TZ to match Tunarr's,
+    // or dayparts land offset by the difference.
     timeZoneOffset: new Date().getTimezoneOffset(),
     startTomorrow: false
   };
@@ -190,7 +194,9 @@ export async function buildTunarrRotationSchedule(input: {
     // entirely regardless of padMs, and there's nothing to distribute flex *between* here either.
     flexPreference: "end",
     maxDays: 2,
-    padMs: 0,
+    // 1, not 0, to match buildTunarrSchedule and Tunarr's own UI default (the random-schedule validator
+    // doesn't require it yet, but padMs: 0 is the value Tunarr treats as invalid for time schedules).
+    padMs: 1,
     padStyle: "slot",
     slots,
     timeZoneOffset: new Date().getTimezoneOffset(),

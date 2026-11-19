@@ -29,6 +29,14 @@ function validatePlan(raw: unknown, candidates: ProgrammingCandidate[]): Program
   const knownIds = new Set(candidates.map((candidate) => candidate.id));
 
   if (parsed.data.kind === "dayparts") {
+    // The schema allows a week's worth of minutes for either period; a daily plan must stay inside one
+    // day. Tunarr 1.3.15+/2026.x rejects a slot startTime at or past the period length with a 400
+    // (StrictTimeSlotScheduleSchema), so catch it here with a clear error instead.
+    const periodMinutes = parsed.data.period === "week" ? 7 * 24 * 60 : 24 * 60;
+    const outOfPeriod = parsed.data.blocks.find((block) => block.startMinutes >= periodMinutes);
+    if (outOfPeriod) {
+      throw new AppError("AI_PLAN_INVALID", `The AI provider's ${parsed.data.period === "week" ? "weekly" : "daily"} schedule put block "${outOfPeriod.label}" at minute ${outOfPeriod.startMinutes}, outside the ${parsed.data.period} (0-${periodMinutes - 1}).`, 502);
+    }
     const blocks = parsed.data.blocks
       .map((block) => ({ ...block, itemIds: block.itemIds.filter((id) => knownIds.has(id)) }))
       .filter((block) => block.itemIds.length > 0)

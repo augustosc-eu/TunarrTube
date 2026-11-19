@@ -99,6 +99,15 @@ describe("generateProgrammingPlan", () => {
     await expect(generateProgrammingPlan({ candidates: CANDIDATES, instructions: null, kind: "dayparts", period: "day", providerOverride: null, globalProviderSetting: "auto" })).rejects.toThrow(/did not reference/);
   });
 
+  it("rejects a daily plan with a block starting past the end of the day (Tunarr 400s on it)", async () => {
+    vi.mocked(resolveAiProvider).mockReturnValue({
+      name: "openai",
+      generatePlan: vi.fn(async () => ({ kind: "dayparts", period: "day", blocks: [{ label: "Tomorrow", startMinutes: 1500, itemIds: [CANDIDATES[0].id] }] })),
+      selectContent: vi.fn()
+    });
+    await expect(generateProgrammingPlan({ candidates: CANDIDATES, instructions: null, kind: "dayparts", period: "day", providerOverride: null, globalProviderSetting: "auto" })).rejects.toThrow(/outside the day/);
+  });
+
   it("rejects a rotation plan whose every group only referenced unknown IDs", async () => {
     vi.mocked(resolveAiProvider).mockReturnValue({
       name: "openai",
@@ -177,6 +186,12 @@ describe("buildTunarrSchedule (dayparts)", () => {
     // advancing) and then fail the publish with "NOT NULL constraint failed: channel.duration". Never
     // reintroduce "distribute" without also sending a real positive padMs.
     expect(result.schedule.flexPreference).toBe("end");
+    // Tunarr 1.3.15+/2026.x validates time schedules with StrictTimeSlotScheduleSchema, which 400s on
+    // a non-positive or fractional padMs/latenessMs/maxDays or a fractional/out-of-period startTime.
+    expect(result.schedule.padMs).toBe(1);
+    expect(Number.isInteger(result.schedule.latenessMs) && result.schedule.latenessMs >= 0).toBe(true);
+    expect(Number.isInteger(result.schedule.maxDays) && result.schedule.maxDays > 0).toBe(true);
+    expect(result.schedule.slots.every((slot) => Number.isInteger(slot.startTime) && slot.startTime >= 0 && slot.startTime < 24 * 60 * 60_000)).toBe(true);
     expect(result.tunarr.Morning.customShowId).toBe("custom-2");
     expect(result.tunarr.Evening.customShowId).toBe("custom-1");
   });

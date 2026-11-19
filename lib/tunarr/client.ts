@@ -120,6 +120,10 @@ const WRITE_TIMEOUT_MS = 60_000;
 // clearly rather than tie up a job attempt waiting out a hang that was never going to resolve.
 const GUIDE_VERIFY_TIMEOUT_MS = 20_000;
 
+// Tunarr's own maximum page size for GET /media-libraries/:libraryId/programs (2026.11.2+), so most
+// libraries come back in one request.
+const LIBRARY_PROGRAMS_PAGE_SIZE = 1000;
+
 export class TunarrApiClient {
   constructor(private readonly baseUrl: string, private readonly timeoutMs = 15_000) {}
 
@@ -246,10 +250,30 @@ export class TunarrApiClient {
     throw new AppError("TUNARR_SCAN_TIMEOUT", "Tunarr did not finish scanning the source directory within two minutes.", 504);
   }
 
+  // Tunarr 2026.11.2 made this endpoint paged (`{ total, result, size, offset }`, `limit` 1-1000,
+  // default 100) -- without walking the pages, any library over 100 items would silently "lose" the
+  // rest and the scan-readiness wait would never see every file. Older Tunarr (1.3.x through
+  // 2026.11.1) ignores the query string and returns the whole library as a bare array, so both shapes
+  // are accepted here.
   async listLibraryPrograms(libraryId: string, signal?: AbortSignal): Promise<TunarrProgram[]> {
-    const body = await this.request(`/api/media-libraries/${encodeURIComponent(libraryId)}/programs`, undefined, signal);
-    if (!Array.isArray(body)) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned invalid library program data.", 502);
-    return body.flatMap((item) => {
+    const items: unknown[] = [];
+    let offset = 0;
+    for (;;) {
+      const body = await this.request(`/api/media-libraries/${encodeURIComponent(libraryId)}/programs?offset=${offset}&limit=${LIBRARY_PROGRAMS_PAGE_SIZE}`, undefined, signal);
+      if (Array.isArray(body)) {
+        items.push(...body);
+        break;
+      }
+      const page = object(body);
+      if (!page || !Array.isArray(page.result)) throw new AppError("TUNARR_INVALID_RESPONSE", "Tunarr returned invalid library program data.", 502);
+      items.push(...page.result);
+      offset += page.result.length;
+      const total = typeof page.total === "number" ? page.total : null;
+      // An empty or short page also ends the walk, so a server that reports no (or a stale) total can't
+      // keep this looping forever.
+      if (!page.result.length || page.result.length < LIBRARY_PROGRAMS_PAGE_SIZE || (total !== null && offset >= total)) break;
+    }
+    return items.flatMap((item) => {
       const value = object(item);
       const program = object(value?.program);
       return value?.type === "content" && typeof value.id === "string" && typeof value.duration === "number"

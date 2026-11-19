@@ -103,6 +103,45 @@ describe("Tunarr publishing helpers", () => {
     expect(() => normalizeTunarrUrl("http://user:secret@localhost:8000")).toThrow(/without credentials/);
   });
 
+  it("walks every page of a paged library program listing (Tunarr 2026.11.2+)", async () => {
+    const all = Array.from({ length: 2_350 }, (_, index) => ({ type: "content", id: `program-${index}`, duration: 1000, program: { externalId: `/media/${index}.mp4` } }));
+    const requested: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (urlValue: string) => {
+      const url = new URL(urlValue);
+      requested.push(url.search);
+      const offset = Number(url.searchParams.get("offset"));
+      const limit = Number(url.searchParams.get("limit"));
+      const result = all.slice(offset, offset + limit);
+      return Response.json({ total: all.length, offset, size: result.length, result });
+    }));
+    const programs = await new TunarrApiClient("http://tunarr.test").listLibraryPrograms("library-1");
+    expect(programs).toHaveLength(2_350);
+    expect(programs.at(-1)?.id).toBe("program-2349");
+    expect(requested).toEqual(["?offset=0&limit=1000", "?offset=1000&limit=1000", "?offset=2000&limit=1000"]);
+  });
+
+  it("stops paging on an empty page even if the reported total is stale", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      return Response.json({ total: 5_000, offset: 0, size: 0, result: [] });
+    }));
+    expect(await new TunarrApiClient("http://tunarr.test").listLibraryPrograms("library-1")).toEqual([]);
+    expect(calls).toBe(1);
+  });
+
+  it("still accepts the bare-array library program listing from older Tunarr (1.3.x)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([{ type: "content", id: "program-1", duration: 1000, program: { externalId: "/media/a.mp4" } }])));
+    expect(await new TunarrApiClient("http://tunarr.test").listLibraryPrograms("library-1")).toEqual([
+      { type: "content", id: "program-1", duration: 1000, program: { externalId: "/media/a.mp4" } }
+    ]);
+  });
+
+  it("rejects a library program listing that is neither an array nor a page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ unexpected: true })));
+    await expect(new TunarrApiClient("http://tunarr.test").listLibraryPrograms("library-1")).rejects.toThrow(/invalid library program data/);
+  });
+
   it("orders memberships and maps scanned filenames by stable YouTube ID", () => {
     const memberships = [
       { playlistIndex: 2, video: { youtubeId: "second", uploadDate: new Date("2024-01-02") } },
